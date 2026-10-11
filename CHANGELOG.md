@@ -34,6 +34,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `tests/test_skill_package.py` pins the check, the install command, the
   no-install command, and that the check precedes the first command table.
 
+### Fixed
+
+- **The skill's YAML frontmatter was invalid, so every strict host silently
+  dropped the skill.** Since 0.8.16 the `description` — a double-quoted YAML
+  scalar — contained two inner quotes left unescaped (`` `mcptoon docs resolve
+  "<question>"` `` and `` `mcptoon select "<task>"` ``), while two others were
+  correctly written ``\\"``. A double-quoted scalar ends at the first unescaped
+  ``"``, so the value closed early and the rest of the line was garbage. PyYAML
+  and the ``yaml`` package a skill host uses both reject the whole block with
+  ``Nested mappings are not allowed in compact mappings``; the loader logs a
+  warning nobody reads and drops the skill. **Measured window: 2026-10-07
+  (6245006) to 2026-10-11.** Every version before 0.8.16 parses clean, so this
+  was a four-day-old defect, not a long-standing one. Both inner quotes are now
+  escaped; the value parses in PyYAML and in DSH's parser, and the skill loads
+  again.
+
+  Why nothing caught it: `yaml_frontmatter_error` in `tests/test_skill_package.py`
+  pinned only the *plain-scalar* rule (a bare ``': '`` opens a nested mapping,
+  the v0.8.2 bug) and explicitly **skipped** any value starting with a quote. It
+  returned ``None`` for this block. The guard now also validates double- and
+  single-quoted scalars, and a new test cross-checks the guard against PyYAML
+  itself (skipped when PyYAML is absent, so the zero-dependency contract holds).
+
+  The count surfaces moved with the four new tests: `2038` → `2044` in
+  README.md, README.zh-CN.md, DEVELOPERS.md, ROADMAP.md, docs/index.html,
+  docs/index-zh.html and docs/tiktoken-benchmarks.md (the two landing pages also
+  re-dated, since they claim the count was taken on the day the page was built).
+
 ## [0.8.16] - 2026-10-07
 
 ### Added

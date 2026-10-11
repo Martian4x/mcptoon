@@ -34,22 +34,82 @@ COPIES = {
 CORE_COMMANDS = ("manifest", "inspect", "search", "select", "call")
 
 
+def double_quoted_scalar_error(value: str) -> str | None:
+    """The error in a double-quoted YAML scalar, or None when it is well formed.
+
+    A double-quoted scalar ends at the first unescaped ``"``. Every inner quote
+    must therefore be written ``\\"``. Get that wrong and the scalar closes early;
+    everything after it is garbage to the parser, which rejects the whole block.
+
+    This is the *second* shape to ship broken, and it is why the guard below now
+    covers more than one rule. Measured 2026-10-11: the 0.8.16 skill wrote
+
+        description: "... `mcptoon docs resolve "<question>"` returns ..."
+
+    with two inner quotes unescaped and two written correctly as ``\\"`` — a
+    mixed-up edit. PyYAML said ``Nested mappings are not allowed in compact
+    mappings``; DSH's ``yaml`` package said the same; every host that parses
+    frontmatter with a real parser dropped the skill. The old guard only knew the
+    plain-scalar ``': '`` rule, so it passed this block and the skill was dead in
+    every host for four days while all mcptoon's own tooling stayed green.
+    """
+    if not value.startswith('"'):
+        return None
+    i = 1
+    while i < len(value):
+        ch = value[i]
+        if ch == "\\":
+            i += 2                      # the escaped character is not a delimiter
+            continue
+        if ch == '"':
+            tail = value[i + 1:].strip()
+            if tail:
+                return (f"a double-quoted scalar closes early: the quote at "
+                        f"offset {i} is not escaped, leaving {tail[:40]!r}")
+            return None
+        i += 1
+    return "a double-quoted scalar is never closed"
+
+
+def single_quoted_scalar_error(value: str) -> str | None:
+    """The error in a single-quoted YAML scalar, or None when it is well formed.
+
+    A single-quoted scalar escapes its quote by doubling it (``''``), so an odd
+    number of ``'`` means one was left to close the scalar early. Same failure
+    class as the double-quoted rule, same silent drop.
+    """
+    if not value.startswith("'"):
+        return None
+    if not value.endswith("'") or len(value) < 2:
+        return "a single-quoted scalar is never closed"
+    inner = value[1:-1].replace("''", "")
+    if "'" in inner:
+        return "a single-quoted scalar has an unescaped inner quote (write '')"
+    return None
+
+
 def yaml_frontmatter_error(frontmatter: str) -> str | None:
     """The first *real* YAML error in a frontmatter block, or None when it parses.
 
     Zero-dependency by design (AGENTS.md rule 1): this does not reimplement YAML,
-    it pins the one rule that shipped broken. Inside a **plain** (unquoted) scalar
-    a colon followed by a space opens a nested mapping, so
+    it pins the shapes that have shipped broken. Two are known, both fatal in the
+    same way — a real parser rejects the block and the host *drops the skill
+    silently*: it ships, installs, and never loads.
 
-        description: tools seem to have gone missing: a gateway is mounted ...
+      1. A **plain** (unquoted) scalar containing ``': '`` opens a nested mapping:
 
-    is invalid YAML. Real parsers (PyYAML, the ``yaml`` package a skill host uses)
-    reject the whole block — and a host that cannot parse the frontmatter *drops
-    the skill silently*: it ships, installs, and never loads.
+             description: tools seem to have gone missing: a gateway is mounted
+
+      2. A **double-quoted** scalar with an unescaped inner quote closes early:
+
+             description: "... `mcptoon docs resolve "<question>"` returns ..."
+
+    Shape 2 is the one the first version of this guard missed (2026-10-11), so the
+    guard now checks the quoted shapes as well instead of skipping past them.
 
     Why a dedicated guard instead of trusting ``plugin.parse_skill_frontmatter``:
     that home-grown reader splits each line on the *first* colon and is happy to
-    return the broken description above, so mcptoon's own tooling (and the three-
+    return the broken descriptions above, so mcptoon's own tooling (and the three-
     copies test) saw nothing wrong while every downstream agent saw no skill at
     all. A lenient reader cannot police the format it is lenient about.
     """
@@ -62,7 +122,11 @@ def yaml_frontmatter_error(frontmatter: str) -> str | None:
         if not sep:
             continue
         value = value.strip()
-        # Quoted, block (|, >), or flow ([, {) scalars carry their own syntax.
+        # Quoted scalars carry their own syntax; validate it rather than skip it.
+        for check in (double_quoted_scalar_error, single_quoted_scalar_error):
+            err = check(value)
+            if err is not None:
+                return f"{key.strip()}: {err} -> {value[:60]!r}"
         if value[:1] in ("'", '"', "|", ">", "[", "{"):
             continue
         if ": " in value or value.endswith(":"):
@@ -275,6 +339,47 @@ class TestFrontmatterIsRealYaml:
                  'description: "tools seem to have gone missing: a gateway '
                  'is mounted"\n')
         assert yaml_frontmatter_error(fixed) is None
+
+    def test_the_guard_rejects_an_unescaped_inner_quote(self):
+        """The second shape to ship broken: a double-quoted scalar closed early.
+
+        This is the exact 0.8.16 block, copied from the tree, that no host could
+        parse for four days (2026-10-07 .. 2026-10-11). The old guard returned
+        None for it because it skipped quoted scalars entirely.
+        """
+        broken = ('name: mcptoon\n'
+                  'description: "... `mcptoon docs resolve "<question>"` returns '
+                  'the few files worth opening ..."\n')
+        err = yaml_frontmatter_error(broken)
+        assert err is not None, "the guard still misses an unescaped inner quote"
+        assert "closes early" in err
+
+    def test_the_guard_accepts_the_escaped_form(self):
+        """The fix must pass: inner quotes written ``\\"`` are valid YAML."""
+        fixed = ('name: mcptoon\n'
+                 'description: "... `mcptoon docs resolve \\"<question>\\"` '
+                 'returns the few files ..."\n')
+        assert yaml_frontmatter_error(fixed) is None
+
+    def test_the_guard_rejects_an_unclosed_quoted_scalar(self):
+        assert yaml_frontmatter_error('name: mcptoon\ndescription: "no end\n') is not None
+
+    def test_a_real_yaml_parser_agrees_with_the_guard(self):
+        """The strongest check: PyYAML must parse what the guard calls clean.
+
+        The guard is a stand-in for a real parser because mcptoon ships with zero
+        dependencies. That stand-in drifted from reality once already, so where a
+        real parser is importable, cross-check it. Skipped (not failed) when
+        PyYAML is absent, so the zero-dependency contract holds for contributors.
+        """
+        yaml = pytest.importorskip("yaml")
+        for name, path in COPIES.items():
+            frontmatter = path.read_text(encoding="utf-8").split("---", 2)[1]
+            assert yaml_frontmatter_error(frontmatter) is None, (
+                f"{name} copy: the guard disagrees with a real parser")
+            parsed = yaml.safe_load(frontmatter)
+            assert parsed["name"] == "mcptoon"
+            assert isinstance(parsed["description"], str) and parsed["description"]
 
 
 class TestInstallSelf:
