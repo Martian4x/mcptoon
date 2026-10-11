@@ -304,11 +304,15 @@ and only when `mcptoon serve` is actually registered with that agent.
    `pip install mcptoon` (or run it via `uvx mcptoon …`) before running anything
    else. Say what you did — do not report commands as working when they were
    never installed.
-7. **This skill describes the CLI at the version in the frontmatter above.** If
-   `mcptoon --version` prints something older, some commands below may not exist
-   yet — upgrade first (`pip install --upgrade mcptoon`), then retry. An
-   out-of-date copy is the second-most-common reason these commands fail after a
-   missing binary.
+7. **A stale copy is the second failure after a missing binary.** This skill is a
+   snapshot: it documents the CLI as of the day it was written. If a command
+   below is not recognised by the installed `mcptoon`, the copy is older than the
+   CLI (or the CLI older than the copy) — run `mcptoon --help` to see what this
+   build actually has, and upgrade with `pip install --upgrade mcptoon` if the
+   command should exist. Do not invent a flag to make a command work.
+   Note the two version numbers are different systems and are never compared:
+   the `version:` in this file's frontmatter is the **skill's** version, while
+   `mcptoon --version` prints the **CLI's** version (0.8.x today).
 
 ## Setup
 
