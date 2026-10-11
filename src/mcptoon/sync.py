@@ -720,17 +720,27 @@ def gateway_present_in(agent_id: str) -> bool:
 
 
 def remove_gateway_from_agent(agent_id: str, dry_run: bool = False,
-                              path: Path | None = None) -> dict:
+                              path: Path | None = None,
+                              pointer: Path | None = None) -> dict:
     """Remove ONLY the gateway entry from an agent's config, servers left intact.
 
     The inverse of `sync --self`. Returns a sync-shaped result; ``removed`` is
     True when the entry was actually there (so callers can report a real count).
 
-    ``path`` overrides the file to edit. It exists because an agent id does not
+    ``path`` overrides the config file to edit. It exists because an agent id does not
     always map to one file: Cursor keeps a project-level `.cursor/mcp.json` next to
     its global one, and `_agent_config_path("cursor")` only ever names the global
     file — so without an override the project-level copy silently kept the gateway
     entry that `mcptoon off` had just claimed to remove.
+
+    ``pointer`` overrides the *instruction file* leg (a CLI-leg host's memory file,
+    e.g. Claude Code's `~/.claude/CLAUDE.md`). Without it that leg is derived from
+    the agent id — which is what `off` wants, but is a trap for a caller that
+    redirected only the config file: `remove_gateway_from_agent(id, path=copy)`
+    still strips the real instruction file. That is not hypothetical; a probe that
+    copied a config into a temp dir and passed `path=` stripped the developer's own
+    `~/.claude/CLAUDE.md` (measured 2026-10-11). Pass **both** to keep a test or
+    probe entirely off the real machine.
     """
     target = path if path is not None else _agent_config_path(agent_id)
     if target is None:
@@ -767,7 +777,7 @@ def remove_gateway_from_agent(agent_id: str, dry_run: bool = False,
     # telling an agent to use a catalog that is no longer mounted. Claude Code is
     # the case that exists today: an entry in `~/.claude.json` and a block in
     # `~/.claude/CLAUDE.md`. Codex is handled above because it has no JSON entry.
-    ppath = pointer_path(agent_id)
+    ppath = pointer if pointer is not None else pointer_path(agent_id)
     pointer_removed = False
     if ppath is not None and ppath.exists():
         try:

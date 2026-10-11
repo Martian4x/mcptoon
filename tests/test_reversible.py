@@ -408,6 +408,34 @@ class TestSkillPointerLeavesNoResidue(unittest.TestCase):
             self.assertFalse(gemini.exists(),
                              "off left a 0-byte GEMINI.md behind")
 
+    def test_pointer_override_keeps_the_real_instruction_file_out_of_it(self):
+        # A host with two legs (Claude Code): a JSON entry AND a memory file. The
+        # memory-file leg is derived from the agent id, so a caller that redirected
+        # only `path=` still stripped the real `~/.claude/CLAUDE.md` — a probe did
+        # exactly that on the developer's machine (2026-10-11). `pointer=` redirects
+        # the second leg, so a test/probe can stay entirely off the real machine.
+        cfg = self.base / "claude.json"
+        cfg.write_text(json.dumps({"mcpServers": {
+            SELF_SERVER_NAME: {"command": "python", "args": ["-m", "mcptoon", "serve"]}}}),
+            encoding="utf-8")
+        derived = self.base / "CLAUDE.md"          # stands in for the real memory file
+        derived.write_text("keep me\n", encoding="utf-8")
+        sync_mod._write_skill_pointer(derived)
+        redirected = self.base / "elsewhere" / "CLAUDE.md"
+        redirected.parent.mkdir()
+        sync_mod._write_skill_pointer(redirected)
+
+        with patch.object(sync_mod, "_claude_code_memory_path", return_value=derived):
+            r = remove_gateway_from_agent("claude-code", path=cfg, pointer=redirected)
+
+        self.assertTrue(r["removed"])
+        self.assertTrue(r["pointer_removed"])
+        self.assertFalse(redirected.exists(),
+                         "the redirected pointer leg (only the block) was not stripped")
+        self.assertIn(sync_mod._SKILL_POINTER_HEADING,
+                      derived.read_text(encoding="utf-8"),
+                      "pointer= must keep the derived instruction file untouched")
+
 
 # ─── `mcptoon uninstall` ───
 
