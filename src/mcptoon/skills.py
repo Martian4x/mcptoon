@@ -1528,6 +1528,34 @@ def _skills_usage() -> str:
 _VALUE_FLAGS = ("--k", "--tools-k", "--model", "--endpoint", "--desc",
                 "--archive", "--derived", "--version-gate", "--limit")
 
+# Flags whose value is a SEPARATE token, so a positional scan must skip it.
+# Deliberately narrower than _VALUE_FLAGS: --version-gate and --limit are boolean
+# here, and treating them as value-taking would swallow the next real positional.
+_POSITIONAL_VALUE_FLAGS = ("--archive", "--derived", "--desc", "--model", "--endpoint")
+
+
+def _positionals(args: list[str]) -> list[str]:
+    """The non-flag arguments, with every value-taking flag's value removed.
+
+    A naive ``[a for a in args if not a.startswith("-")]`` leaks ``--archive gy``'s
+    value into the positional list — ``gy`` was then read as a VIEW, so
+    ``sync <src> --archive gy`` wrote the catalog into the archive and left the
+    real views untouched (measured 2026-10-11). ``_query_of`` already avoids the
+    same leak for the query text; this is that fix applied to positional args.
+    """
+    out: list[str] = []
+    skip = False
+    for a in args:
+        if skip:
+            skip = False
+            continue
+        if a.startswith("-"):
+            if "=" not in a and a in _POSITIONAL_VALUE_FLAGS:
+                skip = True
+            continue
+        out.append(a)
+    return out
+
 
 def _query_of(args: list[str]) -> str:
     """The query text in ``args``, with flags *and their values* removed.
@@ -2115,7 +2143,28 @@ def _tracked_in_head(repo: Path, rel: str) -> bool:
     return r.returncode == 0
 
 
-def misdelete_guard(source: Path) -> list[str]:
+def _archived_removals(graveyard: Path) -> set[str]:
+    """Skill names parked in a ``removed/`` graveyard -- i.e. a *decided* removal.
+
+    ``skills remove`` moves the skill aside as ``removed/<stamp>_<name>`` (the
+    ``removed`` component is the graveyard layout ``_archive_dir`` uses). A name
+    found there is a removal the user performed on purpose, so it must not be
+    reported as an undecided one. Read-only and best-effort.
+    """
+    removed = graveyard / "removed"
+    if not removed.is_dir():
+        return set()
+    names: set[str] = set()
+    for entry in removed.iterdir():
+        name = entry.name
+        if "_" in name:
+            name = name.split("_", 1)[1]
+        if name:
+            names.add(name)
+    return names
+
+
+def misdelete_guard(source: Path, graveyard: Path | None = None) -> list[str]:
     """Skills still in git HEAD but missing from the source on disk.
 
     ``sync`` prunes a view link whose source is gone — that is correct when the
@@ -2125,12 +2174,26 @@ def misdelete_guard(source: Path) -> list[str]:
     absent on disk is an undecided deletion; the caller refuses to proceed unless
     ``--allow-tracked-deletes`` says the removal is intentional.
 
+    A skill found in a graveyard was removed on purpose, so it is not reported —
+    without that, the documented "remove, then sync" flow would be blocked by the
+    gate meant to protect it. Every conventional graveyard is consulted, not just
+    the effective one: ``remove`` and ``sync`` may be pointed at different
+    archives (a second manager shares one), and a removal parked in either is
+    still a decision. The candidates are the ``--archive`` value, ``<src>/../_archive``
+    (the default) and ``<src>/../skills_archive`` (the incumbent manager's).
+
     Best-effort and read-only: no repo, no git, or a git error all return ``[]``
     (a normal command must not fail because git is unavailable).
     """
     repo = _find_repo(source)
     if repo is None:
         return []
+    graveyards = {source.parent / "_archive", source.parent / "skills_archive"}
+    if graveyard is not None:
+        graveyards.add(graveyard)
+    decided: set[str] = set()
+    for gy in graveyards:
+        decided |= _archived_removals(gy)
     rel = os.path.relpath(source, repo).replace("\\", "/")
     rel = "" if rel == "." else rel
     try:
@@ -2162,6 +2225,9 @@ def misdelete_guard(source: Path) -> list[str]:
         if (repo / p).is_file():
             continue
         slug = p.rsplit("/SKILL.md", 1)[0].rsplit("/", 1)[-1]
+        if slug and slug in decided:
+            # A decided removal: the user ran `skills remove` on purpose.
+            continue
         if slug:
             missing.append(slug)
     # Deduplicate, keep deterministic order.
@@ -2412,7 +2478,7 @@ def _cmd_skills(rest: list[str], fmt: str, head_n: int = 0, max_chars: int = 0,
     if action == "sync":
         # Distribute a source catalog into every agent's skill folder. Needs no
         # index, so it is handled before the index gate below.
-        positional = [a for a in args if not a.startswith("-")]
+        positional = _positionals(args)
         source = Path(positional[0]).expanduser() if positional else None
         if source is None:
             source, reason = default_sync_source()
@@ -2431,8 +2497,10 @@ def _cmd_skills(rest: list[str], fmt: str, head_n: int = 0, max_chars: int = 0,
         # fat-fingered name or a directory another session moved aside — and
         # pruning every view from it is how one machine's `git pull` really
         # loses a skill. Refuse the WRITE (a --dry run only warns: it writes
-        # nothing, and Stage-1 monitoring needs it to stay usable).
-        missing = misdelete_guard(source)
+        # nothing, and Stage-1 monitoring needs it to stay usable). A skill the
+        # user removed on purpose (`skills remove`) sits in a graveyard and is
+        # not reported, so the documented "remove, then sync" flow still works.
+        missing = misdelete_guard(source, graveyard=archive)
         if missing:
             print(f"🛑 mis-delete gate: {len(missing)} skill(s) are in git HEAD but "
                   f"missing from {source} — undecided removal", file=sys.stderr)
@@ -2498,7 +2566,7 @@ def _cmd_skills(rest: list[str], fmt: str, head_n: int = 0, max_chars: int = 0,
 
     if action in ("add", "remove"):
         # Catalog management edits the SOURCE, so it needs a source but no index.
-        positional = [a for a in args if not a.startswith("-")]
+        positional = _positionals(args)
         roots = _default_roots()
         source = Path(positional[0]).expanduser() if len(positional) > 1 else (
             roots[0] if roots else None)

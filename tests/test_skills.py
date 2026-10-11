@@ -1460,6 +1460,37 @@ class MisDeleteGateTests(unittest.TestCase):
         shutil.rmtree(self.src / "video-pack")
         self.assertEqual(skills.misdelete_guard(self.src), ["clip"])
 
+    def test_guard_ignores_a_decided_removal_in_the_graveyard(self):
+        # A skill the user removed on purpose sits in <archive>/removed/<stamp>_<name>.
+        # It is a decided removal, not an undecided one, so the guard is silent.
+        shutil.rmtree(self.src / "alpha")
+        gy = self.base / "gy"
+        (gy / "removed" / "20261011075455_alpha").mkdir(parents=True)
+        self.assertEqual(skills.misdelete_guard(self.src, graveyard=gy), [])
+
+    def test_guard_still_flags_a_missing_skill_absent_from_the_graveyard(self):
+        # Two skills gone, only one archived on purpose: the other is still flagged.
+        shutil.rmtree(self.src / "alpha")
+        shutil.rmtree(self.src / "beta")
+        gy = self.base / "gy"
+        (gy / "removed" / "20261011075455_alpha").mkdir(parents=True)
+        self.assertEqual(skills.misdelete_guard(self.src, graveyard=gy), ["beta"])
+
+    def test_remove_then_sync_is_not_blocked(self):
+        # Regression, 2026-10-11: the documented flow is "remove, then sync so the
+        # views drop it too". The first cut of the gate blocked exactly that, and
+        # told the user to run `mcptoon skills remove` -- which they just had.
+        env = {"MCPTOON_SKILLS_VIEWS": str(self.view)}
+        gy = self.base / "gy"
+        run_cli(["mcptoon", "skills", "sync", str(self.src), "--archive", str(gy)], env)
+        self.assertTrue((self.view / "alpha").exists())
+        rc = skills._cmd_skills_remove(self.src, "alpha", "text", archive=gy)
+        self.assertEqual(rc, 0)
+        run_cli(["mcptoon", "skills", "sync", str(self.src), "--archive", str(gy)], env)
+        self.assertTrue((self.view / "beta").exists())
+        self.assertFalse((self.view / "alpha").exists(),
+                         "the views should drop the removed skill, not be blocked")
+
     def test_real_sync_refuses_and_exits_when_a_removal_is_undecided(self):
         shutil.rmtree(self.src / "alpha")
         env = {"MCPTOON_SKILLS_VIEWS": str(self.view)}
@@ -1488,6 +1519,47 @@ class MisDeleteGateTests(unittest.TestCase):
             cli.main()
         self.assertIn("mis-delete gate", buf.getvalue())
         self.assertFalse(self.view.exists())
+
+
+class PositionalArgTests(unittest.TestCase):
+    """A value-taking flag's value must never be read as a positional argument."""
+
+    def test_positionals_drops_a_flag_value(self):
+        # Regression, 2026-10-11: `sync <src> --archive gy` read `gy` as a VIEW,
+        # so the catalog was written into the archive and the real views were
+        # left untouched -- a silent wrong destination, not an error.
+        self.assertEqual(skills._positionals(["src", "--archive", "gy"]),
+                         ["src"])
+        self.assertEqual(skills._positionals(["src", "--archive=gy"]), ["src"])
+        self.assertEqual(skills._positionals(["src", "--derived", "roo"]), ["src"])
+
+    def test_positionals_keeps_real_views_after_a_flag(self):
+        self.assertEqual(
+            skills._positionals(["src", "--archive", "gy", "v1", "v2"]),
+            ["src", "v1", "v2"])
+
+    def test_positionals_does_not_swallow_after_a_boolean_flag(self):
+        # --version-gate takes no value; treating it as value-taking would eat the
+        # next real positional (a view path).
+        self.assertEqual(
+            skills._positionals(["src", "--version-gate", "v1"]),
+            ["src", "v1"])
+
+    def test_sync_writes_the_given_view_not_the_archive(self):
+        # The end-to-end shape of the bug: pass --archive AND a view; the skill
+        # must land in the view, and the archive must stay empty of it.
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            src = base / "src"
+            write_skill(src, "alpha", "does a thing", layout="nested")
+            view = base / "v1"
+            gy = base / "gy"
+            run_cli(["mcptoon", "skills", "sync", str(src),
+                     "--archive", str(gy), str(view)], {})
+            self.assertTrue((view / "alpha").exists(),
+                            "the skill must land in the view the user named")
+            self.assertFalse((gy / "alpha").exists(),
+                             "the archive is a graveyard, never a destination")
 
 
 class ArchiveFlagTests(unittest.TestCase):
