@@ -346,7 +346,19 @@ def _remove_skill_pointer(path: Path) -> dict:
     if _SKILL_POINTER_HEADING not in text:
         return {"path": str(path), "removed": False, "written": False, "error": None}
     try:
-        path.write_text(_strip_skill_pointer(text), encoding="utf-8")
+        stripped = _strip_skill_pointer(text)
+        if not stripped.strip():
+            # mcptoon created this file only to hold the pointer, and there is no
+            # user content left. Remove it rather than leaving a 0-byte file behind:
+            # a host sees an empty instruction file as residue, and "off" promises
+            # to put the machine back as it was (measured 2026-10-11: a fresh
+            # `~/.gemini/GEMINI.md` came back as a 0-byte file after `off`).
+            try:
+                path.unlink()
+            except OSError:
+                path.write_text("", encoding="utf-8")   # at worst, keep the old shape
+        else:
+            path.write_text(stripped, encoding="utf-8")
     except OSError as e:
         return {"path": str(path), "removed": True, "written": False, "error": str(e)}
     return {"path": str(path), "removed": True, "written": True, "error": None}

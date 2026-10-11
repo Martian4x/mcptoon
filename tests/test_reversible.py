@@ -352,6 +352,63 @@ class TestOffCommand(_IsolatedHome):
         self.assertIn("not registered in any agent", out)
 
 
+# ─── the skill pointer: no residue after `off` ───
+
+class TestSkillPointerLeavesNoResidue(unittest.TestCase):
+    """`off` must put a CLI-only host's instruction file back as it found it.
+
+    The failure this pins (measured 2026-10-11): a host whose instruction file
+    did not exist (a fresh `~/.gemini/GEMINI.md`) got one created to hold the
+    pointer, and `off` left a 0-byte file behind. An empty instruction file is
+    residue the host can see, and "off" promises a clean undo.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.base = Path(self._tmp.name)
+
+    def test_a_file_created_only_for_the_pointer_is_removed(self):
+        p = self.base / "GEMINI.md"
+        self.assertFalse(p.exists())
+        sync_mod._write_skill_pointer(p)
+        self.assertTrue(p.exists())
+        r = sync_mod._remove_skill_pointer(p)
+        self.assertTrue(r["removed"])
+        self.assertFalse(p.exists(), "off left a 0-byte instruction file behind")
+
+    def test_a_file_with_user_content_keeps_it(self):
+        p = self.base / "AGENTS.md"
+        user = "# My notes\n\nkeep me\n"
+        p.write_text(user, encoding="utf-8")
+        sync_mod._write_skill_pointer(p)
+        sync_mod._remove_skill_pointer(p)
+        self.assertTrue(p.exists())
+        self.assertEqual(p.read_text(encoding="utf-8"), user)
+
+    def test_a_file_that_already_held_the_pointer_text_is_not_deleted(self):
+        # The user pasted the same block themselves; the file is theirs.
+        p = self.base / "GEMINI.md"
+        p.write_text("# Title\n\n## Skill catalog (mcptoon)\n\nmine\n",
+                     encoding="utf-8")
+        sync_mod._remove_skill_pointer(p)
+        self.assertTrue(p.exists())
+
+    def test_off_through_the_agent_api_leaves_no_file(self):
+        # End to end through remove_gateway_from_agent, not just the helper: a
+        # CLI-only host (gemini) whose instruction file did not exist ends with no
+        # file at all after `off`.
+        gemini = self.base / ".gemini" / "GEMINI.md"
+        with patch.object(sync_mod, "_gemini_path", return_value=gemini):
+            self.assertFalse(gemini.exists())
+            sync_mod._write_skill_pointer(gemini)      # what `sync --self` does
+            self.assertTrue(gemini.exists())
+            r = remove_gateway_from_agent("gemini", path=gemini)
+            self.assertTrue(r["removed"])
+            self.assertFalse(gemini.exists(),
+                             "off left a 0-byte GEMINI.md behind")
+
+
 # ─── `mcptoon uninstall` ───
 
 class TestUninstallCommand(_IsolatedHome):
