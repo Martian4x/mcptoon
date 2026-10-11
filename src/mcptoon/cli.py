@@ -61,6 +61,7 @@ KNOWN_FLAGS = frozenset(
         "--stdin", "--stdio", "--takeover", "--timeout", "--tombstone", "--toon", "--tools-k", "--top",
         "--url", "--usage",
         "--version", "--version-gate", "--view", "--watch",
+        "--allow-tracked-deletes",
         "--watch-mode", "--write", "--yes", "--engine",
     }
 )

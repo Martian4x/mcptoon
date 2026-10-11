@@ -1380,6 +1380,116 @@ class TombstoneTests(unittest.TestCase):
         self.assertTrue(list((self.base / "g2" / "removed").iterdir()))
 
 
+class MisDeleteGateTests(unittest.TestCase):
+    """sync must refuse to prune views from an *undecided* removal.
+
+    A skill present in git HEAD but gone from the source on disk is an undecided
+    removal (a fat-fingered name, or a directory another session moved aside).
+    sync prunes a view link whose source is gone, so without this gate one
+    vanished directory propagates to every view at once -- and a machine that
+    pulls sees the removal as decided. Mirrors the incumbent sync script's guard.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.base = Path(self.tmp.name)
+        self.repo = self.base / "repo"
+        (self.repo / "skills" / "alpha").mkdir(parents=True)
+        (self.repo / "skills" / "alpha" / "SKILL.md").write_text(
+            "---\nname: alpha\ndescription: d\n---\n", encoding="utf-8")
+        (self.repo / "skills" / "beta").mkdir(parents=True)
+        (self.repo / "skills" / "beta" / "SKILL.md").write_text(
+            "---\nname: beta\ndescription: d\n---\n", encoding="utf-8")
+        self._git("init")
+        self._git("config", "user.email", "t@example.com")
+        self._git("config", "user.name", "t")
+        self._git("add", "-A")
+        self._git("commit", "-m", "init")
+        self.src = self.repo / "skills"
+        self.view = self.base / "v1"
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _git(self, *args):
+        return subprocess.run(["git", *args], cwd=str(self.repo),
+                              capture_output=True, text=True)
+
+    def test_guard_flags_a_skill_in_head_but_missing_on_disk(self):
+        shutil.rmtree(self.src / "alpha")
+        self.assertEqual(skills.misdelete_guard(self.src), ["alpha"])
+
+    def test_guard_is_silent_when_nothing_is_missing(self):
+        self.assertEqual(skills.misdelete_guard(self.src), [])
+
+    def test_guard_is_silent_without_a_repo(self):
+        plain = self.base / "plain"
+        (plain / "alpha").mkdir(parents=True)
+        (plain / "alpha" / "SKILL.md").write_text("x", encoding="utf-8")
+        self.assertEqual(skills.misdelete_guard(plain), [])
+
+    def test_guard_ignores_a_slug_that_was_never_committed(self):
+        # A skill created and removed in the same session was never in HEAD;
+        # its absence is not an undecided removal.
+        (self.src / "gamma").mkdir()
+        (self.src / "gamma" / "SKILL.md").write_text("---\nname: gamma\n---\n",
+                                                     encoding="utf-8")
+        self.assertEqual(skills.misdelete_guard(self.src), [])
+        shutil.rmtree(self.src / "gamma")
+        self.assertEqual(skills.misdelete_guard(self.src), [])
+
+    def test_guard_does_not_flag_a_nested_skill_that_is_present(self):
+        # Regression, 2026-10-11: a skill nested inside a pack
+        # (<pack>/skills/<slug>/SKILL.md) must be judged by its exact committed
+        # path. Flattening to the basename and testing a top-level path invented
+        # 30 false "missing" skills on the real machine -- all present members of
+        # one pack. A false hit is worse than a miss.
+        nested = self.src / "video-pack" / "skills" / "clip"
+        nested.mkdir(parents=True)
+        (nested / "SKILL.md").write_text("---\nname: clip\n---\n", encoding="utf-8")
+        self._git("add", "-A")
+        self._git("commit", "-m", "add nested pack")
+        self.assertEqual(skills.misdelete_guard(self.src), [])
+
+    def test_guard_flags_a_nested_skill_that_is_actually_gone(self):
+        nested = self.src / "video-pack" / "skills" / "clip"
+        nested.mkdir(parents=True)
+        (nested / "SKILL.md").write_text("---\nname: clip\n---\n", encoding="utf-8")
+        self._git("add", "-A")
+        self._git("commit", "-m", "add nested pack")
+        shutil.rmtree(self.src / "video-pack")
+        self.assertEqual(skills.misdelete_guard(self.src), ["clip"])
+
+    def test_real_sync_refuses_and_exits_when_a_removal_is_undecided(self):
+        shutil.rmtree(self.src / "alpha")
+        env = {"MCPTOON_SKILLS_VIEWS": str(self.view)}
+        with self.assertRaises(SystemExit) as cm:
+            run_cli(["mcptoon", "skills", "sync", str(self.src)], env)
+        self.assertEqual(cm.exception.code, 1)
+        self.assertFalse((self.view / "alpha").exists(),
+                         "the gate must stop before any view is written")
+
+    def test_allow_tracked_deletes_proceeds(self):
+        shutil.rmtree(self.src / "alpha")
+        env = {"MCPTOON_SKILLS_VIEWS": str(self.view)}
+        run_cli(["mcptoon", "skills", "sync", str(self.src),
+                 "--allow-tracked-deletes"], env)
+        self.assertTrue((self.view / "beta").exists())
+
+    def test_dry_run_warns_but_does_not_exit(self):
+        # Stage-1 monitoring runs --dry; it must stay usable, and it writes
+        # nothing, so it warns rather than stopping.
+        shutil.rmtree(self.src / "alpha")
+        env = {"MCPTOON_SKILLS_VIEWS": str(self.view)}
+        buf = StringIO()
+        with patch.dict(os.environ, env), \
+                patch.object(sys, "argv", ["mcptoon", "skills", "sync", str(self.src), "--dry"]), \
+                redirect_stdout(buf), redirect_stderr(buf):
+            cli.main()
+        self.assertIn("mis-delete gate", buf.getvalue())
+        self.assertFalse(self.view.exists())
+
+
 class ArchiveFlagTests(unittest.TestCase):
     """`--archive` points drift/removal at the same graveyard tongbu uses."""
 

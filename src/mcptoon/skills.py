@@ -1505,6 +1505,8 @@ def _skills_usage() -> str:
         "                                          With no SRC it uses a default root only when that\n"
         "                                          is a link to the catalog — never a bare view.\n"
         "                    [--version-gate]      Block skills whose content moved but version did not\n"
+        "                    [--allow-tracked-deletes]  Proceed even if a skill is in git HEAD but\n"
+        "                                          gone from disk (an undecided removal; refused by default)\n"
         "                    [--derived roo|opencode|all]  Regenerate the flat .md views\n"
         "                    [--archive DIR]       Where drift/removals are parked (default <src>/../_archive)\n"
         "  mcptoon skills add <name> [--desc D]   Create a skill in the source\n"
@@ -2088,6 +2090,84 @@ def _git_tombstone(source: Path, rel_path: str, message: str) -> tuple[bool, str
     return True, rel
 
 
+def _find_repo(path: Path) -> Path | None:
+    """Nearest ancestor (or ``path`` itself) that is a git work tree, else None."""
+    for cand in (path, *path.parents):
+        if (cand / ".git").exists():
+            return cand
+    return None
+
+
+def _tracked_in_head(repo: Path, rel: str) -> bool:
+    """Is ``rel`` still tracked by HEAD? True = on disk gone but git still has it.
+
+    This is the whole mis-delete judgement: a path that vanished from the working
+    tree but is still in HEAD is an *undecided* removal (a fat-fingered name, a
+    different session that moved it aside), not a decision to delete. Treating it
+    as decided is how one manager makes another machine's `git pull` really lose
+    a skill. Mirrors the guard in the incumbent sync script (sync_skills.py).
+    """
+    try:
+        r = subprocess.run(["git", "cat-file", "-e", f"HEAD:{rel}"], cwd=str(repo),
+                           capture_output=True, text=True)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return r.returncode == 0
+
+
+def misdelete_guard(source: Path) -> list[str]:
+    """Skills still in git HEAD but missing from the source on disk.
+
+    ``sync`` prunes a view link whose source is gone — that is correct when the
+    removal was a *decision*, and destructive when it was not: one vanished
+    directory propagates to every view at once. So before writing, ask git
+    whether the missing skill was ever committed. A skill present in HEAD and
+    absent on disk is an undecided deletion; the caller refuses to proceed unless
+    ``--allow-tracked-deletes`` says the removal is intentional.
+
+    Best-effort and read-only: no repo, no git, or a git error all return ``[]``
+    (a normal command must not fail because git is unavailable).
+    """
+    repo = _find_repo(source)
+    if repo is None:
+        return []
+    rel = os.path.relpath(source, repo).replace("\\", "/")
+    rel = "" if rel == "." else rel
+    try:
+        r = subprocess.run(
+            ["git", "ls-tree", "-r", "HEAD", "--", rel or "."],
+            cwd=str(repo), capture_output=True, text=True)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if r.returncode != 0:
+        return []
+    missing: list[str] = []
+    for line in r.stdout.splitlines():
+        # `git ls-tree -r` prints "<mode> <type> <hash>\t<path>". Take the path
+        # after the tab rather than asking git for names only (that git option
+        # would be a flag literal this CLI's flag registry does not own).
+        if "\t" not in line:
+            continue
+        p = line.split("\t", 1)[1].strip()
+        # A skill is a directory holding SKILL.md: <...>/<slug>/SKILL.md
+        if not p.endswith("/SKILL.md"):
+            continue
+        # Judge the *exact committed path*, not a flattened basename. A skill
+        # can be nested (``<pack>/skills/<slug>/SKILL.md``); collapsing to the
+        # last directory then testing a top-level path invents a missing skill
+        # that is right there on disk. Measured 2026-10-11 on this machine:
+        # flattening reported 30 "missing" skills that were all nested members
+        # of ``video-seedance`` -- every one present. A false hit is worse than
+        # a miss: it makes a wrong answer look evidenced.
+        if (repo / p).is_file():
+            continue
+        slug = p.rsplit("/SKILL.md", 1)[0].rsplit("/", 1)[-1]
+        if slug:
+            missing.append(slug)
+    # Deduplicate, keep deterministic order.
+    return sorted(set(missing))
+
+
 def _print_derived_report(report: dict) -> None:
     tag = " (dry run — nothing written)" if report["dryRun"] else ""
     print(f"mcptoon skills sync --derived{tag}")
@@ -2345,6 +2425,30 @@ def _cmd_skills(rest: list[str], fmt: str, head_n: int = 0, max_chars: int = 0,
         archive = Path(_flag(args, "--archive")).expanduser() if _flag(args, "--archive") else None
         dry = "--dry" in args or "--dry-run" in args
         catalog = _source_skills(source)
+
+        # Mis-delete gate: sync prunes a view link whose source is gone. If that
+        # skill is still in git HEAD, the removal was never decided — it is a
+        # fat-fingered name or a directory another session moved aside — and
+        # pruning every view from it is how one machine's `git pull` really
+        # loses a skill. Refuse the WRITE (a --dry run only warns: it writes
+        # nothing, and Stage-1 monitoring needs it to stay usable).
+        missing = misdelete_guard(source)
+        if missing:
+            print(f"🛑 mis-delete gate: {len(missing)} skill(s) are in git HEAD but "
+                  f"missing from {source} — undecided removal", file=sys.stderr)
+            for slug in missing[:20]:
+                print(f"     {slug}", file=sys.stderr)
+            if dry:
+                print("   (dry run — nothing was written; a real sync would stop here)",
+                      file=sys.stderr)
+            elif "--allow-tracked-deletes" in args:
+                print("   --allow-tracked-deletes given: proceeding anyway", file=sys.stderr)
+            else:
+                print("   restore them (git checkout -- <path>), or, if the removal is "
+                      "real, delete from the source on purpose (`mcptoon skills remove "
+                      "<name>`) and re-run; pass --allow-tracked-deletes to proceed anyway",
+                      file=sys.stderr)
+                sys.exit(1)
 
         # The version gate runs BEFORE anything is written to a view, so a
         # blocked skill is never half-published.
