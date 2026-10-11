@@ -5,9 +5,39 @@ All notable changes to mcptoon will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.8.17] - 2026-10-11
 
 ### Added
+
+- **`mcptoon select "<task>"` — pick the few tools a task needs, with a pluggable
+  ranker.** Past roughly 40-50 tools the model starts choosing the wrong one, and
+  compressing the catalog does not fix accuracy. `select` answers the question
+  that decides whether the agent succeeds — which 3 tools to look at (default 3)
+  — instead of `search`'s "which tools match this keyword" (up to 20). The ranker
+  is pluggable through `select.engine`: `lexical` (the default, pure stdlib,
+  offline, no model) or `command` (run your own embedding or LLM ranker — one
+  JSON object in, one JSON array out), so a machine that already runs a ranker
+  gets semantic ranking without mcptoon taking a dependency (`dependencies = []`
+  stays true; CI enforces it). The engine that answered is always named in the
+  output, including when a configured `command` engine failed and the built-in
+  one took over — a silent fallback would leave a broken ranker undiscovered.
+  Also fixes a latent bug this surfaced: `config set` lowercased the value as
+  well as the key, which is fine for the enum settings and corrupts a free-text
+  one (a ranker path with any uppercase was stored mangled). Enums still accept
+  "ON" / "Off"; free text is stored verbatim. The skill documents the new command
+  (`mcptoon select`), and `tests/test_skill_package.py` now pins the five core
+  commands the skill must always name, so a shipped command cannot go unmentioned
+  in the file agents actually read.
+
+- **A self-contained Windows zip is attached to every release.** The winget PR
+  and the Chocolatey package both install a zip that contains a portable exe, and
+  only v0.8.3 ever had one — the script that made it hardcoded the version and
+  machine paths, so v0.8.4 .. v0.8.16 shipped with zero release assets and both
+  channels sat 13 versions behind PyPI with no error anywhere.
+  `scripts/build_portable_zip.py` is that script made version-generic (the wheel
+  comes from PyPI or `--wheel`, the embeddable CPython is pinned by sha256) and
+  runs three self-checks before writing the zip; `release-portable.yml` runs it
+  from the release tag and attaches the asset.
 
 - **The skill now checks that the CLI exists before using it.** A copy of
   `SKILL.md` travels on its own — an agent folder or a dotfiles repo copies the
@@ -35,6 +65,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   no-install command, and that the check precedes the first command table.
 
 ### Fixed
+
+- **A wedged server can no longer hang a command, and server failures are
+  explained in plain words.** `doctor`, `inspect` and `manifest` reported a
+  failure as a raw protocol string (`[RESPONSE_TIMEOUT] no JSON-RPC response for
+  request id 2 within 30s`). `manifest.explain_error` now turns the code into the
+  plain reason plus the next step, keeps the raw text for the real cause, and
+  never invents a diagnosis for an error it does not recognise; `doctor` names
+  the broken servers together at the end instead of "see above".
+
+  Same failure, test side: ~65 tests spawn real child processes (`npx`, `uvx`, an
+  MCP server over stdio), and one wedged child blocked its test forever — a run
+  that normally takes ~150s ran indefinitely, and killing it left the
+  grandchildren orphaned. `timeout = 120` in `pyproject.toml` now fails such a
+  test and names it, and `scripts/run_tests.ps1` puts a wall-clock ceiling on the
+  whole run and kills the process tree on expiry. Both verified: a probe that
+  spawns a 600s-sleeping child is killed in 21s with no orphan left.
 
 - **The skill's YAML frontmatter was invalid, so every strict host silently
   dropped the skill.** Since 0.8.16 the `description` — a double-quoted YAML
