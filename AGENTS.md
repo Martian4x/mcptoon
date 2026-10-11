@@ -106,6 +106,37 @@ Deliberate design limits, so the gate does not turn into noise:
 - Proving a gate still fires is part of using it:
   `release_sync.py --check --simulate-drift "Homebrew=0.8.1"` must exit 2.
 
+### Step 7 (added 2026-10-11) — prove the skill still loads in a host
+
+```powershell
+python scripts/check_skill_loadable.py     # from the ops zone, not this repo
+```
+
+The skill's frontmatter must parse with a **real** YAML parser. If it does not, the
+host does not error — it *drops the skill with a warning nobody reads*: the file
+ships, installs into every view, stays byte-identical in all three copies, and is
+never loadable. **Exit code 2 means at least one copy or installed view failed to
+parse — fix it before releasing.**
+
+This step exists because of a measured failure, not theory: the 0.8.16 skill
+(`6245006`, 2026-10-07) wrote `description` as a double-quoted scalar with two inner
+quotes left unescaped (`` `mcptoon docs resolve "<question>"` ``). A double-quoted
+scalar ends at the first unescaped `"`, so the value closed early; PyYAML and DSH's
+`yaml` package both rejected the block, and every strict host dropped the skill for
+**four days** while all mcptoon's own tooling stayed green. The in-repo guard
+(`tests/test_skill_package.py`) now pins the shape, but it only sees the three
+shipped copies — CI cannot see the installed views (the source skills tree and the
+per-agent skill folders) that a host actually reads. This checks both, and
+cross-checks against PyYAML rather than a home-grown rule.
+
+Design limits, so the check does not turn into noise:
+- **Blocking** = any copy or view whose frontmatter fails to parse.
+- **Advisory** = the description's length against the host's catalog budget
+  (currently 1024 chars; the skill is ~1900, which the host renders every turn).
+  It is printed, never compared, and never blocks a release.
+- It is a strict-parse proxy: if PyYAML accepts the block, every YAML-based host
+  will too. It cannot see a host that reads frontmatter without a YAML parser.
+
 Details that bit us during v0.7.4 (2026-09-05), so they are now part of the ritual:
 
 - **The version lives in five places.** `pyproject.toml`, `server.json`
