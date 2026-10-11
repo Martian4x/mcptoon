@@ -5,6 +5,80 @@ All notable changes to mcptoon will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.18] - 2026-10-11
+
+### Added
+
+- **`mcptoon skills doctor` — a read-only health check of one source catalog and
+  every view mirroring it.** It reports the same verdicts the incumbent sync
+  script reports, so the two can be compared during a migration: view health (a
+  whole-directory link, or a real directory holding every skill — a link OR a
+  byte-identical copy both count), stale links (into the source for a skill it
+  dropped), dangling links (target gone), foreign links (another manager's),
+  derived Roo/OpenCode files, frontmatter lint, and the mis-delete gate. It
+  writes nothing, so it is safe on a live machine, and exits 1 when it finds
+  anything. Two design points came from failures rather than taste: a copy view
+  is healthy when its bytes match (judging CatPaw's real-directory copy by
+  "must be a link" is a red light no sync can clear, which trained people to
+  ignore the doctor), and the uncommitted-deletions check is **advisory** — it
+  flagged 68 files on this machine, every one inside one skill whose `SKILL.md`
+  was untouched, i.e. an in-progress edit, not a lost skill. It is reported,
+  never a finding; the skill-scoped mis-delete gate is what refuses a write.
+- **`mcptoon skills sync` now refuses to prune views from an undecided removal.**
+  A view link whose source is gone is correct to prune when the removal was a
+  decision and destructive when it was not: one directory that vanished from the
+  source (a fat-fingered name, or a copy another session moved aside) propagates
+  to every view at once, and a machine that pulls reads the removal as decided.
+  The new gate asks git whether the missing skill was ever committed — still in
+  `HEAD` but absent on disk means *undecided* — and a real sync stops before
+  writing anything, saying how to restore it or how to say the removal is
+  intentional with `--allow-tracked-deletes`. A `--dry` run only warns. The
+  judgement uses the exact committed path, not a flattened basename: flattening
+  reported 30 false "missing" skills on this machine, every one a nested member
+  of one pack that was right there on disk, and a false hit is worse than a miss
+  because it makes a wrong answer look evidenced.
+
+### Fixed
+
+- **`mcptoon off` leaves no residue in a host config it created.** `off` promises
+  to put the machine back as it was. A CLI-only host (gemini, opencode, codex) is
+  told about the catalog through a pointer block appended to its global
+  instruction file; when that file did not exist yet — a fresh
+  `~/.gemini/GEMINI.md` — mcptoon created it to hold the block and `off` left a
+  0-byte file behind, residue the host can see. Stripping the block now removes
+  the file when nothing but whitespace is left, and keeps it (with its content)
+  otherwise; a file the user already had, or one whose text they pasted
+  themselves, is never deleted. Deliberately unchanged: a JSON config that held
+  only the gateway keeps its (now empty) `mcpServers` key, because removing it
+  would delete the file and `uninstall --yes` is specified to keep the user's
+  config file on disk.
+- **`mcptoon skills sync` reads `--archive`'s value as a value, not as a view.**
+  The positional scan kept every non-dash token, so `sync <src> --archive <gy>`
+  joined the archive path to the view list and wrote the catalog into the
+  graveyard while the real views went untouched. `_positionals` now skips a
+  value-taking flag's value, the way the query text was already handled.
+- **The mis-delete gate no longer blocks the documented "remove, then sync"
+  flow.** `remove` parks a decided removal in `<archive>/removed/<stamp>_<name>`;
+  the gate did not look there, so it reported the skill as an undecided removal
+  and told the user to run the command they had just run. It now consults every
+  conventional graveyard (the `--archive` value, `<src>/../_archive`,
+  `<src>/../skills_archive`).
+- **`remove_gateway_from_agent(id, path=...)` now redirects the pointer leg
+  too.** A host with two legs (Claude Code: a JSON entry plus a block in
+  `~/.claude/CLAUDE.md`) still had its *instruction file* leg derived from the
+  agent id, so a caller that redirected `path=` alone stripped the real
+  `~/.claude/CLAUDE.md` — which is not hypothetical: a probe that copied each
+  config into a temp dir and passed `path=` stripped the developer's own memory
+  file (the file was restored byte-for-byte). A new `pointer=` override keeps
+  both legs in a temp dir; `off` passes neither, so its behavior is unchanged.
+
+### Internal
+
+- Added `scripts/cleanroom/`: a throwaway-root end-to-end toolkit that runs the
+  real binary against seeded stubs of all twelve agent hosts, then hashes this
+  machine's real configs before and after to prove none moved. Two tiers (Windows
+  host paths; a Linux container) over one shared suite. Not shipped in the wheel.
+
 ## [0.8.17] - 2026-10-11
 
 ### Added
