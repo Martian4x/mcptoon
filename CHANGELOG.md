@@ -33,7 +33,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and the Chocolatey package both install a zip that contains a portable exe, and
   only v0.8.3 ever had one — the script that made it hardcoded the version and
   machine paths, so v0.8.4 .. v0.8.16 shipped with zero release assets and both
-  channels sat 13 versions behind PyPI with no error anywhere.
+  channels sat 13 versions behind PyPI with no error anywhere. (v0.8.16 now has a
+  zip, but it was attached two days after the release, when this workflow first
+  ran — not at publish time.)
   `scripts/build_portable_zip.py` is that script made version-generic (the wheel
   comes from PyPI or `--wheel`, the embeddable CPython is pinned by sha256) and
   runs three self-checks before writing the zip; `release-portable.yml` runs it
