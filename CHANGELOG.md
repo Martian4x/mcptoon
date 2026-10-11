@@ -5,6 +5,35 @@ All notable changes to mcptoon will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **The skill now checks that the CLI exists before using it.** A copy of
+  `SKILL.md` travels on its own — an agent folder or a dotfiles repo copies the
+  one file and does not install the binary with it — so the common failure is an
+  agent holding the skill on a machine where `mcptoon` does not exist. Every
+  command in the skill then reads as an instruction that cannot run, and the
+  skill said nothing about checking first. Step 0 now runs `mcptoon --version`
+  before the command tables, gives the install path (`pip install mcptoon`, or
+  `uvx mcptoon …` / `pipx install mcptoon`), and tells the agent to say what it
+  did rather than report success it never had. Rules gain #6 (the file travels
+  alone) and #7 (a stale copy is the second failure after a missing binary —
+  judge by `mcptoon --help`, and never compare the skill's frontmatter version
+  with the CLI's version, they are different systems).
+
+  Measured failure mode (2026-10-11): `meowveloper/nix-config` vendored this
+  skill into `dot-files/programs/.agents/skills/mcptoon/SKILL.md` (233 lines,
+  pinned at skill 1.2.0) and never installed the CLI — a full-tree scan of that
+  commit finds no `mcptoon.nix` and no binary, only the skill. The copy was
+  deleted five days later in a batch "update and cleanup". A skill that cannot
+  run is a skill that gets removed.
+
+  Skill version `1.3.0` → `1.4.0`. All three distribution copies (packaged,
+  repo-root, Claude Code plugin) stay byte-identical, and
+  `tests/test_skill_package.py` pins the check, the install command, the
+  no-install command, and that the check precedes the first command table.
+
 ## [0.8.16] - 2026-10-07
 
 ### Added
