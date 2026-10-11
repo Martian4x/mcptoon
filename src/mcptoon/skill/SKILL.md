@@ -1,15 +1,37 @@
 ---
 name: mcptoon
-version: 1.3.0
+version: 1.4.0
 description: "Compress MCP tool discovery with the mcptoon CLI. Trigger when a session has a large MCP tool catalog (many servers/tools), when the user mentions token cost, tool discovery, mcptoon, or asks to list/call MCP tools efficiently. Also route here when the user says the MCP tool list is too large, the agent context window is filling up with tool schemas, or they need the same MCP servers configured across Claude Code, Cursor, Codex, Cline, Windsurf and other agents. Also covers managing an agent's skill catalog with `mcptoon skills` (list / resolve / sync / add / remove, plus a version gate, derived Roo/OpenCode views, and tombstoned removals). Also route here when a doc folder is too big to read — 文档太多、AGENTS.md / CONTEXT.md / docs/ 太大、不知道该读哪个文件、想省 token 读文档、整读一个目录太贵: `mcptoon docs index <dir>` then `mcptoon docs resolve "<question>"` returns the few files worth opening — read one chapter, not all — offline, no LLM, descriptions derived from headings. Also route here when the tool catalog is large and the agent keeps picking the wrong tool — 工具太多选不准、超过 40 个工具后模型开始乱选、为某个任务挑最该用的几个工具: `mcptoon select "<task>"` returns the top few (default 3), and its ranker is pluggable via `mcptoon config set select.engine command` (run your own embeddings/LLM ranker, no dependency added). Also route here when the user's MCP tools seem to have gone missing: a gateway is mounted in COMPACT exposure by default, so it withholds the upstream tool list from `tools/list` (they stay callable) — explain the preset and switch back with `mcptoon config set exposure full`. Also route here when a tool *result* looks truncated, compressed, or \"lost data\": result compression is on by default, originals come back via `mcptoon_retrieve handle=<id>`, and it turns off with `mcptoon config set compress off`. mcptoon compresses 71,929 tokens of tool schemas to 581 (-99.2%) and serves as an MCP 2026-07-28 stateless-first bridge."
 ---
 
 # mcptoon — MCP tool-catalog compression
 
-mcptoon is a zero-dependency CLI. If it is not installed yet, one command sets
-it up: `pip install mcptoon` (363KB, installs in seconds, nothing else pulled
-in). It gives you a compressed view of the user's MCP tools and calls them
-back.
+## Step 0 — is it installed? (do this before anything else)
+
+**Before you run any `mcptoon …` command below, check that the CLI is actually on
+this machine.** The skill travels alone: agents and dotfiles repos copy this one
+file, and the binary is not part of the copy. So the common failure is an agent
+holding this skill on a machine where `mcptoon` does not exist — it then reads the
+commands as instructions, tries them, and they fail.
+
+```bash
+mcptoon --version        # if this prints a version, skip to the next section
+```
+
+If that fails, do **not** keep going through the tables below — install it first:
+
+```bash
+pip install mcptoon          # or: uvx mcptoon …  /  pipx install mcptoon
+```
+
+`uvx mcptoon <args>` runs it with no install at all, if `uvx` is available. Then
+say one plain sentence to the user — for example *"this skill is installed but the
+mcptoon CLI is not; I installed it"* — and continue. Never silently pretend the
+commands worked, and never tell the user the feature is unavailable when a
+one-line install is the whole gap.
+
+mcptoon is a zero-dependency CLI (363KB, installs in seconds, nothing else pulled
+in). It gives you a compressed view of the user's MCP tools and calls them back.
 
 ## When to use what
 
@@ -276,6 +298,17 @@ and only when `mcptoon serve` is actually registered with that agent.
    `.mcp.json`, tool discovery is already compressed for the host agent; use
    the CLI commands above in terminal contexts or when the bridge is not
    connected.
+6. **This file travels alone — check for the binary before using it.** A copy of
+   this skill in an agent's folder or a dotfiles repo does not install mcptoon.
+   Run `mcptoon --version` first (Step 0 above); if it fails, install with
+   `pip install mcptoon` (or run it via `uvx mcptoon …`) before running anything
+   else. Say what you did — do not report commands as working when they were
+   never installed.
+7. **This skill describes the CLI at the version in the frontmatter above.** If
+   `mcptoon --version` prints something older, some commands below may not exist
+   yet — upgrade first (`pip install --upgrade mcptoon`), then retry. An
+   out-of-date copy is the second-most-common reason these commands fail after a
+   missing binary.
 
 ## Setup
 

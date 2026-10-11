@@ -202,6 +202,45 @@ class TestThreeCopiesAgree:
             "the guard would not have caught the real regression it was written for"
         )
 
+    def test_the_skill_teaches_the_binary_may_be_missing(self):
+        """The skill travels alone; the binary does not travel with it.
+
+        Measured failure mode this guards (2026-10-11): a dotfiles repo vendored
+        only `skills/mcptoon/SKILL.md` and never installed the CLI. Every command
+        in the skill was then an instruction that could not run — and the skill
+        said nothing about checking first, so the failure was silent from both
+        ends. The copy was deleted five days later. This pins the one paragraph
+        that turns that into a one-line install instead of a dead skill.
+
+        It asserts a *check* and an *install path* exist, in that order, in the
+        body — not the exact wording, so the prose stays free to improve.
+        """
+        text = COPIES["packaged"].read_text(encoding="utf-8")
+        assert "mcptoon --version" in text, (
+            "the skill must tell the agent to check the binary before using it"
+        )
+        assert "pip install mcptoon" in text, (
+            "the skill must give the install command for a machine without the CLI"
+        )
+        assert "uvx mcptoon" in text, (
+            "the skill must offer the no-install path (uvx) as well"
+        )
+        # The check must come before the command tables, or an agent follows the
+        # tables first and only then discovers nothing is installed.
+        assert text.index("mcptoon --version") < text.index("## When to use what"), (
+            "the install check must appear before the first command table"
+        )
+
+    def test_the_missing_binary_guard_actually_bites(self):
+        """Feed the guard the exact edit it exists to catch: the Step 0 paragraph
+        deleted, leaving the command tables as the first thing an agent reads."""
+        text = COPIES["packaged"].read_text(encoding="utf-8")
+        assert "mcptoon --version" in text, "the real skill lost the paragraph this test is about"
+        gutted = text.replace("mcptoon --version", "mcptoon version-check")
+        assert "mcptoon --version" not in gutted, (
+            "the guard would not have caught the paragraph being removed"
+        )
+
 
 class TestFrontmatterIsRealYaml:
     """Every shipped copy's frontmatter must parse as *actual* YAML.
