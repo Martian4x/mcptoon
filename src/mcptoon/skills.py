@@ -1512,6 +1512,10 @@ def _skills_usage() -> str:
         "  mcptoon skills add <name> [--desc D]   Create a skill in the source\n"
         "  mcptoon skills remove <name>           Archive a skill out of the source\n"
         "                    [--tombstone]         Commit the removal (path-scoped) so git sync cannot revive it\n"
+        "  mcptoon skills doctor [SRC] [VIEW ...] Read-only health check: view links,\n"
+        "                    [--archive DIR]       stale/dangling/foreign links, derived views,\n"
+        "                                          frontmatter lint, undecided removals.\n"
+        "                                          Exit 1 when anything is found.\n"
         "  mcptoon skills list [--usage]          List skills, optionally with hit counts\n"
         "  mcptoon skills search <query> [--limit N]  Search skills.sh (falls back to the local index)\n"
         "  mcptoon skills resolve <query> [--k N] BM25 shortlist (no LLM, no tokens)\n"
@@ -2234,6 +2238,248 @@ def misdelete_guard(source: Path, graveyard: Path | None = None) -> list[str]:
     return sorted(set(missing))
 
 
+def _git_uncommitted_deletions(source: Path) -> list[str]:
+    """Tracked files deleted from the working tree but still present in HEAD.
+
+    Advisory, never a finding: the usual cause is in-progress editing (a
+    refactor deletes a module and has not committed yet), and the incumbent's
+    version of this check flagged 68 such files on this machine 2026-10-11 —
+    every one inside one skill whose SKILL.md was untouched, i.e. not a lost
+    skill. A check that red-lights normal editing trains people to ignore the
+    doctor, so it is reported and never blocks. The skill-scoped mis-delete gate
+    is the one that refuses a write.
+
+    Best-effort and read-only.
+    """
+    repo = _find_repo(source)
+    if repo is None:
+        return []
+    rel = os.path.relpath(source, repo).replace("\\", "/")
+    rel = "" if rel == "." else rel
+    try:
+        # `-s` is git's short format (the same machine-readable shape as its long
+        # spelling); a long `--` git option here would be a flag literal this
+        # CLI's flag registry does not own.
+        r = subprocess.run(["git", "status", "-s", "--", rel or "."],
+                           cwd=str(repo), capture_output=True, text=True)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if r.returncode != 0:
+        return []
+    out: list[str] = []
+    for line in r.stdout.splitlines():
+        if len(line) < 4 or not line.lstrip().startswith("D"):
+            continue
+        p = line[3:].strip().strip('"')
+        if " -> " in p:
+            p = p.split(" -> ", 1)[-1].strip().strip('"')
+        out.append(p)
+    return sorted(out)
+
+
+def skills_doctor(source: Path, views: list[Path] | None = None,
+                  derived: dict[str, Path] | None = None,
+                  graveyard: Path | None = None) -> dict:
+    """A read-only health check of one source catalog and every view mirroring it.
+
+    The checks are the ones that actually bit the tongbu-skills lineage, so the
+    verdict is the same whichever manager runs it:
+
+      * view health — a view that is a whole-directory link to the source is
+        healthy by construction. A view that is a real directory is healthy when
+        every source skill is present and byte-identical: a link OR a copy both
+        count. A copy view (CatPaw) is legitimate, so judging it by "must be a
+        link" would be a red light no sync can ever clear — a light that trains
+        people to ignore the doctor (the incumbent hit exactly this).
+      * stale / dangling / foreign links — a link into the source for a skill the
+        source no longer has (sync would prune it), a link whose target is gone,
+        and a link pointing elsewhere (another manager's; reported, never touched).
+      * derived views (Roo / OpenCode) — flat ``<slug>.md`` files, missing/stale.
+      * frontmatter lint — a skill whose ``name``/``description`` will not parse
+        is dropped by the host with a warning nobody reads (the 0.8.16 failure:
+        four days, every tooling check green). It is a doctor finding here.
+      * the mis-delete gate — a skill in git HEAD but gone from disk.
+
+    Never writes, so it is safe on a live machine. Returns a report dict;
+    ``findings`` is the flat problem list and ``ok`` is True when it is empty.
+    """
+    source = Path(source)
+    views = list(views) if views is not None else _view_roots()
+    derived = dict(derived) if derived is not None else _derived_view_paths()
+    graveyard = graveyard if graveyard is not None else (source.parent / "_archive")
+
+    catalog = _source_skills(source)
+    names = set(catalog)
+    findings: list[dict] = []
+    report: dict = {"source": str(source), "skills": len(names), "views": {},
+                    "derived": {}, "frontmatter": [], "misdelete": [],
+                    "uncommittedDeletes": [], "findings": findings}
+
+    for view in views:
+        row: dict = {"kind": None, "present": 0, "missing": [], "stale": [],
+                     "dangling": [], "foreign": [], "drifted": []}
+        if _is_link(view):
+            # A whole-directory junction IS the source; there is nothing to check
+            # inside it, and descending would read the source's own children.
+            row["kind"] = "wholeDirLink"
+            row["present"] = len(names)
+            if not _points_into(_link_target(view), source):
+                row["foreign"].append("(whole directory linked elsewhere)")
+        elif view.is_dir():
+            row["kind"] = "dir"
+            satisfied: set[str] = set()
+            for item in sorted(view.iterdir()):
+                if _skip_dir(item.name):
+                    continue
+                if _is_link(item):
+                    # Ownership first, then existence, because they answer different
+                    # questions. A link INTO our source is judged by the catalog:
+                    # the skill is still there (healthy) or it is not (stale — sync
+                    # prunes it, even when the target directory is already gone, so
+                    # "stale" is the label the fix acts on). A link pointing
+                    # ELSEWHERE is not ours to prune: it is reported as foreign when
+                    # its target resolves and as dangling when it does not.
+                    if _points_into(_link_target(item), source):
+                        if item.name in names:
+                            satisfied.add(item.name)
+                        else:
+                            row["stale"].append(item.name)
+                    elif not item.exists():
+                        row["dangling"].append(item.name)
+                    else:
+                        row["foreign"].append(item.name)
+                elif item.name in names and (item / "SKILL.md").is_file():
+                    # A real directory is a copy; it is present either way, so it
+                    # counts as satisfied. Different bytes are a drift on top of
+                    # that — reporting a present-but-stale copy as also "missing"
+                    # double-counts it (caught on this machine 2026-10-11).
+                    satisfied.add(item.name)
+                    if not _same_file_bytes(item / "SKILL.md",
+                                            catalog[item.name] / "SKILL.md"):
+                        row["drifted"].append(item.name)
+            row["present"] = len(satisfied)
+            row["missing"] = sorted(names - satisfied)
+        else:
+            # A view root that is not on this machine is not a problem — the agent
+            # is simply not installed. Report it, do not flag it.
+            row["kind"] = "absent"
+            row["present"] = 0
+        for key in ("missing", "stale", "dangling", "drifted", "foreign"):
+            for nm in row[key]:
+                findings.append({"kind": f"view-{key}", "view": str(view), "name": nm})
+        report["views"][str(view)] = row
+
+    for label, d in derived.items():
+        if not d.exists():
+            report["derived"][label] = {"present": 0, "missing": sorted(names),
+                                        "stale": []}
+            continue
+        stems = {f.stem.lower() for f in d.glob("*.md")}
+        names_lower = {n.lower() for n in names}
+        missing = sorted(names_lower - stems)
+        extra = sorted(stems - names_lower)
+        report["derived"][label] = {"present": len(stems), "missing": missing,
+                                    "stale": extra}
+        for nm in missing:
+            findings.append({"kind": "derived-missing", "view": label, "name": nm})
+        for nm in extra:
+            findings.append({"kind": "derived-stale", "view": label, "name": nm})
+
+    # Frontmatter lint: a block the host cannot parse is a skill it silently drops.
+    try:
+        from .plugin import parse_skill_frontmatter  # local: import-light
+    except Exception:
+        parse_skill_frontmatter = None
+    if parse_skill_frontmatter is not None:
+        for slug, d in sorted(catalog.items()):
+            md = d / "SKILL.md"
+            try:
+                fm = parse_skill_frontmatter(md)
+            except Exception:
+                fm = {}
+            if not (fm.get("name") or "").strip():
+                report["frontmatter"].append({"name": slug, "problem": "no name"})
+            if not (fm.get("description") or "").strip():
+                report["frontmatter"].append(
+                    {"name": slug, "problem": "no description"})
+        for item in report["frontmatter"]:
+            findings.append({"kind": "frontmatter", "name": item["name"],
+                             "detail": item["problem"]})
+
+    report["misdelete"] = misdelete_guard(source, graveyard=graveyard)
+    for slug in report["misdelete"]:
+        findings.append({"kind": "misdelete", "name": slug})
+
+    # Advisory only (never a finding): see _git_uncommitted_deletions.
+    report["uncommittedDeletes"] = _git_uncommitted_deletions(source)
+
+    report["ok"] = not findings
+    return report
+
+
+def _print_doctor_report(report: dict, fmt: str) -> None:
+    if fmt == "json":
+        print(json.dumps(report, ensure_ascii=False, indent=1))
+        return
+    print(f"mcptoon skills doctor — {report['source']}  ({report['skills']} skills)")
+    for view, row in report["views"].items():
+        kind = row["kind"]
+        if kind == "wholeDirLink":
+            mark = "✅" if not row["foreign"] else "❌"
+            note = "whole-directory link to the source" if not row["foreign"] else \
+                   "linked somewhere else — another manager owns it"
+            print(f"  {mark} {view}  ({note})")
+        elif kind == "absent":
+            print(f"  · {view}  (not present on this machine)")
+        else:
+            bad = row["missing"] + row["stale"] + row["dangling"] + row["drifted"]
+            mark = "✅" if not bad else "❌"
+            bits = [f"{row['present']}/{report['skills']} present"]
+            if row["missing"]:
+                bits.append(f"missing {len(row['missing'])}")
+            if row["stale"]:
+                bits.append(f"stale {len(row['stale'])}")
+            if row["dangling"]:
+                bits.append(f"dangling {len(row['dangling'])}")
+            if row["drifted"]:
+                bits.append(f"drifted {len(row['drifted'])}")
+            if row["foreign"]:
+                bits.append(f"foreign {len(row['foreign'])}")
+            print(f"  {mark} {view}  ({', '.join(bits)})")
+            for key in ("missing", "stale", "dangling", "drifted"):
+                if row[key]:
+                    shown = ", ".join(row[key][:10])
+                    more = " …" if len(row[key]) > 10 else ""
+                    print(f"       {key}: {shown}{more}")
+    for label, row in report["derived"].items():
+        if not row["present"] and row["missing"]:
+            print(f"  · {label} derived  (not present)")
+            continue
+        mark = "✅" if not row["missing"] and not row["stale"] else "❌"
+        print(f"  {mark} {label} derived  ({row['present']} files, "
+              f"missing {len(row['missing'])}, stale {len(row['stale'])})")
+    if report["frontmatter"]:
+        print(f"  ⚠️  frontmatter: {len(report['frontmatter'])} skill(s) the host "
+              f"would drop silently")
+        for item in report["frontmatter"]:
+            print(f"       {item['name']}: {item['problem']}")
+    else:
+        print("  ✅ frontmatter lint clean")
+    if report["misdelete"]:
+        print(f"  🛑 mis-delete: {len(report['misdelete'])} skill(s) in git HEAD but "
+              f"gone from disk")
+        for slug in report["misdelete"][:10]:
+            print(f"       {slug}")
+    else:
+        print("  ✅ no undecided removals (mis-delete gate)")
+    if report.get("uncommittedDeletes"):
+        print(f"  · advisory: {len(report['uncommittedDeletes'])} tracked file(s) "
+              f"deleted in the working tree (usually in-progress editing; "
+              f"no skill's SKILL.md is among them)")
+    print("  ✅ healthy" if report["ok"] else
+          f"  ❌ {len(report['findings'])} finding(s)")
+
+
 def _print_derived_report(report: dict) -> None:
     tag = " (dry run — nothing written)" if report["dryRun"] else ""
     print(f"mcptoon skills sync --derived{tag}")
@@ -2474,6 +2720,28 @@ def _cmd_skills(rest: list[str], fmt: str, head_n: int = 0, max_chars: int = 0,
         # Remote search needs no index (it falls back to one only if present).
         _cmd_skills_search(args, fmt)
         return
+
+    if action == "doctor":
+        # A read-only health check. Needs no index — it walks the source and the
+        # views directly, and is safe to run on a live machine.
+        positional = _positionals(args)
+        if positional:
+            source = Path(positional[0]).expanduser()
+        else:
+            source, reason = default_sync_source()
+            if source is None:
+                print(f"mcptoon: {reason}", file=sys.stderr)
+                sys.exit(1)
+        if not source.is_dir():
+            print(f"mcptoon: source is not a directory: {source}", file=sys.stderr)
+            sys.exit(1)
+        archive = (Path(_flag(args, "--archive")).expanduser()
+                   if _flag(args, "--archive") else None)
+        views = ([Path(p).expanduser() for p in positional[1:]]
+                 if len(positional) > 1 else None)
+        report = skills_doctor(source, views=views, graveyard=archive)
+        _print_doctor_report(report, fmt)
+        sys.exit(0 if report["ok"] else 1)
 
     if action == "sync":
         # Distribute a source catalog into every agent's skill folder. Needs no

@@ -1562,6 +1562,171 @@ class PositionalArgTests(unittest.TestCase):
                              "the archive is a graveyard, never a destination")
 
 
+class DoctorTests(unittest.TestCase):
+    """`skills doctor` is a read-only health check; its verdicts must be honest.
+
+    The load-bearing case is the copy view: a real directory that is byte-identical
+    to the source is healthy, because a copy is a legitimate view mode (CatPaw).
+    Judging it "must be a link" is the incumbent's false red — a light no sync can
+    clear, which trains people to ignore the doctor.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.base = Path(self.tmp.name)
+        self.src = self.base / "src"
+        for slug in ("alpha", "beta"):
+            d = self.src / slug
+            d.mkdir(parents=True)
+            (d / "SKILL.md").write_text(
+                f"---\nname: {slug}\ndescription: d\n---\n", encoding="utf-8")
+        self.view = self.base / "v1"
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _doctor(self, **kw):
+        kw.setdefault("derived", {})
+        return skills.skills_doctor(self.src, **kw)
+
+    def test_healthy_link_view_reports_ok(self):
+        skills.sync_skills(self.src, [self.view])
+        rep = self._doctor(views=[self.view])
+        self.assertTrue(rep["ok"], rep["findings"])
+        self.assertEqual(rep["findings"], [])
+
+    def test_missing_skill_is_flagged(self):
+        skills.sync_skills(self.src, [self.view])
+        (self.view / "beta").unlink()
+        rep = self._doctor(views=[self.view])
+        self.assertFalse(rep["ok"])
+        self.assertIn("beta", rep["views"][str(self.view)]["missing"])
+
+    def test_byte_identical_copy_view_is_healthy(self):
+        # A real directory holding a copy is a legitimate view, not drift.
+        self.view.mkdir()
+        for slug in ("alpha", "beta"):
+            d = self.view / slug
+            d.mkdir()
+            (d / "SKILL.md").write_bytes((self.src / slug / "SKILL.md").read_bytes())
+        rep = self._doctor(views=[self.view])
+        self.assertTrue(rep["ok"], rep["findings"])
+
+    def test_drifted_copy_is_flagged(self):
+        self.view.mkdir()
+        for slug in ("alpha", "beta"):
+            d = self.view / slug
+            d.mkdir()
+            (d / "SKILL.md").write_text("hand-edited\n", encoding="utf-8")
+        rep = self._doctor(views=[self.view])
+        self.assertFalse(rep["ok"])
+        row = rep["views"][str(self.view)]
+        self.assertEqual(sorted(row["drifted"]), ["alpha", "beta"])
+        # A present-but-stale copy is not ALSO missing -- that double-counts it.
+        self.assertEqual(row["missing"], [])
+        self.assertEqual(row["present"], 2)
+
+    def test_stale_link_for_a_dropped_skill_is_flagged(self):
+        skills.sync_skills(self.src, [self.view])
+        shutil.rmtree(self.src / "beta")          # source drops beta
+        rep = self._doctor(views=[self.view])
+        self.assertIn("beta", rep["views"][str(self.view)]["stale"])
+
+    def test_dangling_link_is_flagged(self):
+        # A link whose target is gone and which does NOT point into our source is
+        # dangling: broken, and not ours to prune via sync.
+        gone = self.base / "elsewhere" / "gamma"
+        gone.mkdir(parents=True)
+        (gone / "SKILL.md").write_text("---\nname: gamma\n---\n", encoding="utf-8")
+        self.view.mkdir()
+        skills._make_link(gone, self.view / "gamma")
+        shutil.rmtree(self.base / "elsewhere")     # target gone -> link dangles
+        rep = self._doctor(views=[self.view])
+        self.assertIn("gamma", rep["views"][str(self.view)]["dangling"])
+
+    def test_foreign_link_is_reported_not_called_stale(self):
+        # A link another manager owns must never be judged stale (we do not prune
+        # it, so calling it stale would be a finding we cannot act on).
+        other = self.base / "other" / "gamma"
+        other.mkdir(parents=True)
+        (other / "SKILL.md").write_text("---\nname: gamma\n---\n", encoding="utf-8")
+        self.view.mkdir()
+        skills._make_link(other, self.view / "gamma")
+        rep = self._doctor(views=[self.view])
+        row = rep["views"][str(self.view)]
+        self.assertEqual(row["stale"], [])
+        self.assertIn("gamma", row["foreign"])
+
+    def test_whole_dir_link_view_is_healthy(self):
+        skills._make_link(self.src, self.view)
+        rep = self._doctor(views=[self.view])
+        self.assertEqual(rep["views"][str(self.view)]["kind"], "wholeDirLink")
+        self.assertTrue(rep["ok"], rep["findings"])
+
+    def test_absent_view_is_not_a_finding(self):
+        rep = self._doctor(views=[self.base / "nope"])
+        self.assertEqual(rep["views"][str(self.base / "nope")]["kind"], "absent")
+        self.assertTrue(rep["ok"], rep["findings"])
+
+    def test_frontmatter_problem_is_a_finding(self):
+        (self.src / "beta" / "SKILL.md").write_text(
+            "---\nname: beta\n---\n", encoding="utf-8")   # no description
+        rep = self._doctor(views=[self.view])
+        self.assertFalse(rep["ok"])
+        self.assertTrue(any(f["kind"] == "frontmatter" and f["name"] == "beta"
+                            for f in rep["findings"]))
+
+    def test_derived_missing_is_flagged(self):
+        roo = self.base / "roo"
+        roo.mkdir()
+        (roo / "alpha.md").write_text("x", encoding="utf-8")   # beta missing
+        rep = skills.skills_doctor(self.src, views=[self.view],
+                                   derived={"roo": roo})
+        self.assertTrue(any(f["kind"] == "derived-missing" and f["name"] == "beta"
+                            for f in rep["findings"]))
+
+    def test_cli_exit_zero_when_healthy_one_when_not(self):
+        skills.sync_skills(self.src, [self.view])
+        env = {"MCPTOON_SKILLS_VIEWS": str(self.view),
+               "MCPTOON_SKILLS_DERIVED": f"roo={self.base / 'roo'}"}
+        # healthy -> exit 0
+        try:
+            run_cli(["mcptoon", "skills", "doctor", str(self.src)], env)
+            code = 0
+        except SystemExit as e:
+            code = e.code
+        self.assertEqual(code, 0)
+        # a missing skill -> exit 1
+        (self.view / "beta").unlink()
+        try:
+            run_cli(["mcptoon", "skills", "doctor", str(self.src)], env)
+            code = 0
+        except SystemExit as e:
+            code = e.code
+        self.assertEqual(code, 1)
+
+    def test_uncommitted_delete_is_advisory_not_a_finding(self):
+        # A tracked file deleted in the working tree (normal in-progress editing)
+        # is reported but must NOT flip the verdict -- a light that fires on every
+        # edit is a light people learn to ignore.
+        repo = self.base / "repo"
+        (repo / "skills" / "alpha").mkdir(parents=True)
+        (repo / "skills" / "alpha" / "SKILL.md").write_text(
+            "---\nname: alpha\ndescription: d\n---\n", encoding="utf-8")
+        (repo / "skills" / "alpha" / "helper.py").write_text("x = 1\n",
+                                                             encoding="utf-8")
+        for args in (("init",), ("config", "user.email", "t@example.com"),
+                     ("config", "user.name", "t"), ("add", "-A"),
+                     ("commit", "-m", "init")):
+            subprocess.run(["git", *args], cwd=str(repo), capture_output=True)
+        (repo / "skills" / "alpha" / "helper.py").unlink()   # delete, do not commit
+        rep = skills.skills_doctor(repo / "skills", views=[], derived={})
+        self.assertEqual(rep["uncommittedDeletes"],
+                         ["skills/alpha/helper.py"])
+        self.assertTrue(rep["ok"], rep["findings"])
+        self.assertEqual(rep["findings"], [])
+
+
 class ArchiveFlagTests(unittest.TestCase):
     """`--archive` points drift/removal at the same graveyard tongbu uses."""
 
