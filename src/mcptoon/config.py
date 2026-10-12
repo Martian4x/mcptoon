@@ -506,6 +506,85 @@ def resolve_server_name(name: str) -> str:
     return name
 
 
+# ─── Self-reference guard ───
+#
+# `mcptoon serve` is the gateway itself. `mcptoon sync --self` deliberately
+# writes a `mcptoon` entry into an *agent's* config so the model can see the
+# gateway. That entry must NEVER end up in mcptoon's OWN server list, because
+# `serve` loads that list and would launch a second `mcptoon serve`, which
+# loads the same list again — an unbounded fork bomb with no error and no log.
+#
+# Measured 2026-10-12: 294 live `mcptoon serve` processes, 10.4 GB RAM, count
+# still climbing. It arrived via `mcptoon import` / `init --auto`, whose
+# scanners read the agent configs that `sync` had (correctly) written.
+
+#: Reserved server name for the gateway's own entry.
+SELF_SERVER_NAME = "mcptoon"
+
+
+def _looks_like_self_command(cfg) -> bool:
+    """True when this server entry's argv would launch `mcptoon serve`.
+
+    Compares whole argv *tokens*, never substrings: `python -m mcptoon
+    demo-server` runs a different program, and a substring test on "serve"
+    would match "demo-**serve**r" and wrongly drop it (a real test,
+    `test_self_entry_is_written_and_the_handshake_succeeds`, caught exactly
+    that false positive).
+
+    Checks the argv, not just the name, so a self-entry that was renamed still
+    gets caught. Both `command` and `args` are accepted as str or list, which
+    are the two shapes seen in the wild.
+    """
+    if not isinstance(cfg, dict):
+        return False
+    cmd = cfg.get("command")
+    if isinstance(cmd, str):
+        parts = cmd.split()
+    elif isinstance(cmd, list):
+        parts = [str(x) for x in cmd]
+    else:
+        return False
+    args = cfg.get("args") or []
+    if isinstance(args, list):
+        parts += [str(a) for a in args if isinstance(a, (str, int))]
+    elif isinstance(args, str):
+        parts += args.split()
+
+    def _is_mcptoon_token(tok: str) -> bool:
+        base = tok.replace("\\", "/").rsplit("/", 1)[-1].lower()
+        for ext in (".exe", ".cmd", ".bat", ".py"):
+            if base.endswith(ext):
+                base = base[: -len(ext)]
+        return base == "mcptoon"
+
+    has_mcptoon = any(_is_mcptoon_token(t) for t in parts)
+    has_serve = any(t.replace("\\", "/").rsplit("/", 1)[-1].lower() == "serve"
+                    for t in parts)
+    return has_mcptoon and has_serve
+
+
+def _is_self_entry(name, cfg) -> bool:
+    """True when this entry would make the gateway launch itself.
+
+    Two independent signals — the reserved name, or a self-launching argv.
+    Either one is enough to be a fork bomb.
+    """
+    if str(name).strip().lower() == SELF_SERVER_NAME:
+        return True
+    return _looks_like_self_command(cfg)
+
+
+def strip_self_entries(servers: dict) -> dict:
+    """Drop every entry that would make the gateway launch itself.
+
+    Applied on the read path (`load_config`) as well as the write paths, so a
+    hand-edited or imported self-entry can never reach a running `serve`.
+    """
+    if not isinstance(servers, dict):
+        return {}
+    return {k: v for k, v in servers.items() if not _is_self_entry(k, v)}
+
+
 # ─── Config loading ───
 
 def _servers_section(data) -> dict:
@@ -604,7 +683,10 @@ def load_config() -> dict:
         except json.JSONDecodeError:
             pass
 
-    return servers
+    # Never hand the gateway its own entry: `serve` would launch itself (fork
+    # bomb, measured 2026-10-12). Guard on the read path so it holds for every
+    # caller, including a hand-edited config file.
+    return strip_self_entries(servers)
 
 
 def save_config(servers: dict, fmt: str = ""):
@@ -615,6 +697,9 @@ def save_config(servers: dict, fmt: str = ""):
         fmt: "json" or "toml". If empty, preserves existing format,
               defaults to JSON for new configs.
     """
+    # Refuse to persist a self-entry: writing one is what creates the fork bomb
+    # on the next `serve` (see `strip_self_entries`).
+    servers = strip_self_entries(servers)
     # Determine format: explicit > existing file > default JSON
     json_file = _config_file()
     toml_file = _config_file_toml()

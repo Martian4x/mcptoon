@@ -371,7 +371,7 @@ def scan_import_file(path) -> list[dict]:
                 "source": "file",
                 "reason": f"Imported from {p.name}",
             })
-    return found
+    return _drop_self_entries(found)
 
 
 def scan_import_client(client: str) -> list[dict]:
@@ -380,7 +380,25 @@ def scan_import_client(client: str) -> list[dict]:
     fn_name = _CLIENT_SCANNERS.get(canonical)
     if fn_name is None:
         return []
-    return globals()[fn_name]()
+    return _drop_self_entries(globals()[fn_name]())
+
+
+def _drop_self_entries(findings: list[dict]) -> list[dict]:
+    """Remove any finding that would make the gateway launch itself.
+
+    An agent's config legitimately carries a `mcptoon` entry (that is what
+    `mcptoon sync --self` writes). Importing it back into mcptoon's own server
+    list turns `serve` into a fork bomb — measured 2026-10-12, 294 processes
+    and 10.4 GB. Every import path funnels through here, so the self-entry is
+    dropped before it can ever be merged or written.
+    """
+    from .config import _is_self_entry
+    kept = []
+    for item in findings:
+        if _is_self_entry(item.get("name", ""), item.get("config")):
+            continue
+        kept.append(item)
+    return kept
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -723,6 +741,10 @@ def auto_discover(
 
     if probe_network:
         all_findings.extend(_probe_http_mcp())
+
+    # A self-entry in an agent's config must not be imported into mcptoon's own
+    # list (fork bomb, measured 2026-10-12). Drop it before the merge below.
+    all_findings = _drop_self_entries(all_findings)
 
     # Merge and deduplicate
     # Priority: existing config > claude-desktop > cursor > cline > windsurf > env > local > network > manual

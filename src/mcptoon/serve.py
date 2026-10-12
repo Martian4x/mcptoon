@@ -61,7 +61,7 @@ from http.server import BaseHTTPRequestHandler
 
 from . import __version__
 from . import config
-from .config import load_config, resolve_server_name
+from .config import load_config, resolve_server_name, _is_self_entry, strip_self_entries
 from .client import (
     MCPClient,
     MCPClientPool,
@@ -238,6 +238,17 @@ class MCPServerBridge:
             if self._initialized:
                 return
             self._servers = load_config()
+            # Last line of defense: `load_config` already strips the gateway's
+            # own entry, but if one ever reaches here the gateway would launch
+            # itself recursively (fork bomb, measured 2026-10-12: 294 processes,
+            # 10.4 GB). Drop it again at the point of use, loudly.
+            _self_dropped = [n for n, c in self._servers.items()
+                             if _is_self_entry(n, c)]
+            if _self_dropped:
+                sys.stderr.write(
+                    "mcptoon: ignoring self-referencing server entry "
+                    f"{_self_dropped!r} — the gateway cannot be its own upstream.\n")
+                self._servers = strip_self_entries(self._servers)
             self._pool = MCPClientPool(self._servers)
             self._build_tool_index()
             self._build_prompts_index()
