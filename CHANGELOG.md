@@ -5,6 +5,25 @@ All notable changes to mcptoon will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.19] - 2026-10-12
+
+### Fixed
+
+- **The gateway can no longer be its own upstream server.** An agent config
+  legitimately carries a `mcptoon` entry (written by `mcptoon sync --self`, so
+  the model can see the gateway). `mcptoon import` / `init --auto` read those
+  configs and, with no self-filter, merged that entry back into mcptoon's OWN
+  server list. The next `serve` then launched a second `serve`, which read the
+  same list again — an unbounded fork bomb with **no error and no log line**.
+  Measured on the maintainer's machine before the fix: **294 live `mcptoon
+  serve` processes, 10.4 GB RAM, count still climbing.** Every layer now
+  refuses a self-entry: `config.load_config` drops it on read,
+  `config.save_config` refuses to persist it, the `discover` import scanners
+  drop it, and `serve` re-checks at the point of use and warns on stderr. The
+  matcher keys on whole argv tokens, so `python -m mcptoon demo-server` is not
+  a false positive — a substring test on `serve` matched `demo-server` and
+  dropped a working server.
+
 ## [0.8.18] - 2026-10-11
 
 ### Added

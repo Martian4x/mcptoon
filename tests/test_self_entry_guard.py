@@ -30,9 +30,6 @@ These tests pin every layer of the guard so the bomb cannot come back:
     `test_cli_smoke.py::TestAgentLoadsTheGateway`).
 """
 import json
-from unittest.mock import patch
-
-import pytest
 
 from mcptoon import config as cfg
 from mcptoon import discover as disc
