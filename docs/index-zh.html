@@ -5,11 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="color-scheme" content="light dark">
 <meta name="theme-color" content="#090D16">
-<title>mcptoon — 为什么是 CLI 而不是常驻代理？全 Agent 免配置即装即用</title>
-<meta name="description" content="每个 Agent 天生就会敲命令，何必为每个客户端重复配置 JSON？mcptoon 是纯标准库编写的独立 CLI，一套工具与技能管理中心，42+ 款终端 Agent 零配置直接驱动，全量覆盖 103+ 款主流生态。">
+<title>mcptoon — 本地装满 1,000 个工具与技能，Token 消耗直降 99.2% | 全 Agent 免配 CLI</title>
+<meta name="description" content="在本地安装 1,000 个技能和 1,000 个 MCP 工具 — 彻底告别上下文爆仓。独创轻量格式将工具上下文缩减 99.2%，技能常驻上下文缩减 99.9%。覆盖 103+ 款主流 Agent，纯标准库零依赖。">
 <meta property="og:type" content="website">
-<meta property="og:title" content="mcptoon — 为什么是 CLI 而不是代理？全 Agent 免配置即装即用">
-<meta property="og:description" content="每个智能体天生自带 Shell 终端。mcptoon 让 103+ 款 Agent 免除繁琐 JSON 配置，直接访问千套工具与技能，Token 消耗直降 99.2%。">
+<meta property="og:title" content="mcptoon — 本地装满 1,000 个工具与技能，Token 消耗直降 99.2%">
+<meta property="og:description" content="工具上下文砍掉 99.2%，技能从 92.6 万 Token 降至 39 极简常驻指针（-99.9%）。一人配齐 103+ 款 AI Agent。纯 Python 标准库编写。">
 <meta property="og:image" content="assets/og-image.png">
 <meta name="twitter:card" content="summary_large_image">
 <link rel="icon" href="assets/favicon.ico" sizes="any">
@@ -122,19 +122,19 @@
   .badge-btn:hover { background: rgba(99, 102, 241, 0.2); border-color: var(--accent); }
 
   /* Hero */
-  .hero { padding: 72px 0 50px; text-align: center; position: relative; }
+  .hero { padding: 68px 0 44px; text-align: center; position: relative; }
   .pill-tag {
     display: inline-flex; align-items: center; gap: 8px;
     padding: 6px 18px; border-radius: 9999px;
     background: rgba(255, 255, 255, 0.04);
     border: 1px solid var(--border);
     font-size: 13px; font-weight: 600; color: var(--cyan);
-    margin-bottom: 24px; letter-spacing: 0.02em;
+    margin-bottom: 20px; letter-spacing: 0.02em;
   }
   .hero h1 {
     font-size: clamp(34px, 5.2vw, 56px);
     font-weight: 800; letter-spacing: -0.03em; line-height: 1.18;
-    margin-bottom: 20px;
+    margin-bottom: 18px;
   }
   .hero-gradient {
     background: linear-gradient(135deg, #FFFFFF 25%, var(--accent-light) 65%, var(--cyan) 100%);
@@ -149,14 +149,31 @@
   .hero-sub {
     font-size: clamp(16px, 1.9vw, 19px);
     color: var(--text-muted);
-    max-width: 760px; margin: 0 auto 36px;
+    max-width: 780px; margin: 0 auto 32px;
     line-height: 1.6;
   }
   .hero-sub b { color: var(--text-main); font-weight: 600; }
 
+  /* Top Stats Ribbon */
+  .stats-ribbon {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px;
+    max-width: 860px; margin: 0 auto 36px;
+  }
+  @media (max-width: 700px) { .stats-ribbon { grid-template-columns: 1fr; } }
+  .stat-chip {
+    background: var(--bg-card); border: 1px solid var(--border);
+    border-radius: 14px; padding: 14px 18px; text-align: center;
+    backdrop-filter: blur(12px);
+  }
+  .stat-val { font-size: 26px; font-weight: 800; font-family: var(--mono); line-height: 1.1; margin-bottom: 4px; }
+  .stat-val.t1 { color: var(--cyan); }
+  .stat-val.t2 { color: var(--purple); }
+  .stat-val.t3 { color: var(--green); }
+  .stat-lbl { font-size: 12.5px; color: var(--text-muted); font-weight: 500; }
+
   /* Quick Command Box */
   .cmd-hero-box {
-    max-width: 620px; margin: 0 auto 36px;
+    max-width: 620px; margin: 0 auto 32px;
     background: rgba(15, 23, 42, 0.9);
     border: 1px solid var(--border-glow);
     box-shadow: 0 12px 36px -8px var(--accent-glow), 0 0 0 1px var(--border);
@@ -446,18 +463,34 @@
 <header class="hero container">
   <div class="pill-tag">
     <span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--cyan)"></span>
-    是独立 CLI，不是常驻代理 · 全 Agent 免配 JSON 开箱即用
+    零外部依赖 · 100% Python 标准库 · 多智能体统管网关
   </div>
 
   <h1>
-    每个 Agent 天生自带 Shell 终端<br>
-    <span class="hero-gradient">何必为每个客户端手工配置 JSON？</span>
+    本地装满 1,000 个工具与技能<br>
+    <span class="hero-gradient">Token 消耗直降 99.2%</span>
   </h1>
 
   <p class="hero-sub">
-    mcptoon 是<b>零外部依赖的纯标准库 CLI</b>。42 款能运行命令行的 Agent（Claude Code、Cursor、Codex、Zed、Cline）<b>免配置直接调用</b>，
-    同时将全局工具与技能上下文消耗<b>削减 99.2%</b>。
+    <b>覆盖 103+ 款 Agent 全自动免配置 · 零常驻后台守护进程。</b><br>
+    每个 Agent 天生就会敲命令。mcptoon 作为极简原生 CLI 调度中心，将 MCP 工具上下文削减 <b>99.2%</b>（7.2万 &rarr; 581 Token），技能常驻上下文削减 <b>99.9%</b>（92.6万 &rarr; 39 Token）。
   </p>
+
+  <!-- Top Real Metrics Ribbon -->
+  <div class="stats-ribbon">
+    <div class="stat-chip">
+      <div class="stat-val t1">−99.2%</div>
+      <div class="stat-lbl">MCP 工具清单 Token (71,929 &rarr; 581)</div>
+    </div>
+    <div class="stat-chip">
+      <div class="stat-val t2">−99.9%</div>
+      <div class="stat-lbl">技能常驻上下文 (926k &rarr; 39 Token)</div>
+    </div>
+    <div class="stat-chip">
+      <div class="stat-val t3">103+ 款</div>
+      <div class="stat-lbl">Agent 开箱即用（免手写 JSON）</div>
+    </div>
+  </div>
 
   <!-- Interactive Terminal CTA -->
   <div class="cmd-hero-box">
@@ -501,7 +534,7 @@
         <h4>mcptoon 极简 CLI 架构</h4>
         <ul class="p-list">
           <li><b>42+ 款终端与 IDE Agent 零配置</b>：Cursor、Claude Code、Codex 只要敲 <code>mcptoon call</code> 即可开箱即用</li>
-          <li><b>一份全局配置全端共享</b>：在 mcptoon 中装一次，本机所有智能体立即自动识别</li>
+          <li><b>一份全局配置全端共享</b>：在 mcptoon 中装一次，本机所有智能体立刻自动识别</li>
           <li><b>无常驻守护、无常驻开销</b>：纯 Python 标准库编写（仅 363KB），随调随跑，执行完毕即退出释放内存</li>
           <li><b>无缝兼容 61 款纯 GUI 客户端</b>：对无法执行 Shell 的纯聊天客户端，提供轻量 <code>mcptoon serve</code> 统一桥接</li>
         </ul>
@@ -710,7 +743,7 @@
       <div class="proof-desc">技能清单上下文缩减 (926k &rarr; 39)</div>
     </div>
     <div class="proof-item">
-      <div class="proof-val">103+</div>
+      <div class="proof-val">103+ 款</div>
       <div class="proof-desc">支持的主流桌面与终端 Agent</div>
     </div>
     <div class="proof-item">

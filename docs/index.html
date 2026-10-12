@@ -5,11 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="color-scheme" content="light dark">
 <meta name="theme-color" content="#090D16">
-<title>mcptoon — A CLI, Not a Proxy. Zero-Config Tool &amp; Skill Governance for All Agents</title>
-<meta name="description" content="Why rewrite JSON configs for every agent? mcptoon is a zero-dependency CLI. Any agent that can run a shell gets all MCP tools and skills instantly with zero config. 103+ agents supported.">
+<title>mcptoon — Cut MCP &amp; Skill Token Waste by 99.2% | Zero-Config CLI for All Agents</title>
+<meta name="description" content="Install 1,000 skills and MCP tools without context flooding. Cut token waste by 99.2%. Zero-config CLI for 103+ coding agents. Standard library Python, no daemons.">
 <meta property="og:type" content="website">
-<meta property="og:title" content="mcptoon — A CLI, Not a Proxy. Zero Config for All AI Agents">
-<meta property="og:description" content="Every agent already has a shell. mcptoon gives 103+ agents instant access to 1,000+ tools and skills with zero configuration and 99.2% token savings. Pure Python standard library.">
+<meta property="og:title" content="mcptoon — Cut MCP &amp; Skill Token Waste by 99.2%">
+<meta property="og:description" content="Stop dumping schemas into prompt context. 255 tools: 71,929 → 581 tokens (-99.2%). Skills: 926k → 39 tokens (-99.9%). Zero config across 103+ agents.">
 <meta property="og:image" content="assets/og-image.png">
 <meta name="twitter:card" content="summary_large_image">
 <link rel="icon" href="assets/favicon.ico" sizes="any">
@@ -122,19 +122,19 @@
   .badge-btn:hover { background: rgba(99, 102, 241, 0.2); border-color: var(--accent); }
 
   /* Hero */
-  .hero { padding: 72px 0 50px; text-align: center; position: relative; }
+  .hero { padding: 68px 0 44px; text-align: center; position: relative; }
   .pill-tag {
     display: inline-flex; align-items: center; gap: 8px;
     padding: 6px 18px; border-radius: 9999px;
     background: rgba(255, 255, 255, 0.04);
     border: 1px solid var(--border);
     font-size: 13px; font-weight: 600; color: var(--cyan);
-    margin-bottom: 24px; letter-spacing: 0.02em;
+    margin-bottom: 20px; letter-spacing: 0.02em;
   }
   .hero h1 {
-    font-size: clamp(34px, 5.2vw, 56px);
-    font-weight: 800; letter-spacing: -0.03em; line-height: 1.16;
-    margin-bottom: 20px;
+    font-size: clamp(34px, 5.2vw, 58px);
+    font-weight: 800; letter-spacing: -0.03em; line-height: 1.15;
+    margin-bottom: 18px;
   }
   .hero-gradient {
     background: linear-gradient(135deg, #FFFFFF 25%, var(--accent-light) 65%, var(--cyan) 100%);
@@ -149,14 +149,31 @@
   .hero-sub {
     font-size: clamp(16px, 1.9vw, 19px);
     color: var(--text-muted);
-    max-width: 760px; margin: 0 auto 36px;
+    max-width: 780px; margin: 0 auto 32px;
     line-height: 1.6;
   }
   .hero-sub b { color: var(--text-main); font-weight: 600; }
 
+  /* Top Stats Ribbon */
+  .stats-ribbon {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px;
+    max-width: 860px; margin: 0 auto 36px;
+  }
+  @media (max-width: 700px) { .stats-ribbon { grid-template-columns: 1fr; } }
+  .stat-chip {
+    background: var(--bg-card); border: 1px solid var(--border);
+    border-radius: 14px; padding: 14px 18px; text-align: center;
+    backdrop-filter: blur(12px);
+  }
+  .stat-val { font-size: 26px; font-weight: 800; font-family: var(--mono); line-height: 1.1; margin-bottom: 4px; }
+  .stat-val.t1 { color: var(--cyan); }
+  .stat-val.t2 { color: var(--purple); }
+  .stat-val.t3 { color: var(--green); }
+  .stat-lbl { font-size: 12.5px; color: var(--text-muted); font-weight: 500; }
+
   /* Quick Command Box */
   .cmd-hero-box {
-    max-width: 620px; margin: 0 auto 36px;
+    max-width: 620px; margin: 0 auto 32px;
     background: rgba(15, 23, 42, 0.9);
     border: 1px solid var(--border-glow);
     box-shadow: 0 12px 36px -8px var(--accent-glow), 0 0 0 1px var(--border);
@@ -268,14 +285,14 @@
     border-radius: 12px; padding: 18px 20px;
     display: flex; justify-content: space-between; align-items: center;
   }
-  .metric-lhs font-size: 13px; color: var(--text-dim); }
+  .metric-lhs { font-size: 13px; color: var(--text-dim); }
   .metric-lhs b { display: block; font-size: 22px; color: var(--text-main); font-family: var(--mono); }
   .metric-rhs { text-align: right; }
   .metric-cut { font-size: 28px; font-weight: 800; font-family: var(--mono); }
   .tools .metric-cut { color: var(--cyan); }
   .skills .metric-cut { color: var(--purple); }
 
-  /* Two Ways In (Agents User vs Developer) */
+  /* Two Ways In (User vs Builder) */
   .two-ways-container {
     background: var(--bg-card);
     border: 1px solid var(--border);
@@ -446,18 +463,34 @@
 <header class="hero container">
   <div class="pill-tag">
     <span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--cyan)"></span>
-    A CLI, Not a Resident Proxy · Zero-Config Multi-Agent Governance
+    Zero Dependencies · 100% Python Standard Library · Multi-Agent Governance
   </div>
 
   <h1>
-    Every Agent Already Has a Shell.<br>
-    <span class="hero-gradient">Stop Rewriting JSON for Each One.</span>
+    Install 1,000 Tools &amp; Skills.<br>
+    <span class="hero-gradient">Cut Token Waste by 99.2%.</span>
   </h1>
 
   <p class="hero-sub">
-    mcptoon is a <b>zero-dependency native CLI</b> that manages all your MCP tools and agent skills in one place.
-    Any agent that can run a shell needs <b>zero config</b> — while context drops <b>99.2%</b>.
+    <b>Zero config across 103+ coding agents. No resident background daemons.</b><br>
+    Every agent already has a terminal. mcptoon acts as a native CLI router — shrinking tool context by <b>99.2%</b> (72k &rarr; 581 tokens) and skill context by <b>99.9%</b> (926k &rarr; 39 tokens).
   </p>
+
+  <!-- Top Real Metrics Ribbon -->
+  <div class="stats-ribbon">
+    <div class="stat-chip">
+      <div class="stat-val t1">−99.2%</div>
+      <div class="stat-lbl">MCP Tool Tokens (71,929 &rarr; 581)</div>
+    </div>
+    <div class="stat-chip">
+      <div class="stat-val t2">−99.9%</div>
+      <div class="stat-lbl">Skills Resident Memory (926k &rarr; 39)</div>
+    </div>
+    <div class="stat-chip">
+      <div class="stat-val t3">103+</div>
+      <div class="stat-lbl">Agents Out-of-the-Box (Zero Config)</div>
+    </div>
+  </div>
 
   <!-- Interactive Terminal CTA -->
   <div class="cmd-hero-box">
