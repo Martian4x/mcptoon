@@ -46,7 +46,7 @@
 <!-- 产品演示视频。src 必须是真实的 GitHub user-attachment 链接：仓库内 mp4 路径
      （raw/releases/Pages）会被 GitHub 的安全过滤删掉，永远播不出来。 -->
 <p align="center">
-  <video src="https://github.com/user-attachments/assets/e9bacc8e-b93f-4305-bf18-5fb67ecb4658" controls muted playsinline></video>
+  <video src="https://github.com/user-attachments/assets/a40bff9a-7f47-4bd2-84ec-04508e5b2a81" controls muted playsinline></video>
 </p>
 
 </div>

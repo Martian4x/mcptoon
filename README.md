@@ -46,7 +46,7 @@
 <!-- Product promo video. The src must be a real GitHub user-attachment URL: repo-hosted
      mp4 paths (raw/releases/Pages) are stripped by GitHub's sanitizer and never play. -->
 <p align="center">
-  <video src="https://github.com/user-attachments/assets/574451f9-8c86-4fe1-a0aa-5acc659d43cd" controls muted playsinline></video>
+  <video src="https://github.com/user-attachments/assets/0272d3a8-c74f-428d-8559-fbf804ce0685" controls muted playsinline></video>
 </p>
 
 </div>
