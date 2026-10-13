@@ -43,6 +43,12 @@
   <img src="https://raw.githubusercontent.com/activeing123/mcptoon/main/assets/benchmark.svg" alt="mcptoon Benchmark: 71,929 to 581 tokens (-99.2%)" width="100%" style="max-width: 960px; border-radius: 12px; margin: 16px 0;">
 </p>
 
+<!-- Product promo video. The src must be a real GitHub user-attachment URL: repo-hosted
+     mp4 paths (raw/releases/Pages) are stripped by GitHub's sanitizer and never play. -->
+<p align="center">
+  <video src="https://github.com/user-attachments/assets/574451f9-8c86-4fe1-a0aa-5acc659d43cd" controls muted playsinline></video>
+</p>
+
 </div>
 
 ### ⚡ Core Capabilities at a Glance

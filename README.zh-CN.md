@@ -43,6 +43,12 @@
   <img src="https://raw.githubusercontent.com/activeing123/mcptoon/main/assets/benchmark.svg" alt="mcptoon Benchmark: 71,929 to 581 tokens (-99.2%)" width="100%" style="max-width: 960px; border-radius: 12px; margin: 16px 0;">
 </p>
 
+<!-- 产品演示视频。src 必须是真实的 GitHub user-attachment 链接：仓库内 mp4 路径
+     （raw/releases/Pages）会被 GitHub 的安全过滤删掉，永远播不出来。 -->
+<p align="center">
+  <video src="https://github.com/user-attachments/assets/e9bacc8e-b93f-4305-bf18-5fb67ecb4658" controls muted playsinline></video>
+</p>
+
 </div>
 
 ### ⚡ 全能力全景速览
