@@ -431,8 +431,15 @@ class TestWhich:
 # already importable, `python -m <module>` runs the same server with no fetch.
 #
 # The gate is two facts, not one: the module must resolve AND expose a
-# `__main__` (`python -m` executes that). `json`/`http` resolve but have no
+# `__main__` (`python -m` executes that). `re`/`http` resolve but have no
 # `__main__`, so writing them would produce a server that dies on first launch.
+#
+# Do not use `json` as the "resolves but is not runnable" fixture. It stopped
+# qualifying in CPython 3.14, which added `Lib/json/__main__.py` (gh-122873,
+# 2024-08): `python -m json` now works, so the assertion flipped to False and
+# the nix package build (python3 = 3.14) went red for six days while the
+# project's own CI matrix stopped at 3.13 and never saw it. `re` has had no
+# `__main__` on every supported version (3.10-3.14) and is the stable fixture.
 
 class TestPreferInstalledRunners:
     def test_an_installed_runnable_module_wins_over_uvx(self):
@@ -463,13 +470,17 @@ class TestPreferInstalledRunners:
         assert entries["fetch"]["command"] == ["uvx"]
 
     def test_a_module_without_main_is_not_runnable(self):
-        """`json` resolves but has no `__main__`, so `python -m json` would die.
+        """`re` resolves but has no `__main__`, so `python -m re` would die.
 
         Pin the real function (not a mock) against a stdlib module that is
         importable everywhere — this is the check that keeps a bare
         `find_spec(module)` from writing a dead server entry.
+
+        `re`, not `json`: CPython 3.14 gave `json` a `__main__` (gh-122873), so
+        the old fixture silently became runnable and this assertion failed on
+        the nix build while CI (which stopped at 3.13) stayed green.
         """
-        assert discover_mod._resolve_local_module("json") is None
+        assert discover_mod._resolve_local_module("re") is None
         assert discover_mod._resolve_local_module("no_such_module_zzz") is None
 
     def test_a_runnable_module_returns_the_interpreter_form(self):
