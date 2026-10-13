@@ -5,6 +5,26 @@ All notable changes to mcptoon will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.20] - 2026-10-13
+
+### Fixed
+
+- **The `python -m` runnability test no longer fails on Python 3.14.** The test
+  that pins `_resolve_local_module` used the stdlib `json` package as its example
+  of a module that resolves but has no `__main__`, so `python -m json` would be a
+  dead server entry. CPython 3.14 added `Lib/json/__main__.py` (gh-122873,
+  2024-08), so `python -m json` now works: the function was right to call it
+  runnable and only the test's assumption had gone stale. The fixture is now
+  `re`, which has no `__main__` on every supported version (3.10-3.14).
+
+### Changed
+
+- **CI now tests Python 3.14** (the matrix ran 3.10-3.13). This is the root cause
+  of the miss above: nix builds the package with python3 = 3.14, so the nix
+  channel went red for six days while our own CI — which stopped at 3.13 — stayed
+  green and could never see it. The matrix now includes the version we are
+  actually deployed on.
+
 ## [0.8.19] - 2026-10-12
 
 ### Fixed
