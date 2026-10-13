@@ -43,11 +43,11 @@
   <img src="https://raw.githubusercontent.com/activeing123/mcptoon/main/assets/benchmark.svg" alt="mcptoon Benchmark: 71,929 to 581 tokens (-99.2%)" width="100%" style="max-width: 960px; border-radius: 12px; margin: 16px 0;">
 </p>
 
-<!-- Product promo video. The src must be a real GitHub user-attachment URL: repo-hosted
-     mp4 paths (raw/releases/Pages) are stripped by GitHub's sanitizer and never play. -->
-<p align="center">
-  <video src="https://github.com/user-attachments/assets/0272d3a8-c74f-428d-8559-fbf804ce0685" controls muted playsinline></video>
-</p>
+<!-- Product promo video. Keep this as a BARE user-attachment URL on its own line:
+     GitHub rewrites that form into a signed, playable player. Wrapping it in an
+     explicit video HTML tag is NOT rewritten, and Chrome then rejects the raw
+     github.com URL (it 302-redirects, failing the media URL safety check). -->
+https://github.com/user-attachments/assets/0272d3a8-c74f-428d-8559-fbf804ce0685
 
 </div>
 

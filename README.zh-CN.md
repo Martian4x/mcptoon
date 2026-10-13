@@ -43,11 +43,10 @@
   <img src="https://raw.githubusercontent.com/activeing123/mcptoon/main/assets/benchmark.svg" alt="mcptoon Benchmark: 71,929 to 581 tokens (-99.2%)" width="100%" style="max-width: 960px; border-radius: 12px; margin: 16px 0;">
 </p>
 
-<!-- 产品演示视频。src 必须是真实的 GitHub user-attachment 链接：仓库内 mp4 路径
-     （raw/releases/Pages）会被 GitHub 的安全过滤删掉，永远播不出来。 -->
-<p align="center">
-  <video src="https://github.com/user-attachments/assets/a40bff9a-7f47-4bd2-84ec-04508e5b2a81" controls muted playsinline></video>
-</p>
+<!-- 产品演示视频。必须写成独占一行的裸地址（bare URL）：
+     GitHub 会把这种形式改写成带签名的可播放播放器。若包进显式 video HTML 标签
+     则不会被改写，Chrome 会拒绝那个会 302 跳转的 github.com 原始地址。 -->
+https://github.com/user-attachments/assets/a40bff9a-7f47-4bd2-84ec-04508e5b2a81
 
 </div>
 
