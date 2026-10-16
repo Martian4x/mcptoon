@@ -44,18 +44,18 @@ not for every turn it runs.
 
 ## Reference
 
-- [Token benchmarks](https://activeing123.github.io/mcptoon/tiktoken-benchmarks.md) — how each figure was measured, including the tokeniser and fixture.
-- [TOON specification](https://activeing123.github.io/mcptoon/TOON_SPEC.md) — the text format behind the compression, with the full tier table.
-- [Comparison with other MCP managers](https://activeing123.github.io/mcptoon/comparison.md) — feature and token-cost matrix.
-- [Calculate your own bill (EN)](https://activeing123.github.io/mcptoon/tools/token-tax/) · [中文](https://activeing123.github.io/mcptoon/tools/token-tax/zh/) — runs in the browser, uploads nothing.
-- [Landing page (EN)](https://activeing123.github.io/mcptoon/) · [落地页（中文）](https://activeing123.github.io/mcptoon/index-zh.html)
+- [Token benchmarks](https://mcptoon.github.io/tiktoken-benchmarks.md) — how each figure was measured, including the tokeniser and fixture.
+- [TOON specification](https://mcptoon.github.io/TOON_SPEC.md) — the text format behind the compression, with the full tier table.
+- [Comparison with other MCP managers](https://mcptoon.github.io/comparison.md) — feature and token-cost matrix.
+- [Calculate your own bill (EN)](https://mcptoon.github.io/tools/token-tax/) · [中文](https://mcptoon.github.io/tools/token-tax/zh/) — runs in the browser, uploads nothing.
+- [Landing page (EN)](https://mcptoon.github.io/) · [落地页（中文）](https://mcptoon.github.io/index-zh.html)
 
 ## Integrations
 
-- [Claude Code / Claude Desktop](https://activeing123.github.io/mcptoon/integrations/claude-code.md)
-- [Codex CLI](https://activeing123.github.io/mcptoon/integrations/codex.md)
-- [Cursor](https://activeing123.github.io/mcptoon/integrations/cursor.md)
-- [opencode](https://activeing123.github.io/mcptoon/integrations/opencode.md)
+- [Claude Code / Claude Desktop](https://mcptoon.github.io/integrations/claude-code.md)
+- [Codex CLI](https://mcptoon.github.io/integrations/codex.md)
+- [Cursor](https://mcptoon.github.io/integrations/cursor.md)
+- [opencode](https://mcptoon.github.io/integrations/opencode.md)
 
 ## Source of truth
 

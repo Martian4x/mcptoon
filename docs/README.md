@@ -25,4 +25,4 @@ mcptoon call fetch fetch '{"url":"https://example.com"}' --toon
   a blog post; it runs entirely in your browser and nothing is uploaded.
   中文版本：[上下文税计算器](tools/token-tax/zh/)。
 
-This page is published at <https://activeing123.github.io/mcptoon/>.
+This page is published at <https://mcptoon.github.io/>.

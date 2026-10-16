@@ -35,7 +35,7 @@ descriptions on top; `--json` (full schema) is the baseline.
 
 *We measured both rows ourselves, not one number scaled up and down (tiktoken
 `cl100k_base`, `assets/benchmark_tiktoken.json`). Your mix will differ:
-[compute your own numbers in the browser](https://activeing123.github.io/mcptoon/tools/token-tax/),
+[compute your own numbers in the browser](https://mcptoon.github.io/tools/token-tax/),
 30 seconds, nothing uploaded.*
 
 ### Bill 2 — Call results (`call`): optional, `--toon` saves ~6%
