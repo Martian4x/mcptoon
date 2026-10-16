@@ -91,7 +91,7 @@ class TestServerJsonMatchesRelease(unittest.TestCase):
         # the fields it does define that carry real information for a reader, so
         # they are pinned here rather than left to drift out in a later edit.
         self.assertEqual(SERVER["title"], "mcptoon")
-        self.assertEqual(SERVER["websiteUrl"], "https://activeing123.github.io/mcptoon/")
+        self.assertEqual(SERVER["websiteUrl"], "https://mcptoon.github.io/")
         self.assertTrue(SERVER["websiteUrl"].startswith("https://"),
                         "the registry validates websiteUrl as a uri")
 

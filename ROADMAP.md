@@ -65,7 +65,7 @@ X/Reddit 一图+一句话     知乎/掘金/公号投放         一键安装脚
 | A2 | `mcptoon demo` 输出小白化（前后对比大数字 + "现在你可以…"） | ✅ v0.7.2 | SAME data X% fewer + Now you can 清单 |
 | A3 | 一键安装脚本（install.ps1 / install.sh：检测 Python → 安装 → quickstart） | ✅ v0.7.2 | README 双语已挂一行命令 |
 | A4 | 「小白使用手册」独立页（图 + 三步 + FAQ + 反馈入口） | ⬜ | 篇三长文配套 |
-| A5 | 上下文税计算器（浏览器本地跑的估算页） | ✅ 2026-09-05 | `docs/tools/token-tax/index.html` → activeing123.github.io/mcptoon/tools/token-tax/ ；`tests/test_calculator.py` 钉住"零网络 + 率值来自 benchmark 工件 + 免责声明不许删" |
+| A5 | 上下文税计算器（浏览器本地跑的估算页） | ✅ 2026-09-05 | `docs/tools/token-tax/index.html` → mcptoon.github.io/tools/token-tax/ ；`tests/test_calculator.py` 钉住"零网络 + 率值来自 benchmark 工件 + 免责声明不许删" |
 | A6 | `python -m mcptoon.bench_tokens`（把复现脚本装进包里） | ✅ 2026-09-29 | 装进包（`src/mcptoon/bench_tokens.py`，`scripts/` 退化为转发壳）；pip 用户无需克隆即可复现 README 那张三格式表；tiktoken 仍可选、缺了打印 `pip install tiktoken`；`tests/test_bench_tokens.py` 8 项钉住 |
 
 ### A+. Agent Plugins 生态（v0.7.1 新增，随 v0.7.1 已落地）

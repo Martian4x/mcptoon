@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DOCS = ROOT / "docs" / "tools" / "token-tax"
 PAGES = {"en": DOCS / "index.html", "zh": DOCS / "zh" / "index.html"}
 ANCHOR = ROOT / "assets" / "benchmark_tiktoken.json"
-SITE = "https://activeing123.github.io/mcptoon"
+SITE = "https://mcptoon.github.io"
 
 # Anything that could make a page talk to a machine other than the visitor's.
 NETWORK_PRIMITIVES = (
@@ -96,8 +96,8 @@ class _PageTests:
         image = meta(self.html, "og:image")
         self.assertTrue(image.startswith(SITE), "og:image must be served from the Pages origin")
         path = urlsplit(image).path.strip("/")
-        self.assertTrue(path.startswith("mcptoon/"), f"unexpected Pages base: {path}")
-        target = ROOT / "docs" / Path(*path.split("/")[1:])
+        # 新站服务在根（mcptoon.github.io/），og:image 路径不再带 "mcptoon/" 仓库前缀
+        target = ROOT / "docs" / Path(*path.split("/"))
         self.assertTrue(target.is_file(), f"{image} is not in docs/ - the card would 404")
         raw = target.read_bytes()
         self.assertEqual(raw[:8], b"\x89PNG\r\n\x1a\n", "og image is not a PNG")
@@ -166,7 +166,7 @@ class TestCalculatorIsLinked(unittest.TestCase):
     def test_both_readmes_link_a_token_tax_page(self):
         for name in ("README.md", "README.zh-CN.md"):
             text = (ROOT / name).read_text(encoding="utf-8")
-            self.assertIn("activeing123.github.io/mcptoon/tools/token-tax", text,
+            self.assertIn("mcptoon.github.io/tools/token-tax", text,
                           f"{name} does not link the calculator")
 
     def test_pages_site_root_links_the_tool(self):

@@ -32,8 +32,8 @@
 </p>
 
 <p align="center">
-  <b><a href="https://activeing123.github.io/mcptoon/">🌐 Official Website</a></b> · 
-  <b><a href="https://activeing123.github.io/mcptoon/tools/token-tax/">🧮 30s Token Tax Calculator</a></b> · 
+  <b><a href="https://mcptoon.github.io/">🌐 Official Website</a></b> · 
+  <b><a href="https://mcptoon.github.io/tools/token-tax/">🧮 30s Token Tax Calculator</a></b> · 
   <b><a href="https://github.com/activeing123/mcptoon/blob/main/README.zh-CN.md">🇨🇳 中文文档</a></b> · 
   <b><a href="https://github.com/activeing123/mcptoon/blob/main/DEVELOPERS.md">📖 Developer Docs</a></b>
 </p>

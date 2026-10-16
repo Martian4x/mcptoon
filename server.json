@@ -4,7 +4,7 @@
   "title": "mcptoon",
   "description": "MCP tools + agent skills in one zero-dependency CLI: 71,929 -> 581 tokens (-99.2%, measured).",
   "version": "0.8.20",
-  "websiteUrl": "https://activeing123.github.io/mcptoon/",
+  "websiteUrl": "https://mcptoon.github.io/",
   "repository": {
     "url": "https://github.com/activeing123/mcptoon",
     "source": "github"

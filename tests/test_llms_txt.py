@@ -10,7 +10,7 @@ import pathlib
 import re
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-SITE = "https://activeing123.github.io/mcptoon/"
+SITE = "https://mcptoon.github.io/"
 LLMS = ROOT / "docs" / "llms.txt"
 EXTERNAL_HOSTS = {"github.com", "pypi.org"}
 BANNED = ("99.8", "90,804", "117 tokens", "123 tokens", "97%")

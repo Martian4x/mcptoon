@@ -32,8 +32,8 @@
 </p>
 
 <p align="center">
-  <b><a href="https://activeing123.github.io/mcptoon/">🌐 官方网站</a></b> · 
-  <b><a href="https://activeing123.github.io/mcptoon/tools/token-tax/zh/">🧮 30秒 Token 浪费计算器</a></b> · 
+  <b><a href="https://mcptoon.github.io/">🌐 官方网站</a></b> · 
+  <b><a href="https://mcptoon.github.io/tools/token-tax/zh/">🧮 30秒 Token 浪费计算器</a></b> · 
   <b><a href="https://github.com/activeing123/mcptoon/blob/main/README.md">🇺🇸 English README</a></b> · 
   <b><a href="https://github.com/activeing123/mcptoon/blob/main/DEVELOPERS.md">📖 开发者文档</a></b>
 </p>
