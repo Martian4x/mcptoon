@@ -781,6 +781,29 @@ def _cmd_inspect(rest, fmt, max_chars, full, head_n=0):
                         max_chars=max_chars, full=full))
 
 
+def _read_stdin_text():
+    """Read a `--stdin` payload as UTF-8 instead of as the console code page.
+
+    Windows binds ``sys.stdin`` to the active code page (cp936 on a Chinese UI, cp1252
+    elsewhere), so a JSON argument containing non-ASCII is silently re-decoded on the way
+    in and the tool sends mojibake that no client asked for. `demo_server.py` already
+    reconfigures its stdio for exactly this reason; the CLI's two `--stdin` readers were
+    missed. Read the bytes and decode deliberately: UTF-8 first, because that is what
+    every MCP client and `--stdin` example produces, falling back to the stream's own
+    encoding so a legacy console-piped payload still arrives unchanged.
+    """
+    buffer = getattr(sys.stdin, "buffer", None)
+    if buffer is None:
+        return sys.stdin.read()          # StringIO under tests, or a replaced stream
+    raw = buffer.read()
+    if not raw:
+        return ""
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return raw.decode(sys.stdin.encoding or "utf-8", errors="replace")
+
+
 def _cmd_call(rest, fmt, head_n, max_chars, full, use_stdin=False, fallback_json=False):
     """Call a tool."""
     # Check for --envelope mode (complete MCP result envelope, new-protocol servers)
@@ -826,7 +849,7 @@ def _cmd_call(rest, fmt, head_n, max_chars, full, use_stdin=False, fallback_json
         # Parse args (same logic as below)
         args = {}
         if use_stdin:
-            stdin_data = sys.stdin.read()
+            stdin_data = _read_stdin_text()
             if stdin_data.strip():
                 try:
                     args = json.loads(stdin_data)
@@ -892,7 +915,7 @@ def _cmd_call(rest, fmt, head_n, max_chars, full, use_stdin=False, fallback_json
 
     if use_stdin:
         # Read JSON args from stdin (for large payloads >32767 chars)
-        stdin_data = sys.stdin.read()
+        stdin_data = _read_stdin_text()
         if stdin_data.strip():
             try:
                 args = json.loads(stdin_data)
