@@ -5,6 +5,19 @@ All notable changes to mcptoon will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **`mcptoon call … --stdin` no longer corrupts non-ASCII arguments on a Windows
+  console.** `sys.stdin` is bound to the active code page (cp936 on a Chinese UI,
+  cp1252 elsewhere), so a UTF-8 JSON payload piped into `--stdin` was re-decoded
+  through the wrong codec and sent to the server as mojibake — with no error, because
+  the corrupted text is still valid JSON and `json.loads` accepts it. Both `--stdin`
+  readers in `_cmd_call` now read `sys.stdin.buffer` and decode UTF-8 first, falling
+  back to the stream's own encoding so a legacy console-piped payload still arrives
+  unchanged. Reported and fixed by @GIGIGIGIbaby (#28).
+
 ## [0.8.20] - 2026-10-13
 
 ### Fixed
