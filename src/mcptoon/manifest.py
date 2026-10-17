@@ -84,6 +84,7 @@ def _command_rank(query: str, tools: list[dict], command: str) -> list[dict] | N
         if not argv:
             return None
         proc = subprocess.run(argv, input=payload, capture_output=True, text=True,
+                              encoding="utf-8", errors="replace",
                               timeout=_CMD_TIMEOUT)
     except (OSError, subprocess.SubprocessError):
         return None

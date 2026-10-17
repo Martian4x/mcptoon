@@ -272,8 +272,11 @@ class TestFootprintClaims(unittest.TestCase):
                               capture_output=True, text=True, cwd=ROOT)
         collected = sum(1 for line in proc.stdout.splitlines() if "::" in line)
         self.assertGreater(collected, 500, "collection failed - the badge cannot be judged")
+        # Case-insensitive: the badges read `tests-<n>%20passed` (lowercase), so a
+        # case-sensitive `Tests-` here matched nothing and this whole guard was dead
+        # - the badge could drift freely while every other surface was checked.
         for rel in ("README.md", "README.zh-CN.md"):
-            for n in re.findall(r"Tests-(\d+)%20passed", self.texts[rel]):
+            for n in re.findall(r"(?i)Tests-(\d+)%20passed", self.texts[rel]):
                 self.assertTrue(collected - SKIP_SLACK <= int(n) <= collected,
                                 f"{rel} badge says {n} but {collected} tests are collected")
 

@@ -34,7 +34,10 @@ caller piping from PowerShell 5.1 is not doing anything wrong either.
 """
 import io
 import json
+import os
+import subprocess
 import sys
+from pathlib import Path
 
 from mcptoon import cli
 
@@ -106,3 +109,34 @@ def test_replaced_stream_without_buffer_still_works():
         assert json.loads(cli._read_stdin_text())["note"] == NOTE
     finally:
         sys.stdin = saved
+
+
+def test_utf8_payload_survives_a_real_gbk_console():
+    """End-to-end: a *real* non-UTF-8 stdin in a child process, not a fake stream.
+
+    The tests above swap `sys.stdin` for a Python object, which proves the code path
+    but not that Python would actually bind stdin to the console code page. This one
+    launches a child with UTF-8 mode off and stdin announced as GBK (cp936), writes
+    the UTF-8 payload bytes to its pipe, and asks it to print what `_read_stdin_text`
+    decoded. If the fix regresses, the child prints mojibake (or raises) and the
+    assertion fires — on Linux, macOS and Windows alike, because the encoding is
+    driven by PYTHONIOENCODING, not by the host's locale.
+    """
+    child = (
+        "import sys\n"
+        "from mcptoon import cli\n"
+        "sys.stdout.buffer.write(cli._read_stdin_text().encode('utf-8'))\n"
+    )
+    env = os.environ.copy()
+    env["PYTHONUTF8"] = "0"          # turn UTF-8 mode off, so stdin honours the codec
+    env["PYTHONIOENCODING"] = "gbk"  # bind stdin/stdout to cp936, like a Chinese console
+    env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
+    proc = subprocess.run(
+        [sys.executable, "-c", child],
+        input=PAYLOAD.encode("utf-8"),
+        capture_output=True,
+        env=env,
+        timeout=60,
+    )
+    assert proc.returncode == 0, proc.stderr.decode("utf-8", "replace")
+    assert proc.stdout.decode("utf-8") == PAYLOAD

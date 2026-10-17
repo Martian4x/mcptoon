@@ -132,3 +132,40 @@ jobs:
       env:
         PYTHONUTF8: "1"
       run: python -m pytest tests/test_cli_smoke.py -v
+
+  # ── Layer 4b: the console encoding every other job cannot see ───────────────
+  # Every other job sets PYTHONUTF8=1, so the interpreter decodes stdin/stdout as
+  # UTF-8 and a `text=True` subprocess without `encoding=` silently works — even
+  # though on a real Chinese Windows the console is cp936 and the same code
+  # corrupts non-ASCII. #28 (`--stdin`) and #29 (7 subprocess sites) are both this
+  # class of bug, and both were invisible here until this job existed. It turns
+  # UTF-8 mode off and announces GBK, then runs the encoding tests, whose
+  # real-subprocess case fails if the fix regresses. `tests/test_subprocess_encoding.py`
+  # is the static half: it fails if a new `text=True` call forgets `encoding=`.
+  cp936-encoding:
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v5
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version: "3.12"
+
+    - name: Install package
+      run: pip install .
+
+    - name: Install pytest
+      run: pip install pytest pytest-timeout
+
+    - name: Static guard - no text-mode subprocess without encoding=
+      env:
+        PYTHONPATH: src
+      run: python -m pytest tests/test_subprocess_encoding.py -v
+
+    - name: Encoding tests under a GBK console (UTF-8 mode OFF)
+      env:
+        PYTHONPATH: src
+        PYTHONUTF8: "0"
+        PYTHONIOENCODING: gbk
+      run: python -m pytest tests/test_cli_stdin_encoding.py -v

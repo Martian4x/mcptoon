@@ -146,6 +146,11 @@ Details that bit us during v0.7.4 (2026-09-05), so they are now part of the ritu
   only by the post-release smoke test. `tests/test_registry_sync.py` pins the
   registry set and `tests/test_gemini_manifest.py` pins the extension; update
   every one on every bump and run both suites green.
+  **Use `python scripts/bump.py X.Y.Z`** — it rewrites all of the above *plus* the
+  `softwareVersion` in both landing pages and the `vX.Y.Z · N passed` line in
+  DEVELOPERS.md / ROADMAP.md (the surfaces `test_registry_sync` and
+  `test_footprint_claims` also check), and renames `## [Unreleased]` to the new
+  version. Then run those guard suites to prove the tree is consistent.
 - **The publish workflows used to race each other.** `publish.yml` and
   `publish-mcp.yml` start on the same release event; the registry run
   validated the PyPI version while the wheel was still uploading and failed
@@ -162,8 +167,14 @@ Details that bit us during v0.7.4 (2026-09-05), so they are now part of the ritu
   then run `mcptoon --version` from that venv and compare with the tag.
 - **Run the lint job locally** (`python -m ruff check src/mcptoon/ tests/`, ruff 0.15.20)
   before pushing — unpushed commits never see CI, and one UP037 turned the release red.
-- **Update the `Tests-<n> passed` badges** in `README.md` and `README.zh-CN.md` (and the
-  matching comment in their contributor sections) to the suite total of the release.
+- **The test total is on eight surfaces — let the script write it.**
+  `python scripts/sync_claims.py --apply` measures collection and rewrites the
+  `tests-<n>%20passed` badges in both READMEs, the one-line `N passed · M skipped`
+  claim on the landing pages / DEVELOPERS / ROADMAP, the prose `N tests` spelling,
+  and `docs/tiktoken-benchmarks.md`, then runs `test_footprint_claims.py` to prove
+  it. Adding tests without running it is how the badges drift; note the badge text
+  is lowercase `tests-` (a case-sensitive guard missed it for months — fixed
+  2026-10-17).
 - **The MCP Registry record used to be pushed by hand.** 0.7.0 and 0.7.2 were published
   from a laptop; 0.7.3–0.7.5 never reached it, and `server.json`'s package version had
   drifted a release behind its own top-level version. `publish-mcp.yml` now publishes on

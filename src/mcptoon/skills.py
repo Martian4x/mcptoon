@@ -1697,7 +1697,8 @@ def _make_link(src: Path, dst: Path) -> None:
     """Create a directory link. Junction on Windows (no admin), symlink elsewhere."""
     if os.name == "nt":
         r = subprocess.run(["cmd", "/c", "mklink", "/J", str(dst), str(src)],
-                           capture_output=True, text=True)
+                           capture_output=True, text=True,
+                           encoding="utf-8", errors="replace")
         if r.returncode != 0:
             raise OSError((r.stderr or r.stdout).strip() or "mklink failed")
     else:
@@ -2109,11 +2110,13 @@ def _git_tombstone(source: Path, rel_path: str, message: str) -> tuple[bool, str
         return False, "not a git repository — tombstone skipped"
     rel = os.path.relpath(source / rel_path, repo).replace("\\", "/")
     add = subprocess.run(["git", "add", "-A", "--", rel], cwd=str(repo),
-                         capture_output=True, text=True)
+                         capture_output=True, text=True,
+                         encoding="utf-8", errors="replace")
     if add.returncode != 0:
         return False, (add.stderr or add.stdout).strip()[:200]
     commit = subprocess.run(["git", "commit", "-m", message, "--", rel],
-                            cwd=str(repo), capture_output=True, text=True)
+                            cwd=str(repo), capture_output=True, text=True,
+                            encoding="utf-8", errors="replace")
     if commit.returncode != 0:
         out = (commit.stderr or commit.stdout).strip()
         if "nothing to commit" in out or "no changes added" in out:
@@ -2141,7 +2144,8 @@ def _tracked_in_head(repo: Path, rel: str) -> bool:
     """
     try:
         r = subprocess.run(["git", "cat-file", "-e", f"HEAD:{rel}"], cwd=str(repo),
-                           capture_output=True, text=True)
+                           capture_output=True, text=True,
+                           encoding="utf-8", errors="replace")
     except (OSError, subprocess.SubprocessError):
         return False
     return r.returncode == 0
@@ -2203,7 +2207,8 @@ def misdelete_guard(source: Path, graveyard: Path | None = None) -> list[str]:
     try:
         r = subprocess.run(
             ["git", "ls-tree", "-r", "HEAD", "--", rel or "."],
-            cwd=str(repo), capture_output=True, text=True)
+            cwd=str(repo), capture_output=True, text=True,
+            encoding="utf-8", errors="replace")
     except (OSError, subprocess.SubprocessError):
         return []
     if r.returncode != 0:
@@ -2261,7 +2266,8 @@ def _git_uncommitted_deletions(source: Path) -> list[str]:
         # spelling); a long `--` git option here would be a flag literal this
         # CLI's flag registry does not own.
         r = subprocess.run(["git", "status", "-s", "--", rel or "."],
-                           cwd=str(repo), capture_output=True, text=True)
+                           cwd=str(repo), capture_output=True, text=True,
+                           encoding="utf-8", errors="replace")
     except (OSError, subprocess.SubprocessError):
         return []
     if r.returncode != 0:
