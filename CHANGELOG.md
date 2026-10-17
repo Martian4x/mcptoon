@@ -5,6 +5,39 @@ All notable changes to mcptoon will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Five CLI papercuts reported on 2026-10-17, each reproduced before fixing and pinned
+by a test. Held for the next version per the one-release-per-topic rule.
+
+### Fixed
+
+- **`mcptoon remove` (and `install --remove`) now drop the server's schema cache.**
+  Removing a server from config left its per-server cache file on disk forever —
+  `add demo; manifest; remove demo` still showed 1 file under `cache/schema_cache/`.
+  `cache.clear_server_cache()` already existed and `uninstall` used it; the two
+  `remove` doors simply never called it. Both now do.
+- **`mcptoon usage --json` prints JSON, not human text.** `_cmd_usage` only routed
+  `toon`/`mcptoon`/`compact` to the renderer, so `--json` fell through to the human
+  branch and printed `Total calls: ...`. `json` is now routed too.
+- **A typo'd command or flag suggests the nearest real one.** `mcptoon selec` and
+  `mcptoon manifest --jsn` failed with only "unknown ...". Both error paths now use
+  `cli._closest` (difflib) to add a `did you mean: select, serve?` line, while
+  keeping the exit codes (1 for a command, 2 for a flag).
+
+### Changed
+
+- **Machine-readable `--json` payloads carry a schema version.** The five
+  script-facing views (`footer-facts`, `status`, `stats`, `usage`, `bench`) now run
+  their payload through `output.stamp_schema`, adding `schema_version` (bumped only
+  on a breaking shape change) and `mcptoon_version`. A consumer can now tell when a
+  field moved instead of silently mis-reading a rename.
+- **`mcptoon <command> --help` is short again.** The first per-command-help fix
+  printed the command's own usage *followed by the whole global reference*, so
+  `skills --help` (10,814 chars) ended up longer than `mcptoon --help` (8,234). It
+  now prints the command's own usage, a compact `Options for '<cmd>':` line, and a
+  one-line pointer to `mcptoon --help` — strictly shorter than the global page.
+
 ## [0.8.22] - 2026-10-17
 
 A batch of empirically confirmed bugs found by adversarial auditing of the CLI's

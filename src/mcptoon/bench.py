@@ -389,8 +389,9 @@ def run_bench(rest: list[str], fmt: str = "auto") -> None:
         return
 
     if fmt == "json":
+        from . import output as _output
         print(json.dumps(
-            {
+            _output.stamp_schema({
                 "tokenizer": tokname,
                 "exact": exact,
                 "tools": {"servers": n_servers, "count": n_tools,
@@ -399,7 +400,7 @@ def run_bench(rest: list[str], fmt: str = "auto") -> None:
                            "duplicates_skipped": dupes, "query": query, "k": k,
                            "rows": {w: t for w, t in skill_rows},
                            "note": note},
-            },
+            }),
             ensure_ascii=False, indent=2,
         ))
         return

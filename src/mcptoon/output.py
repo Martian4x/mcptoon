@@ -75,6 +75,34 @@ from .toon_vendored import decode as _toon_vendored_decode
 from .toon_vendored import ToonDecodeError as _VendoredToonDecodeError
 
 
+# The version of the *shape* of the `--json` payloads mcptoon's own commands emit
+# for scripts (status/stats/footer-facts/usage/bench). Bump only on a breaking
+# change to field names or meanings, never for adding a field. Exposing it lets a
+# consumer (CI, a dashboard) detect that the schema moved instead of silently
+# mis-reading a renamed field — the reason `--json` output was previously
+# unversioned (reported 2026-10-17).
+JSON_SCHEMA_VERSION = 1
+
+
+def stamp_schema(payload: dict) -> dict:
+    """Add `schema_version` + `mcptoon_version` to a machine-readable payload.
+
+    Returns the same dict (mutated) so call sites stay one line. Kept in `output`
+    rather than each command so every consumer-facing JSON envelope carries the
+    two keys by the same rule.
+    """
+    if isinstance(payload, dict):
+        payload.setdefault("schema_version", JSON_SCHEMA_VERSION)
+        if "mcptoon_version" not in payload:
+            try:
+                import mcptoon
+                payload["mcptoon_version"] = mcptoon.__version__
+            except Exception:
+                pass
+    return payload
+
+
+
 # ═══════════════════════════════════════════════════════════════
 # Standard TOON Encoder (toon-format/toon spec)
 # ═══════════════════════════════════════════════════════════════

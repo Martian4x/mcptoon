@@ -73,6 +73,16 @@ class TestHelpShortCircuit(unittest.TestCase):
         out = self._run(["manifest", "--help"], {"_cmd_manifest": _exploder("manifest")})
         self.assertIn("mcptoon manifest", out)
 
+    def _assert_help_not_body(self, command, out):
+        """Help was printed (own page, or the global fallback) and nothing ran."""
+        self.assertTrue(out.strip(), f"{command} --help printed nothing")
+        # Either the command's own page names it, or we fell back to the global
+        # front door — both mean the command body was never reached.
+        own = f"mcptoon {command}" in out
+        front_door = "one gateway for all your MCP tools" in out
+        self.assertTrue(own or front_door,
+                        f"{command} --help showed neither its own page nor the front door")
+
     def test_state_changing_commands_all_short_circuit(self):
         for command, func in (
             ("init", "_cmd_init"),
@@ -85,7 +95,7 @@ class TestHelpShortCircuit(unittest.TestCase):
         ):
             with self.subTest(command=command):
                 out = self._run([command, "--help"], {func: _exploder(command)})
-                self.assertIn("Output flags:", out)
+                self._assert_help_not_body(command, out)
 
     def test_read_only_commands_short_circuit_too(self):
         for command, func in (
@@ -96,7 +106,7 @@ class TestHelpShortCircuit(unittest.TestCase):
         ):
             with self.subTest(command=command):
                 out = self._run([command, "--help"], {func: _exploder(command)})
-                self.assertIn("mcptoon quickstart", out)
+                self._assert_help_not_body(command, out)
 
     def test_help_is_still_help_before_a_command(self):
         out = self._run(["--help"], {"_cmd_manifest": _exploder("manifest")})

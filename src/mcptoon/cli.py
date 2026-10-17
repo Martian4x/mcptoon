@@ -27,6 +27,8 @@ and the stale one is the one people end up reading.
 import json
 import sys
 import os
+import re
+import difflib
 import inspect
 import textwrap
 from pathlib import Path
@@ -119,6 +121,22 @@ def unknown_flag_warnings(args):
             if base not in KNOWN_FLAGS:
                 found.append(base)
     return found
+
+
+def _closest(word, candidates, n=3, cutoff=0.6):
+    """Return up to `n` near-matches for `word` from `candidates` (may be empty).
+
+    One helper for both "unknown command" and "unknown option", so the two error
+    paths suggest in the same way. `difflib.get_close_matches` uses the ratio of
+    common characters, which is the right shape for typos like `notacommand` or
+    `--jsn` -> `--json`. An empty list is a valid answer; callers fall back to the
+    plain hint when there is nothing close.
+    """
+    try:
+        return difflib.get_close_matches(word, list(candidates), n=n, cutoff=cutoff)
+    except Exception:
+        return []
+
 
 
 # The output-format flags are one mutually exclusive family: each sets `fmt`, and the
@@ -426,6 +444,9 @@ def _run(state: dict) -> None:
                 # caller that pipes a future flag through an older CLI.
                 msg = (f"mcptoon: unknown option '{bad[0]}' - see 'mcptoon --help' "
                        f"for the flags this version accepts")
+                near = _closest(bad[0], KNOWN_FLAGS)
+                if near:
+                    msg += f"\n  did you mean: {', '.join(near)}?"
                 if os.environ.get("MCPTOON_STRICT_FLAGS", "1") != "0":
                     print(msg, file=sys.stderr)
                     sys.exit(2)
@@ -452,10 +473,31 @@ def _run(state: dict) -> None:
     if command not in _COMMANDS_WITH_OWN_HELP and any(a in ("-h", "--help") for a in rest):
         usage = _command_usage(command)
         if usage:
-            print(usage)
+            lines = usage.splitlines()
+            first = lines[0].strip()
+            body = "\n".join(lines[1:]).strip()
+            # Name the command in a header so `mcptoon manifest --help` says which
+            # command it is describing. Some docstrings (skills) already open with
+            # "mcptoon <cmd> — ..."; don't double the prefix.
+            if first.lower().startswith("mcptoon"):
+                print(first)
+            else:
+                print(f"mcptoon {command} — {first}")
+            if body:
+                print()
+                print(body)
+            flags = _command_flags(command)
+            if flags:
+                print()
+                print(f"Options for '{command}': {', '.join(flags)}")
             print()
-            print("── full reference (all commands and flags) ──")
-            print()
+            # Stop here instead of dumping the whole ~8k-char global reference.
+            # Printing "own usage + full reference" made `skills --help` (10,814
+            # chars) LONGER than `mcptoon --help` (8,234) — a subcommand page that
+            # buries the command you asked about (reported 2026-10-17). The pointer
+            # keeps the global page one keystroke away without repeating it.
+            print("Global flags and every other command: run 'mcptoon --help'.")
+            return
         _print_help()
         return
 
@@ -1982,6 +2024,16 @@ def _cmd_remove(rest):
         sys.exit(1)
     name = rest[0]
     if cfg.remove_server(name):
+        # Drop the server's schema cache too. Removing the config left the
+        # per-server cache file behind forever — `add demo; manifest; remove demo`
+        # still showed 1 cache file on disk (measured 2026-10-17). `clear_server_cache`
+        # already existed and is what `uninstall` relies on; `remove` just never
+        # called it. A miss here is fine (the server may never have been cached).
+        from . import cache as cache_mod
+        try:
+            cache_mod.clear_server_cache(name)
+        except Exception:
+            pass
         print(f"Removed server: {name}")
     else:
         # A miss is an error, not a no-op: `mcptoon remove foo && echo done` must
@@ -1999,8 +2051,13 @@ def _cmd_usage(_rest, fmt, head_n=0, max_chars=0, full=False):
     `--max-chars` was a no-op on it (found by the flag-coverage probe).
     """
     stats = usage_mod.get_usage_stats()
-    if fmt in ("toon", "mcptoon", "compact"):
-        print(output.render(stats, fmt=fmt, head_n=head_n, max_chars=max_chars, full=full))
+    # `--json` used to fall through to the human branch (only toon/mcptoon/compact
+    # were routed), so `mcptoon usage --json` printed "Total calls: ..." instead of
+    # JSON — a real hole for the one script-facing view of usage (reported
+    # 2026-10-17). Route every machine format, and stamp the schema envelope.
+    if fmt in ("toon", "mcptoon", "compact", "json"):
+        print(output.render(output.stamp_schema(stats), fmt=fmt, head_n=head_n,
+                            max_chars=max_chars, full=full))
     else:
         calls = int(stats.get("total_calls") or 0)
         print(f"Total calls: {calls}")
@@ -2110,7 +2167,7 @@ def _cmd_footer_facts(_rest, fmt, max_chars=0):
     if fmt == "json":
         # Routed through `render` rather than `json.dumps` so `--max-chars` works
         # here too; `fmt="json"` keeps it machine-readable (no default cap).
-        print(output.render(f, fmt="json", max_chars=max_chars))
+        print(output.render(output.stamp_schema(f), fmt="json", max_chars=max_chars))
         return
 
     # Human line — the whole point is that this is pasteable into a turn.
@@ -2214,7 +2271,8 @@ def _cmd_stats(_rest, fmt, head_n=0, max_chars=0, full=False):
             "disabled_tools": len(disabled),
             "by_server": {s: {"full": by_server_full.get(s, 0), "slim": by_server_slim.get(s, 0)} for s in by_server_full},
         }
-        print(output.render(data, fmt="json", head_n=head_n, max_chars=max_chars, full=full))
+        print(output.render(output.stamp_schema(data), fmt="json", head_n=head_n,
+                            max_chars=max_chars, full=full))
     else:
         print("╔══════════════════════════════════════════╗")
         print("║      mcptoon — Token Savings Dashboard   ║")
@@ -2340,7 +2398,7 @@ def _cmd_status(_rest, fmt):
             skills_live = None
 
     if fmt == "json":
-        print(json.dumps({
+        print(json.dumps(output.stamp_schema({
             "servers": n_servers,
             "tools": total_tools,
             "skills": n_skills,
@@ -2355,7 +2413,7 @@ def _cmd_status(_rest, fmt):
             "calls_recorded": calls,
             "gateway_registered": wired,
             "footer_enabled": cfg.footer_enabled(),
-        }, indent=2, ensure_ascii=False))
+        }), indent=2, ensure_ascii=False))
         return
 
     line = "─" * 54
@@ -3468,6 +3526,14 @@ def _cmd_install(rest, fmt, full=False, head_n=0, max_chars=0):
     if do_remove:
         from .installer import remove_installed
         result = remove_installed(server_name)
+        # `install --remove` is the other door that removes a server; drop its
+        # schema cache here too so it does not leak the same way `remove` did.
+        if isinstance(result, dict) and result.get("status") == "removed":
+            from . import cache as cache_mod
+            try:
+                cache_mod.clear_server_cache(server_name)
+            except Exception:
+                pass
         _render_result(result, fmt, head_n, max_chars, full, True,
                        server="install", tool="remove")
         return
@@ -3870,6 +3936,9 @@ def _try_natural(command, rest, fmt, head_n, max_chars, full):
     # `mcptoon x && next` chain reported success and the error was lost from
     # stderr (reported 2026-10-17: `mcptoon notacommand` -> exit 0, stderr 0 bytes).
     print(f"mcptoon: unknown command '{command}'", file=sys.stderr)
+    near = _closest(command, _COMPLETION_COMMANDS)
+    if near:
+        print(f"  did you mean: {', '.join(near)}?", file=sys.stderr)
     print("Run 'mcptoon help' for the command list, or 'mcptoon --help'.", file=sys.stderr)
     sys.exit(1)
 
@@ -3905,6 +3974,24 @@ def _command_usage(command: str) -> str:
     if not doc:
         return ""
     return textwrap.dedent(doc).strip()
+
+
+def _command_flags(command: str) -> list[str]:
+    """The long options named in the command's own usage docstring, in first-seen order.
+
+    A compact, accurate answer to "what options does THIS command take?" without
+    re-printing the whole global reference. Reads the same docstring `_command_usage`
+    renders, so the two never disagree. Only long options are collected; global
+    flags live on the `mcptoon --help` page the caller points at.
+    """
+    text = _command_usage(command)
+    if not text:
+        return []
+    seen = []
+    for tok in re.findall(r"--[a-zA-Z][a-zA-Z0-9-]*", text):
+        if tok not in seen:
+            seen.append(tok)
+    return seen
 
 
 def _lazy_handler(command: str):
