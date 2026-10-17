@@ -18,7 +18,7 @@
   <a href="https://pypi.org/project/mcptoon/"><img src="https://img.shields.io/pypi/v/mcptoon?style=flat-square&color=238636&logo=pypi&logoColor=white" alt="PyPI version"></a>
   <a href="https://github.com/activeing123/mcptoon/stargazers"><img src="https://img.shields.io/github/stars/activeing123/mcptoon?style=flat-square&logo=github&color=58a6ff" alt="GitHub Stars"></a>
   <a href="https://github.com/activeing123/mcptoon/actions"><img src="https://img.shields.io/github/actions/workflow/status/activeing123/mcptoon/ci.yml?branch=main&style=flat-square&logo=githubactions&logoColor=white" alt="CI Build"></a>
-  <a href="#contributing"><img src="https://img.shields.io/badge/tests-2102%20passed-success?style=flat-square&logo=pytest&logoColor=white" alt="Tests"></a>
+  <a href="#contributing"><img src="https://img.shields.io/badge/tests-2140%20passed-success?style=flat-square&logo=pytest&logoColor=white" alt="Tests"></a>
   <a href="https://github.com/activeing123/mcptoon"><img src="https://img.shields.io/badge/dependencies-0%20(stdlib%20only)-blue?style=flat-square" alt="Zero Dependencies"></a>
   <a href="https://github.com/activeing123/mcptoon/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-informational?style=flat-square" alt="License"></a>
 </p>
@@ -255,6 +255,7 @@ Full reference: [DEVELOPERS.md](https://github.com/activeing123/mcptoon/blob/mai
 - [Trust and safety](#trust-and-safety)
 - [Credits and references](#credits-and-references)
 - [Contributing](#contributing)
+- [Troubleshooting & FAQ](https://github.com/activeing123/mcptoon/blob/main/docs/faq.md)
 - [License](#license)
 
 ---
@@ -271,8 +272,11 @@ mcptoon quickstart
 # See every tool available (names-only by default; 255 tools cost 581 tokens):
 mcptoon manifest
 
-# Call a tool (JSON output by default; add --toon to save more):
-mcptoon call everything echo '{"message":"hi"}'
+# Call a tool (JSON output by default; add --toon to save more).
+# `everything` is only present if you already had it; otherwise add the built-in
+# zero-dependency demo server first (no Node, no network) and call that:
+mcptoon add demo --stdio python -m mcptoon demo-server
+mcptoon call demo echo_message '{"message":"hi"}'
 ```
 
 `quickstart` is also what makes mcptoon *visible*: it writes `mcptoon serve` into each
@@ -724,7 +728,7 @@ git clone https://github.com/activeing123/mcptoon.git
 cd mcptoon
 pip install -e . --no-build-isolation
 pip install pytest pytest-cov
-python -m pytest tests/ -v   # 2102 passed, 2 skipped
+python -m pytest tests/ -v   # 2140 passed, 2 skipped
 ```
 
 Three hard rules: zero dependencies (CI-enforced), new behavior ships with tests, Windows
@@ -732,11 +736,16 @@ is a first-class target. New here? Start with
 [CONTRIBUTING.md](https://github.com/activeing123/mcptoon/blob/main/CONTRIBUTING.md) and
 [DEVELOPERS.md](https://github.com/activeing123/mcptoon/blob/main/DEVELOPERS.md).
 
-The codebase: **27,222 lines of Python across 44 modules**, zero third-party dependencies.
+The codebase: **27,708 lines of Python across 44 modules**, zero third-party dependencies.
 
 ---
 
 ## Support
+
+Hitting an error? [Troubleshooting & FAQ](https://github.com/activeing123/mcptoon/blob/main/docs/faq.md) covers the common ones
+(`Server 'X' not configured`, the `skills sync` mis-delete gate, unknown
+command/option exit codes, why a saving reads 99% not 100%, and a stale skills
+count).
 
 mcptoon is a one-person side project and stays free for individuals. If it cut your
 context bill:

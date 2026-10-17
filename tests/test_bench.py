@@ -116,9 +116,15 @@ def test_pct_is_none_without_a_baseline():
     assert bench._pct(5, 0) is None
 
 
-def test_pct_keeps_three_decimals():
-    """Two decimals would round a tiny pointer to '100.0%', which reads as a typo."""
-    assert bench._pct(39, 961164) == 99.996
+def test_pct_floors_to_two_decimals_like_the_footer():
+    """39/961,164 is 99.996%; rounding prints "100.0%" — a typo that also disagreed
+    with footer-facts. Floor to 99.99 so bench and the footer match (2026-10-17)."""
+    assert bench._pct(39, 961164) == 99.99
+
+
+def test_pct_is_100_only_when_nothing_is_loaded():
+    assert bench._pct(0, 1000) == 100.0
+    assert bench._pct(1000, 1000) == 0.0
 
 
 def test_fallback_tokenizer_is_labelled_not_silent():

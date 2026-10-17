@@ -31,7 +31,7 @@ CLI_SOURCE = Path(__file__).resolve().parents[1] / "src" / "mcptoon" / "cli.py"
 SRC_PKG = Path(__file__).resolve().parents[1] / "src" / "mcptoon"
 
 # Names that appear in cli.py only to be cited as examples of what does NOT exist.
-DOCUMENTED_AS_ABSENT = {"--tokens"}
+DOCUMENTED_AS_ABSENT = {"--tokens", "--jsn", "--tooon", "--nonsense"}
 
 
 def package_flag_literals():

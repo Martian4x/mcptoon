@@ -5,6 +5,76 @@ All notable changes to mcptoon will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.22] - 2026-10-17
+
+A batch of empirically confirmed bugs found by adversarial auditing of the CLI's
+own contracts — each reproduced before it was fixed, each pinned by a test.
+
+### Fixed
+
+- **The schema cache no longer loses writes when two processes update it at
+  once.** `cache.py` used to read the whole JSON, change one server's entry, and
+  write the whole file back, guarded only by a `threading.Lock` — which is
+  process-local. A long-lived `serve` gateway and a short-lived CLI command (or
+  two CLIs) writing concurrently clobbered each other: reproduced with 4
+  processes × 400 writes, 1,600 entries collapsed to 14. The cache is now one
+  file per server (`schema_cache/<sha1(server)>.json`) written with
+  `tempfile.mkstemp` + `os.replace`, so concurrent writers touch different files
+  and neither can overwrite the other; the same 1,600-entry test now keeps all
+  1,600. The old single-file `schema_cache.json` is still read for compatibility
+  but never written. `load_all_tools()` is the one reader for "every cached
+  schema", so `bench` and `bench_tokens` cannot disagree.
+- **Pooled child processes are always closed.** `manifest.get_manifest` /
+  `get_server_tools` built an `MCPClientPool` and called `pool.close()` *after*
+  `list_tools`; a server that died mid-fetch raised before the close, leaking an
+  npx/node child on every failed server. Both now use `with MCPClientPool(...)`.
+- **`mcptoon select "<task>"` no longer crashes on a zero-match query.** It
+  indexed `ranked[0]`, so any query with no hit (e.g. a Chinese query against an
+  all-English catalog) raised `IndexError` and exited 1 with a traceback. It now
+  prints "No tools found" plus tips and exits 0, exactly as `search` already did.
+- **An unknown command exits non-zero, on stderr.** `mcptoon notacommand` used to
+  print "Unknown command" to *stdout* and exit 0 — a typo'd step in CI or a `&&`
+  chain looked green. It now writes to stderr and exits 1.
+- **An unknown option is refused, not silently ignored.** `mcptoon serve
+  --nonsense` printed "ignored" and ran on; a typo like `--jsn` for `--json`
+  produced default output with no warning. Unknown options now exit 2 with the
+  flag named (`MCPTOON_STRICT_FLAGS=0` restores the old warn-and-continue).
+- **`mcptoon <command> --help` shows that command's own usage.** `skills --help`,
+  `docs --help` and `quickstart --help` printed the general help page
+  byte-for-byte, so a subcommand's flags were undiscoverable. It now prints the
+  command's own usage block first, then the full reference.
+- **Savings percentages are floored everywhere, never a fake 100%.** `status`
+  printed 640,834 → 2,499 tokens as "省 100%" (the true figure is 99.61%) because
+  `{gw_pct:.0f}` rounded up — and it disagreed with the skills line on the same
+  screen, which floors to 99.99%. The footer tools line, `status`, `welcome` and
+  `report` now share one floored whole-number rule (`footer.display_pct`), and
+  `bench` floors to two decimals instead of rounding (its skills pointer printed
+  100.0% while `footer-facts` said 99.99%).
+- **`status` flags a skills index that lags the live catalog.** It could show 464
+  skills while the footer showed 469, with no hint which was current. It now
+  prints "(live catalog has N — index may be stale, run `mcptoon skills index`)"
+  when the cached live count is higher.
+- **`mcptoon --dir X` keeps every write inside X.** Config and the skills index
+  moved into X, but the schema cache still landed in the real `~/.cache/mcptoon`,
+  because `cache._cache_dir()` bound `config.CACHE_DIR` at import and `apply_home`
+  only rebound that constant. `_cache_dir()` now reads `config.CACHE_DIR` live and
+  `apply_home` also pins `MCPTOON_CACHE_DIR`.
+
+### Docs
+
+- **README's 30-second step 4 now works on a clean machine.** It taught
+  `mcptoon call everything echo ...`, but `everything` is only added by
+  `mcptoon demo --keep`; a fresh install got `Server 'everything' not configured`.
+  It now adds and calls the built-in zero-dependency `demo-server`, which needs no
+  Node and no network.
+- **`quickstart` no longer recommends a server that can list zero tools.** Its
+  empty-machine guidance now leads with `demo-server`; the reference `everything`
+  server (which lists 0 tools in a minimal Python image, per DEVELOPERS.md) is
+  mentioned only as an aside.
+- **New [docs/faq.md](docs/faq.md)** — troubleshooting for the errors people
+  actually hit, including the `mcptoon skills sync` mis-delete gate and its
+  `--allow-tracked-deletes` override (previously undocumented anywhere).
+
 ## [0.8.21] - 2026-10-17
 
 ### Fixed

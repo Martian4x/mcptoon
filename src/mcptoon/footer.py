@@ -106,6 +106,7 @@ not translated.
 from __future__ import annotations
 
 import json
+import math
 
 __all__ = ["facts", "line", "skills_line", "compression_line", "note", "block",
            "enabled", "lang", "changed", "remember", "MARK"]
@@ -416,6 +417,24 @@ def floor_pct(saved: int, total: int, places: int = 2) -> float | None:
     return math.floor(saved / total * 100 * scale) / scale
 
 
+def display_pct(saved: int, total: int) -> str:
+    """A percentage for a *headline*: whole number, floored, never a rounded `100`.
+
+    The tools line, `status`, `welcome` and `report` all used ``{pct:.0f}%``, which
+    rounds 99.61% up to `100%` — mathematically wrong ("省 100%" claims the payload
+    is free) and, worse, it disagrees with the skills line on the same screen, which
+    floors (99.99%). Both halves of one report then quote different rules for the
+    same kind of number (reported 2026-10-17: `status` printed 640,834 → 2,499 as
+    "省 100%"; the true figure is 99.61%). Floor to a whole percent so every
+    surface tells the same story: a big saving reads `99%`, and only an *exact*
+    zero-cost would ever read `100` (and that never happens, because the gateway
+    always costs a few tokens). Two-decimal callers (the skills line) keep using
+    `floor_pct` directly.
+    """
+    pct = floor_pct(saved, total, places=0)
+    return "" if pct is None else f"{pct:.0f}"
+
+
 def line(f: dict | None = None, lng: str | None = None) -> str:
     """The headline figure line, in `lng` (default: the resolved language).
 
@@ -461,6 +480,19 @@ def line(f: dict | None = None, lng: str | None = None) -> str:
     gw_tok = d.get("gateway_tokens") if "gateway_tokens" in d else None
     if gw_pct is not None and gw_tok:
         exposed = _exposed_tool_count()
+        # Compute the rate from the token pair when we have it, floored — not from
+        # the pre-rounded `gateway_pct`. `gateway_savings` rounds to 1 decimal
+        # (99.6), which a whole-number format then rounds *again* to 100; flooring
+        # the raw ratio gives 99 and cannot overstate. Falls back to `gateway_pct`
+        # only for a hand-built dict that has no `tokens_full`.
+        _full = d.get("tokens_full")
+        gw_saved = (_full - gw_tok) if isinstance(_full, int) and _full > gw_tok else None
+        if gw_saved is not None:
+            gw_pct_s = display_pct(gw_saved, _full)
+        else:
+            gw_pct_s = f"{math.floor(float(gw_pct)):.0f}" if gw_pct is not None else ""
+        if not gw_pct_s:
+            gw_pct_s = "0"
         # Three figures, one per unit of the same fact, and only three fit the
         # budget: the count reduction (`96→8`), the rate (`88%`), and the
         # cumulative saving since install (`≈75M（4,000 次）`). The 2026-09-26
@@ -491,14 +523,14 @@ def line(f: dict | None = None, lng: str | None = None) -> str:
         if lng == "zh":
             return (f"{MARK} mcptoon: 工具 {int(d['tools']):,}"
                     + (f"→{exposed}" if exposed else "")
-                    + f"（省 {gw_pct:.0f}%）{cum_zh}"
+                    + f"（省 {gw_pct_s}%）{cum_zh}"
                     f" [{d['token_caliber']}]")
         # English drops the word `tokens` before `/turn` — the `[tiktoken …]`
         # suffix on the same line already names the unit, and keeping it wrapped
         # the line at four-digit tool counts.
         return (f"{MARK} mcptoon: tools {int(d['tools']):,}"
                 + (f"→{exposed}" if exposed else "")
-                + f" (saves {gw_pct:.0f}%){cum_en}"
+                + f" (saves {gw_pct_s}%){cum_en}"
                 f" [{d['token_caliber']}]")
     # No gateway measurement — a catalog smaller than the gateway footprint, or a
     # legacy `--json` dict without the gateway keys. The line keeps the same
@@ -511,12 +543,21 @@ def line(f: dict | None = None, lng: str | None = None) -> str:
     # is the defect the 2026-09-26 redesign set out to remove.
     live_en = f" · {d['calls_recorded']:,} calls" if "calls_recorded" in d else ""
     live_zh = f" · {d['calls_recorded']:,} 次" if "calls_recorded" in d else ""
+    # Floor from the token pair when present (same rule as the gateway branch);
+    # only a hand-built dict without the pair falls back to its stored percentage.
+    _tf, _ts = d.get("tokens_full"), d.get("tokens_saved")
+    if isinstance(_tf, int) and isinstance(_ts, int):
+        sp = display_pct(_ts, _tf)
+    else:
+        sp = f"{math.floor(float(d['savings_pct'])):.0f}"
+    if not sp:
+        sp = "0"  # zero tools: keep "省 0%", not an empty "省 %"
     if lng == "zh":
         return (f"{MARK} mcptoon: 工具 {int(d['tools']):,}"
-                f"（省 {d['savings_pct']:.0f}%）{live_zh}"
+                f"（省 {sp}%）{live_zh}"
                 f" [{d['token_caliber']}]")
     return (f"{MARK} mcptoon: tools {int(d['tools']):,}"
-            f" (saves {d['savings_pct']:.0f}%){live_en}"
+            f" (saves {sp}%){live_en}"
             f" [{d['token_caliber']}]")
 
 

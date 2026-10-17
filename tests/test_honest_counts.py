@@ -70,6 +70,10 @@ class TestGetServerToolsReportsFailure:
         with patch.object(cfg, "CONFIG_FILE", config_file), \
              patch.object(cfg, "CACHE_DIR", tmp_path / "cache"), \
              patch.object(manifest_mod, "MCPClientPool") as pool:
+            # `get_server_tools` now uses `with MCPClientPool(...) as pool:`, so the
+            # object inside the block is `__enter__()`'s return value — make it the
+            # same mock whose `list_tools` raises.
+            pool.return_value.__enter__.return_value = pool.return_value
             pool.return_value.list_tools.side_effect = RuntimeError("cannot spawn")
             tools = manifest_mod.get_server_tools("dead", use_cache=False)
 

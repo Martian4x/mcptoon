@@ -157,9 +157,14 @@ def render(data: dict, lng: str = "en") -> str:
           + "   " + L_(f"(down from {_fmt(t['count'])})", f"（原 {_fmt(t['count'])} 个）"))
     a(_row(L_("every full schema", "完整 schema"), t["full_tokens"]))
     if gw:
-        a(_row(L_("gateway (what loads)", "网关实际加载"), gw, f"   ↓ {t['gateway_pct']:.0f}%")
+        # Floored, whole-number — same rule as the footer/status/skills rows. `.0f`
+        # on the pre-rounded float turned 99.6% into "100%", disagreeing with the
+        # pointer row two lines below (reported 2026-10-17).
+        _gwp = footer_mod.display_pct(t["full_tokens"] - gw, t["full_tokens"])
+        a(_row(L_("gateway (what loads)", "网关实际加载"), gw, f"   ↓ {_gwp}%")
           + "   " + L_("(default compact exposure)", "（默认 compact 暴露）"))
-    a(_row(L_("manifest --slim", "瘦身 schema"), t["slim_tokens"], f"   ↓ {t['slim_pct']:.0f}%"))
+    _slp = footer_mod.display_pct(t["full_tokens"] - t["slim_tokens"], t["full_tokens"])
+    a(_row(L_("manifest --slim", "瘦身 schema"), t["slim_tokens"], f"   ↓ {_slp}%"))
     a("")
 
     # ② skills

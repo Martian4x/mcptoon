@@ -48,7 +48,6 @@ import argparse
 import json
 import sys
 
-from .config import _cache_dir
 from .output import compact, slim_toon
 
 ENCODINGS = ("cl100k_base", "o200k_base")
@@ -57,15 +56,14 @@ ENCODINGS = ("cl100k_base", "o200k_base")
 def load_tools() -> dict[str, list[dict]]:
     """Return {server_name: [tool, ...]} from the schema cache.
 
-    Reads the cache file directly rather than through ``cache.get_cached_tools()``:
-    a measurement should see the schemas that are actually on disk, not obey the
-    runtime freshness TTL.
+    Reads through ``cache.load_all_tools()`` rather than opening a cache file
+    directly: a measurement should see the schemas that are actually on disk,
+    not obey the runtime freshness TTL — but it must read the *current* layout
+    (one file per server since 2026-10-17), or a direct reader goes blind.
     """
-    cache_file = _cache_dir() / "schema_cache.json"
-    if not cache_file.exists():
-        return {}
-    cache = json.loads(cache_file.read_text(encoding="utf-8"))
-    return {name: entry["tools"] for name, entry in cache.items() if entry.get("tools")}
+    from . import cache as cache_mod
+
+    return cache_mod.load_all_tools()
 
 
 def as_json_blob(tools: dict[str, list[dict]]) -> str:
@@ -98,10 +96,10 @@ def main(argv: list[str] | None = None) -> int:
     # tiktoken, so the tiktoken error masked the real "run mcptoon manifest" fix.
     tools = load_tools()
     n_tools = sum(len(v) for v in tools.values())
-    cache_file = _cache_dir() / "schema_cache.json"
     if not n_tools:
+        from .config import _cache_dir
         print(
-            f"no cached tool lists in {cache_file} yet - run "
+            f"no cached tool lists in {_cache_dir()} yet - run "
             "`mcptoon manifest` once so mcptoon fetches the schemas it would replace",
             file=sys.stderr,
         )
@@ -129,7 +127,8 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"servers": len(tools), "tools": n_tools, "counts": counts}, indent=2))
         return 0
 
-    print(f"source: {cache_file}")
+    from .config import _cache_dir
+    print(f"source: {_cache_dir()}")
     print(f"servers: {len(tools)}   tools: {n_tools}\n")
     header = f"{'format':<22}" + "".join(f"{e:>14}" for e in ENCODINGS)
     print(header)

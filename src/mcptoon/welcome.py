@@ -237,17 +237,23 @@ def _rows_and_tail(facts: dict, skills: int | None, lng: str, stream) -> tuple[l
     full = int(facts.get("tokens_full") or 0)
     slim = int(facts.get("tokens_slim") or 0)
     saved = int(facts.get("tokens_saved") or 0)
-    pct = float(facts.get("savings_pct") or 0.0)
     gw_pct = facts.get("gateway_pct")
     gw_tok = facts.get("gateway_tokens")
+    # Whole-number rates are *floored*, not rounded: `.0f` turned 99.6% into a
+    # "省 100%" that reads as a typo and disagrees with the skills line on the same
+    # screen (reported 2026-10-17). `display_pct` is the one shared rule.
+    from . import footer as _footer
     if full and gw_tok and gw_pct is not None:
+        _gw = _footer.display_pct(full - gw_tok, full)
+        _sl = _footer.display_pct(saved, full)
         context = (f"{full:,} {arrow} {gw_tok:,} tokens"
-                   + (f"（网关省 {gw_pct:.0f}%；仅瘦身 schema 省 {pct:.0f}%）" if zh
-                      else f" (gateway saves {gw_pct:.0f}%; slim schemas alone {pct:.0f}%)")
+                   + (f"（网关省 {_gw}%；仅瘦身 schema 省 {_sl}%）" if zh
+                      else f" (gateway saves {_gw}%; slim schemas alone {_sl}%)")
                    )
     else:
+        _sl = _footer.display_pct(saved, full) if full else ""
         context = (f"{full:,} {arrow} {slim:,} tokens"
-                   + (f"（省 {saved:,}，{pct:.0f}%）" if zh else f" (saved {saved:,}, {pct:.0f}%)")
+                   + (f"（省 {saved:,}，{_sl}%）" if zh else f" (saved {saved:,}, {_sl}%)")
                    ) if full else ("尚未缓存" if zh else "catalog not cached yet")
 
     rows = [

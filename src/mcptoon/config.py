@@ -434,6 +434,10 @@ def apply_home(root) -> None:
     os.environ["MCPTOON_HOME"] = str(root)
     CONFIG_DIR = _resolve_root("XDG_CONFIG_HOME")
     CACHE_DIR = _resolve_cache_root()
+    # `cache._cache_dir()` reads `config.CACHE_DIR` live now, but pin the env too:
+    # any code (or a future module) that resolves the cache root from the
+    # environment must stay inside `--dir X` rather than the real `~/.cache`.
+    os.environ["MCPTOON_CACHE_DIR"] = str(CACHE_DIR)
     STATE_DIR = _resolve_state_dir(CONFIG_DIR)
     LOG_DIR = STATE_DIR / "logs"
     TOGGLE_FILE = STATE_DIR / "toggles.json"

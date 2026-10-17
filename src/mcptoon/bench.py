@@ -153,10 +153,23 @@ def _tokenizer():
 
 
 def _pct(part: int, whole: int):
-    """Percent saved, or None when there is no baseline to compare against."""
+    """Percent saved, or None when there is no baseline to compare against.
+
+    Floored to 2 decimals via the shared `footer.floor_pct`, *not* rounded. The
+    old `round(..., 3)` plus a `:.1f` format printed a skills pointer of
+    39/961,164 as "100.0%" — the same "省 100%" typo the footer was fixed for, and
+    a number that disagreed with `footer-facts` (which floors to 99.99%) on the
+    same machine (reported 2026-10-17). Flooring makes `bench` and the footer tell
+    one story.
+    """
     if not whole:
         return None
-    return round((1 - part / whole) * 100, 3)
+    from .footer import floor_pct
+
+    p = floor_pct(whole - part, whole)
+    if p is None:
+        return 0.0 if part == whole else None
+    return p
 
 
 # ═══════════════════════════════════════════════════
@@ -168,35 +181,34 @@ def _load_cached_tools() -> dict:
 
     Deliberately not ``cache.get_cached_tools()``: a measurement must see the
     schemas actually on disk, not obey the runtime freshness TTL. But it must
-    still agree with what the user *has*: the cache file keeps an entry for a
-    server that was later removed from the config, and counting it inflates the
-    bench. Measured on the author's box 2026-09-26: the file held a fossil
-    ``mcptoon`` entry with 461 tools that `status` (config-based) did not count,
-    so `bench` said 557 tools while `status` said 96 — the exact "same machine,
-    two numbers" the product is supposed to have stopped doing. The config is the
-    source of truth for "what servers exist"; the cache supplies their schemas.
-    """
-    from .config import CACHE_DIR, list_servers
+    still agree with what the user *has*: the cache keeps an entry for a server
+    that was later removed from the config, and counting it inflates the bench.
+    Measured on the author's box 2026-09-26: the file held a fossil ``mcptoon``
+    entry with 461 tools that `status` (config-based) did not count, so `bench`
+    said 557 tools while `status` said 96 — the exact "same machine, two numbers"
+    the product is supposed to have stopped doing. The config is the source of
+    truth for "what servers exist"; the cache supplies their schemas.
 
-    cache_file = CACHE_DIR / "schema_cache.json"
-    if not cache_file.exists():
-        return {}
-    try:
-        cache = json.loads(cache_file.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
+    Reads through ``cache.load_all_tools()`` (the same backend the live commands
+    use) rather than opening the cache file directly — the cache moved from one
+    shared file to one file per server on 2026-10-17, and a direct reader would
+    have silently gone blind to it.
+    """
+    from . import cache as cache_mod
+    from .config import list_servers
+
+    tools = cache_mod.load_all_tools()
     try:
         configured = set(list_servers())
     except Exception:
         configured = None
     out = {}
-    for name, entry in cache.items():
-        tools = entry.get("tools")
-        if not tools:
+    for name, entry_tools in tools.items():
+        if not entry_tools:
             continue
         if configured is not None and name not in configured:
             continue  # a server the user removed — its schemas are not their catalog
-        out[name] = tools
+        out[name] = entry_tools
     return out
 
 
@@ -310,7 +322,7 @@ def _render(tokname, exact, tool_rows, n_tools,
         for i, (what, tok) in enumerate(rows):
             first = label if i == 0 else ""
             saved = "-" if i == 0 else (
-                f"{_pct(tok, base):.1f}%" if _pct(tok, base) is not None else "-")
+                f"{_pct(tok, base):.2f}%" if _pct(tok, base) is not None else "-")
             lines.append(f"  {first:<13} {what:<38} {tok:>11,} {saved:>11}")
         lines.append("")
 

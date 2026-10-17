@@ -53,9 +53,15 @@ CACHE = {
 
 @pytest.fixture
 def cache_dir(tmp_path):
-    """A temp cache dir holding the sample catalog, patched where the module reads it."""
+    """A temp cache dir holding the sample catalog, isolated via the env var.
+
+    `load_tools` reads through `cache.load_all_tools()`, which resolves the cache
+    root from `MCPTOON_CACHE_DIR` at call time — so isolation is by env, not by
+    patching a module attribute. The sample is written as the legacy single file,
+    which `load_all_tools` still reads for compatibility.
+    """
     (tmp_path / "schema_cache.json").write_text(json.dumps(CACHE), encoding="utf-8")
-    with patch.object(bench_tokens, "_cache_dir", lambda: tmp_path):
+    with patch.dict(os.environ, {"MCPTOON_CACHE_DIR": str(tmp_path)}):
         yield tmp_path
 
 
@@ -76,12 +82,12 @@ def test_empty_cache_returns_2_with_manifest_hint(tmp_path, capsys):
         return real_import(name, *a, **kw)
 
     with patch.object(builtins, "__import__", fake_import):
-        with patch.object(bench_tokens, "_cache_dir", lambda: tmp_path):
+        with patch.dict(os.environ, {"MCPTOON_CACHE_DIR": str(tmp_path)}):
             code = bench_tokens.main([])
     assert code == 2
     err = capsys.readouterr().err
     assert "mcptoon manifest" in err
-    assert "schema_cache.json" in err
+    assert str(tmp_path) in err
 
 
 def test_missing_tiktoken_returns_2_and_names_the_fix(cache_dir, capsys):
@@ -112,7 +118,7 @@ def test_load_tools_reads_the_cache_file(cache_dir):
 
 
 def test_load_tools_is_empty_without_a_cache(tmp_path):
-    with patch.object(bench_tokens, "_cache_dir", lambda: tmp_path):
+    with patch.dict(os.environ, {"MCPTOON_CACHE_DIR": str(tmp_path)}):
         assert bench_tokens.load_tools() == {}
 
 

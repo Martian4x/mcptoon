@@ -155,13 +155,15 @@ def get_manifest(use_cache: bool = True) -> dict[str, list[dict]]:
                 result[name] = cached
                 continue
 
-        # Fetch from server
+        # Fetch from server. `with` (not try/finally) so a server that dies mid
+        # list_tools still closes the pool: the old `pool.close()` sat after the
+        # call and was skipped whenever list_tools raised, leaking one npx/node
+        # child per failed server (measured 2026-10-17: pools=1, close()=0).
         try:
-            pool = MCPClientPool(servers)
-            tools = pool.list_tools(name)
+            with MCPClientPool(servers) as pool:
+                tools = pool.list_tools(name)
             result[name] = tools
             cache_mod.set_cached_tools(name, tools)
-            pool.close()
         except (MCPError, Exception) as e:
             result[name] = [{"error": str(e)[:300]}]
 
@@ -190,10 +192,10 @@ def get_server_tools(server: str, use_cache: bool = True) -> list[dict]:
         return []
 
     try:
-        pool = MCPClientPool(servers)
-        tools = pool.list_tools(server)
+        # `with` so a failed list_tools still closes the pool (see get_manifest).
+        with MCPClientPool(servers) as pool:
+            tools = pool.list_tools(server)
         cache_mod.set_cached_tools(server, tools)
-        pool.close()
         return tools
     except (MCPError, Exception) as e:
         return [{"error": str(e)[:300]}]

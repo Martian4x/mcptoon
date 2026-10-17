@@ -134,6 +134,10 @@ class TestNoFlatPercentageClaimedForCallResults:
         for i, line in enumerate(p.read_text("utf-8").splitlines(), 1):
             if "34%" not in line:
                 continue
+            # A shields.io test-count badge like `tests-2134%20passed` contains the
+            # substring "34%" by coincidence — never a --toon claim.
+            if "%20passed" in line or "shields.io" in line:
+                continue
             if any(a in line for a in self.ALLOWED):
                 continue
             # A line may still mention 34% if it also gives the result-side range.

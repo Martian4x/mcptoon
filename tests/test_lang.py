@@ -186,7 +186,7 @@ class TestRendering(_IsolatedState):
         on the machines that never had a gateway figure (2026-09-26, third pass)."""
         self.assertEqual(
             footer_mod.line(_FACTS, "en"),
-            "🎉 mcptoon: tools 95 (saves 25%) · 0 calls [tiktoken cl100k_base]")
+            "🎉 mcptoon: tools 95 (saves 24%) · 0 calls [tiktoken cl100k_base]")
 
     def test_the_line_carries_a_figure_that_moves(self):
         """The catalog figures are a fixed property of the machine; the running
@@ -203,12 +203,12 @@ class TestRendering(_IsolatedState):
         legacy.pop("calls_recorded")
         self.assertEqual(
             footer_mod.line(legacy, "en"),
-            "🎉 mcptoon: tools 95 (saves 25%) [tiktoken cl100k_base]")
+            "🎉 mcptoon: tools 95 (saves 24%) [tiktoken cl100k_base]")
 
     def test_the_chinese_line_says_the_same_thing(self):
         out = footer_mod.line(_FACTS, "zh")
         self.assertIn("工具 95", out)
-        self.assertIn("省 25%", out)
+        self.assertIn("省 24%", out)
 
     def test_both_languages_keep_the_machine_readable_handles(self):
         """`mcptoon:` and `[caliber]` are load-bearing.
@@ -275,14 +275,14 @@ class TestRendering(_IsolatedState):
         facts = dict(_FACTS, gateway_tokens=2607, gateway_saved=18307,
                      gateway_pct=87.6, calls_recorded=1234)
         out = footer_mod.line(facts, "en")
-        self.assertIn("saves 88%", out)
+        self.assertIn("saves 87%", out)
         self.assertIn("≈", out)  # the cumulative estimate (needs calls > 0)
         self.assertIn("1,234c", out, "the moving call count rides beside it")
         self.assertNotIn("20,914 →", out, "the raw pair now lives in `report`")
         self.assertTrue(out.startswith(footer_mod.MARK + " mcptoon:"), out)
         self.assertTrue(out.endswith("[tiktoken cl100k_base]"), out)
         zh = footer_mod.line(facts, "zh")
-        self.assertIn("省 88%", zh)
+        self.assertIn("省 87%", zh)
         self.assertIn("≈省", zh)
 
     def test_a_dict_without_the_gateway_key_keeps_the_headline_shape(self):
@@ -291,7 +291,7 @@ class TestRendering(_IsolatedState):
         than the pre-2026-09-26 raw pair that wrapped at 143 columns."""
         self.assertEqual(
             footer_mod.line(_FACTS, "en"),
-            "🎉 mcptoon: tools 95 (saves 25%) · 0 calls [tiktoken cl100k_base]")
+            "🎉 mcptoon: tools 95 (saves 24%) · 0 calls [tiktoken cl100k_base]")
 
 
 class TestSurfacesFollowTheSetting(_IsolatedState):

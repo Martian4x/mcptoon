@@ -12,8 +12,12 @@
 # governing permissions and limitations under the License.
 
 """Tests for schema cache content fingerprinting and staleness handling."""
+import json
 import os
+import subprocess
+import sys
 import tempfile
+import textwrap
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -86,6 +90,61 @@ class TestFingerprint(CacheIsolated):
             "not-a-dict",
             {"inputSchema": {"required": None}},
         ]), str)
+
+
+class TestPerServerStorage(CacheIsolated):
+    """The 2026-10-17 split: one file per server, so writers never clobber.
+
+    A single shared `schema_cache.json` read-modify-written whole by every writer
+    lost data the moment two processes cached at once (the `serve` gateway + any
+    CLI). These pin the two properties that fix it: distinct servers land in
+    distinct files, and concurrent writers all survive.
+    """
+
+    def test_each_server_gets_its_own_file(self):
+        c.set_cached_tools("alpha", _tools([("a", [])]))
+        c.set_cached_tools("beta", _tools([("b", [])]))
+        subdir = self.cache_dir / "schema_cache"
+        files = sorted(p.name for p in subdir.glob("*.json"))
+        self.assertEqual(len(files), 2, "two servers must be two files")
+        # and the reader still sees both, by name
+        self.assertEqual(set(c.load_all_tools()), {"alpha", "beta"})
+
+    def test_legacy_single_file_is_still_read(self):
+        # An upgrade must not lose the cache the user already has.
+        (self.cache_dir / "schema_cache.json").write_text(
+            json.dumps({"old": {"tools": _tools([("x", [])]), "ts": 1, "fp": "z"}}),
+            encoding="utf-8")
+        self.assertIsNotNone(c.get_cached_tools_any_age("old")[0])
+        self.assertEqual(list(c.load_all_tools()), ["old"])
+
+    def test_per_server_file_overrides_legacy_entry(self):
+        (self.cache_dir / "schema_cache.json").write_text(
+            json.dumps({"s": {"tools": _tools([("old", [])]), "ts": 1, "fp": "a"}}),
+            encoding="utf-8")
+        c.set_cached_tools("s", _tools([("new", [])]))
+        tools = c.get_cached_tools_any_age("s")[0]
+        self.assertEqual([t["name"] for t in tools], ["new"],
+                         "the fresh per-server file must win over the legacy copy")
+
+    def test_concurrent_writers_do_not_lose_entries(self):
+        """The regression: 4 processes × 400 servers must leave 1600, not ~14."""
+        repo_src = str(Path(c.__file__).resolve().parents[1])
+        worker = textwrap.dedent("""
+            import sys
+            from mcptoon.cache import set_cached_tools
+            wid = sys.argv[1]
+            for i in range(150):
+                set_cached_tools(f"w{wid}_{i}", [{"name": "t", "inputSchema": {"required": []}}])
+        """)
+        env = dict(os.environ, PYTHONPATH=repo_src,
+                   MCPTOON_CACHE_DIR=str(self.cache_dir), MCPTOON_HOME=str(self.cache_dir))
+        procs = [subprocess.Popen([sys.executable, "-c", worker, str(w)], env=env)
+                 for w in range(4)]
+        for p in procs:
+            self.assertEqual(p.wait(), 0)
+        got = len(c.load_all_tools())
+        self.assertEqual(got, 600, f"expected 600 entries, got {got} (data loss)")
 
 
 if __name__ == "__main__":

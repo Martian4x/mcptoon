@@ -27,6 +27,8 @@ and the stale one is the one people end up reading.
 import json
 import sys
 import os
+import inspect
+import textwrap
 from pathlib import Path
 
 from . import config as cfg
@@ -104,8 +106,11 @@ def unknown_flag_warnings(args):
 
     Unknown options used to be dropped silently, which let a flag that never
     existed ("--tokens") sit in the README as the documented way to reproduce
-    the token numbers. Callers print a warning; the token is still passed
-    through so subcommand behaviour does not change.
+    the token numbers. The parse loop now *fails* on an unknown flag (exit 2)
+    rather than warning and running on, so a typo like `--jsn` cannot silently
+    produce default output; `MCPTOON_STRICT_FLAGS=0` downgrades that to a warning.
+    This helper stays a pure query so tests and other callers can ask "which of
+    these are unknown?" without side effects.
     """
     found = []
     for a in args:
@@ -410,11 +415,21 @@ def _run(state: dict) -> None:
         elif a.startswith("--format="):
             export_format = a.split("=", 1)[1]
         else:
-            for bad in unknown_flag_warnings([a]):
-                print(
-                    f"mcptoon: unknown option '{bad}' ignored - see 'mcptoon --help'",
-                    file=sys.stderr,
-                )
+            bad = unknown_flag_warnings([a])
+            if bad:
+                # A typo'd flag used to be printed as "... ignored" and the command
+                # ran on with default behaviour — so `--jsn`/`--tooon` silently gave
+                # the default format and a benchmark number that could not be
+                # reproduced (reported 2026-10-17: `serve --nonsense` printed
+                # "ignored" and then "serve started"). Fail instead of pretending.
+                # `MCPTOON_STRICT_FLAGS=0` restores the old warn-and-continue for a
+                # caller that pipes a future flag through an older CLI.
+                msg = (f"mcptoon: unknown option '{bad[0]}' - see 'mcptoon --help' "
+                       f"for the flags this version accepts")
+                if os.environ.get("MCPTOON_STRICT_FLAGS", "1") != "0":
+                    print(msg, file=sys.stderr)
+                    sys.exit(2)
+                print(msg + " (ignored: MCPTOON_STRICT_FLAGS=0)", file=sys.stderr)
             cmd_args.append(a)
         i += 1
 
@@ -429,7 +444,18 @@ def _run(state: dict) -> None:
     # Asking for help must never run the command you asked about: `mcptoon
     # quickstart --help` used to discover servers and write them into config, and
     # `mcptoon serve --help` used to open a stdio bridge and hang until timeout.
+    # For a command with its own help page, that page runs and returns; otherwise
+    # we print the command's own usage (its handler docstring) followed by the
+    # full reference — `skills --help`, `docs --help`, `quickstart --help` used to
+    # print the *general* help byte-for-byte, so there was no way to learn a
+    # subcommand's own flags (reported 2026-10-17).
     if command not in _COMMANDS_WITH_OWN_HELP and any(a in ("-h", "--help") for a in rest):
+        usage = _command_usage(command)
+        if usage:
+            print(usage)
+            print()
+            print("── full reference (all commands and flags) ──")
+            print()
         _print_help()
         return
 
@@ -1247,6 +1273,22 @@ def _cmd_select(rest, fmt="auto", head_n=0, max_chars=0, full=False):
     ranked, engine = manifest_mod.rank_tools(query, flat)
     ranked = ranked[:top]
 
+    if not ranked:
+        # The engine's contract is "always succeeds, may return []" (manifest.py).
+        # An empty ranking is a normal zero-match, not an impossible state — the
+        # old code went straight to `ranked[0]` and raised IndexError with a
+        # traceback. Mirror `search`'s empty branch (same tips, exit 0) and add
+        # the registry exit, because `select` is the "help me pick" command and a
+        # miss is exactly when a user needs to know they can install more.
+        print(f"No tools found matching '{query}'.")
+        print("")
+        print("Tips:")
+        print("  - Check your servers are configured: mcptoon list")
+        print("  - See all available tools: mcptoon manifest")
+        print(f"  - Not installed yet? Search the live registries "
+              f"(17,000+ MCP servers): mcptoon install --search '{query}'")
+        sys.exit(0)
+
     # Look the description back up for display; the engines only carry the keys
     # they need to score, and inventing a description here would be a second
     # source of truth for the same tool.
@@ -1342,14 +1384,18 @@ def _cmd_quickstart(rest, fmt="auto"):
         print("")
         print("  Don't worry — here's how to get started:")
         print("")
-        print("    # Add a zero-config server (no API key needed):")
-        print("    mcptoon add everything --stdio npx -y @modelcontextprotocol/server-everything")
+        print("    # Add the built-in demo server (zero config, no Node, no network):")
+        print("    mcptoon add demo --stdio python -m mcptoon demo-server")
         print("")
         print("    # Then see your tools:")
         print("    mcptoon manifest --slim")
         print("")
         print("    # Call a tool:")
-        print("    mcptoon call fetch fetch '{\"url\":\"https://example.com\"}'")
+        print("    mcptoon call demo echo_message '{\"message\":\"hi\"}'")
+        print("")
+        print("    # Want the reference 'everything' server instead? It needs Node, and in")
+        print("    # some minimal Python images it lists zero tools:")
+        print("    #   mcptoon add everything --stdio npx -y @modelcontextprotocol/server-everything")
         print("")
         # The takeover warning at the end of a successful run never fires here
         # (there is nothing to take over), so on this path the token story would
@@ -2279,6 +2325,19 @@ def _cmd_status(_rest, fmt):
         n_skills = len(skills_mod.load_index().get("skills") or []) or None
     except Exception:
         n_skills = None
+    # The index snapshot can lag the live catalog: `status` reads the built index
+    # (no filesystem walk — a status command must stay cheap), while `bench` and
+    # the footer re-measure live. Reported 2026-10-17: status said 464 while the
+    # footer said 469, with no hint which was current. Read the footer's cached
+    # live count (a tiny sidecar, no walk) and flag when the index is behind, so
+    # the two numbers can never disagree silently.
+    skills_live = None
+    if n_skills:
+        try:
+            _figs = skills_mod._load_skill_token_cache().get("figures") or {}
+            skills_live = int(_figs.get("count") or 0) or None
+        except Exception:
+            skills_live = None
 
     if fmt == "json":
         print(json.dumps({
@@ -2309,15 +2368,23 @@ def _cmd_status(_rest, fmt):
         print("  Managing           : nothing yet — run `mcptoon quickstart`")
     if n_skills:
         print(f"  Skills in catalog  : {n_skills} (recursive, deduped)  [skills index]")
+        if skills_live and skills_live > n_skills:
+            # The index is behind the live catalog. Say so, with the fix — the
+            # alternative is two surfaces quietly quoting 464 and 469.
+            print(f"                       (live catalog has {skills_live} — index may be "
+                  f"stale, run `mcptoon skills index`)")
     if total_tools:
         if gw_tokens and gw_pct is not None:
+            _gw_saved = footer_mod.display_pct(full_tokens - gw_tokens, full_tokens)
+            _slim_saved = footer_mod.display_pct(saved, full_tokens)
             print(f"  Tool definitions   : {full_tokens:,} → {gw_tokens:,} tokens "
-                  f"via the gateway (saved {gw_pct:.0f}%)  [{caliber}]")
+                  f"via the gateway (saved {_gw_saved}%)  [{caliber}]")
             print(f"                       (slim schemas alone: {slim_tokens:,}, "
-                  f"{pct:.0f}%)")
+                  f"{_slim_saved}%)")
         else:
+            _slim_saved = footer_mod.display_pct(saved, full_tokens)
             print(f"  Tool definitions   : {full_tokens:,} → {slim_tokens:,} tokens "
-                  f"(saved {saved:,}, {pct:.0f}%)  [{caliber}]")
+                  f"(saved {saved:,}, {_slim_saved}%)  [{caliber}]")
     print(f"  Calls recorded     : {calls}")
     if wired:
         print("  Gateway in agents  : yes — agents can see mcptoon itself")
@@ -3797,13 +3864,78 @@ def _try_natural(command, rest, fmt, head_n, max_chars, full):
         _cmd_health_check(rest, fmt, head_n, max_chars, full)
         return
 
-    print(f"Unknown command: {command}")
-    print("Run: mcptoon help")
+    # Not a command and not natural language we recognise. This is a failure:
+    # write it to stderr and exit non-zero. It used to `print` to stdout and fall
+    # off the end of `main` returning 0, so a typo'd command in a CI step or a
+    # `mcptoon x && next` chain reported success and the error was lost from
+    # stderr (reported 2026-10-17: `mcptoon notacommand` -> exit 0, stderr 0 bytes).
+    print(f"mcptoon: unknown command '{command}'", file=sys.stderr)
+    print("Run 'mcptoon help' for the command list, or 'mcptoon --help'.", file=sys.stderr)
+    sys.exit(1)
 
 
 # ═══════════════════════════════════════════════════
 # Help
 # ═══════════════════════════════════════════════════
+
+def _command_usage(command: str) -> str:
+    """The command's own usage text: its handler's docstring, cleaned up.
+
+    `skills --help`, `docs --help`, `quickstart --help` used to print the general
+    help page byte-for-byte — the subcommand's own flags were undiscoverable
+    (reported 2026-10-17). The handler docstrings already carry a `Usage:` block
+    for most commands; this renders the one for the command asked about. Returns
+    "" when the command is unknown or its handler has no docstring, and the caller
+    falls back to the general help alone.
+    """
+    handler = _COMMAND_HANDLERS.get(command)
+    if handler is None:
+        handler = _lazy_handler(command)
+    if handler is None:
+        return ""
+    doc = inspect.getdoc(handler)
+    if not doc and command == "skills":
+        # `_cmd_skills` dispatches subcommands and carries no docstring; its own
+        # usage lives in `_skills_usage()`.
+        try:
+            from .skills import _skills_usage
+            return _skills_usage()
+        except Exception:
+            return ""
+    if not doc:
+        return ""
+    return textwrap.dedent(doc).strip()
+
+
+def _lazy_handler(command: str):
+    """Resolve a handler that lives in a lazily-imported module, or None."""
+    try:
+        if command == "skills":
+            from .skills import _cmd_skills
+            return _cmd_skills
+        if command == "docs":
+            from . import docs as _docs
+            return _docs.run
+        if command == "report":
+            from . import report as _report
+            return _report.run
+        if command == "update":
+            from . import update as _update
+            return _update.run
+        if command == "bench":
+            from . import bench as _bench
+            return _bench.run_bench
+    except Exception:
+        return None
+    return None
+
+
+# command (and its aliases) -> the handler whose docstring documents it. Used only
+# for `mcptoon <command> --help`; the dispatch chain stays the source of truth for
+# behaviour. Commands with their own help page (serve/demo/demo-server) are absent
+# on purpose — they print their own and never reach `_command_usage`.
+_COMMAND_HANDLERS: dict[str, object] = {}
+
 
 def _print_help():
     print(f"""mcptoon v{__import__('mcptoon').__version__} — one gateway for all your MCP tools
@@ -4118,3 +4250,27 @@ def _cmd_health(rest, fmt):
     else:
         results = check_all(timeout=timeout)
         print(format_health_report(results))
+
+
+# ─── Per-command usage registry (populated last, once every handler exists) ───
+# Only the handlers defined in this module; the lazy-imported ones (docs, report,
+# update, skills, bench) are resolved by `_command_usage` through a small fallback.
+def _populate_command_handlers() -> None:
+    mapping = {
+        "list": _cmd_list, "servers": _cmd_list,
+        "manifest": _cmd_manifest, "tools": _cmd_manifest,
+        "inspect": _cmd_inspect, "search": _cmd_search, "select": _cmd_select,
+        "call": _cmd_call, "quickstart": _cmd_quickstart, "qs": _cmd_quickstart,
+        "init": _cmd_init, "add": _cmd_add, "remove": _cmd_remove,
+        "usage": _cmd_usage, "status": _cmd_status, "brief": _cmd_status,
+        "stats": _cmd_stats, "retrieve": _cmd_retrieve,
+        "footer-facts": _cmd_footer_facts, "toggle": _cmd_toggle,
+        "policy": _cmd_policy, "import": _cmd_import, "doctor": _cmd_doctor,
+        "install": _cmd_install, "completion": _cmd_completion,
+        "sync": _cmd_sync, "off": _cmd_off, "restore": _cmd_restore,
+        "uninstall": _cmd_uninstall, "health": _cmd_health, "plugin": _cmd_plugin,
+    }
+    _COMMAND_HANDLERS.update(mapping)
+
+
+_populate_command_handlers()
