@@ -51,7 +51,14 @@ def _run(argv):
 
 @pytest.fixture
 def isolated(tmp_path, monkeypatch):
-    monkeypatch.setenv("MCPTOON_CONFIG_FILE", str(tmp_path / "config.json"))
+    cfg_file = tmp_path / "config.json"
+    # One real server so a `policy set` reaches the policy validation (server
+    # existence is now checked first, 2026-10-17).
+    cfg_file.write_text(
+        '{"servers": {"s": {"transport": "stdio", "command": ["x"], "args": []}}}',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MCPTOON_CONFIG_FILE", str(cfg_file))
     monkeypatch.setenv("MCPTOON_SETTINGS_FILE", str(tmp_path / "settings.json"))
     monkeypatch.delenv("MCPTOON_SERVERS", raising=False)
     monkeypatch.chdir(tmp_path)
@@ -77,8 +84,11 @@ def test_errors_go_to_stderr_not_stdout(argv, needle, isolated):
     assert needle not in out, f"{argv}: error text leaked to stdout: {out!r}"
 
 
-def test_empty_result_stays_on_stdout(isolated):
+def test_empty_result_stays_on_stdout(tmp_path, monkeypatch):
     # "No servers configured" is the command's answer, not an error — stdout.
+    monkeypatch.setenv("MCPTOON_CONFIG_FILE", str(tmp_path / "empty.json"))
+    monkeypatch.setenv("MCPTOON_SETTINGS_FILE", str(tmp_path / "settings.json"))
+    monkeypatch.delenv("MCPTOON_SERVERS", raising=False)
     out, err, code = _run(["list"])
     assert "No servers configured" in out
     assert "No servers configured" not in err

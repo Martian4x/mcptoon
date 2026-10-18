@@ -13,6 +13,16 @@ rule.
 
 ### Fixed
 
+- **`mcptoon call` refuses a JSON argument and `--stdin` together.** `--stdin`
+  silently won, so `echo '{...A}' | mcptoon call s t '{...B}' --stdin` used A and
+  dropped B with no warning. Passing both is now an error; either alone works.
+- **`mcptoon policy set` rejects a non-existent server or tool.** `policy set zzz
+  zzz raw` used to exit 0 and persist a dead rule that matched nothing. The server
+  is checked against config, and the tool against the cache when one exists (an
+  uncached server is accepted rather than forcing a slow fetch).
+- **`mcptoon health` exits non-zero when a server is dead, in both output modes.**
+  The JSON path already exited 1; the human-readable path printed "1 dead" and
+  exited 0, so `mcptoon health && deploy` treated an unreachable server as healthy.
 - **`mcptoon call` exits non-zero when the tool itself reports an error.** A tool
   that ran and returned `isError: true` (e.g. a missing required argument) printed
   its message and exited 0, so `mcptoon call ... && next` ran the next step on a

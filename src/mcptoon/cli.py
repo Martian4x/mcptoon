@@ -925,6 +925,16 @@ def _cmd_call(rest, fmt, head_n, max_chars, full, use_stdin=False, fallback_json
             rest = rest[:i] + rest[i + 2:]
             break
 
+    # A JSON object given positionally AND --stdin are two answers to the same
+    # question ("what are the arguments?"). --stdin silently won, so
+    # `echo '{...A}' | mcptoon call s t '{...B}' --stdin` used A and threw B away
+    # with no warning — a script's intended args vanished (reported 2026-10-17).
+    # Refuse the ambiguity instead of picking one behind the user's back.
+    if use_stdin and any(a.startswith("{") for a in rest):
+        _err("Error: pass tool arguments either as a JSON argument or via --stdin, "
+             "not both.")
+        sys.exit(1)
+
     # Check for --auto mode
     is_auto = "--auto" in rest
     if is_auto:
@@ -1190,6 +1200,27 @@ def _cmd_policy(rest, fmt):
             _err("Usage: mcptoon policy set <server> <tool-or-*> <raw|json|auto|toon|compact|slim|smart>")
             sys.exit(1)
         server, tool, policy = rest[1], rest[2], rest[3]
+        # A policy names a server and a tool; writing one for a typo'd server or
+        # tool silently stored a dead entry that never matched anything, and
+        # `mcptoon policy` then showed a rule the user could not reconcile with
+        # any real server (reported 2026-10-17 — `policy set zzz zzz raw` exited
+        # 0 and persisted). Validate against config + the tool cache. A tool check
+        # is only made when the server has a cached manifest; otherwise we cannot
+        # verify offline and accept it (a slow fetch to police a config write is
+        # not worth it), printing a note instead.
+        servers = cfg.load_config()
+        if server not in servers:
+            _err(f"Server '{server}' not found. Available: {', '.join(sorted(servers.keys())) or '(none)'}")
+            sys.exit(1)
+        if tool != "*":
+            from . import cache as _cache
+            cached, _age = _cache.get_cached_tools_any_age(server)
+            if cached is not None:
+                names = {t.get("name") for t in cached if isinstance(t, dict) and "error" not in t}
+                if tool not in names:
+                    _err(f"Tool '{tool}' not found on '{server}'.")
+                    _err(f"See its tools: mcptoon inspect {server}")
+                    sys.exit(1)
         if cfg.set_compression_policy(server, tool, policy):
             if policy == "auto":
                 print(f"Cleared: {server}:{tool} uses the default behaviour again.")
@@ -4472,13 +4503,18 @@ def _cmd_health(rest, fmt):
         import json as _json
         results = check_all(timeout=timeout)
         print(_json.dumps(results, ensure_ascii=False, indent=2))
-        # Exit code 1 if any server is dead (for CI/CD)
-        dead = sum(1 for r in results if r["status"] in ("error", "timeout"))
-        if dead > 0:
-            sys.exit(1)
     else:
         results = check_all(timeout=timeout)
         print(format_health_report(results))
+
+    # Exit 1 if any server is dead, in BOTH output modes. The JSON path already
+    # did this; the human-readable path printed "1 dead" and exited 0, so
+    # `mcptoon health && deploy` (or a CI check reading the exit code) treated a
+    # machine with an unreachable server as healthy (reported 2026-10-17). The
+    # two modes must agree on what "unhealthy" means.
+    dead = sum(1 for r in results if r["status"] in ("error", "timeout"))
+    if dead > 0:
+        sys.exit(1)
 
 
 # ─── Per-command usage registry (populated last, once every handler exists) ───

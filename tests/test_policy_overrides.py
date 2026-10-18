@@ -81,6 +81,20 @@ class TestPolicyConfig(EnvIsolated):
 
 
 class TestPolicyCLI(EnvIsolated):
+    def setUp(self):
+        super().setUp()
+        # `policy set` now validates that the server exists and (when cached) the
+        # tool exists (2026-10-17). Give the CLI a real `img` server with a cached
+        # `generate` tool so these flow tests exercise the success path.
+        p1 = mock.patch.object(cfg, "load_config", return_value={"img": {"transport": "stdio"}})
+        p1.start()
+        self.addCleanup(p1.stop)
+        from mcptoon import cache as _cache
+        p2 = mock.patch.object(_cache, "get_cached_tools_any_age",
+                               return_value=([{"name": "generate"}], 1.0))
+        p2.start()
+        self.addCleanup(p2.stop)
+
     def _run(self, *args):
         """Run `mcptoon <args>` in-process; return stdout (SystemExit 0 passes)."""
         buf = io.StringIO()
