@@ -13,6 +13,11 @@ rule.
 
 ### Fixed
 
+- **`mcptoon retrieve --list --json` returns structured store stats.** It printed
+  human text regardless of format; scripts could not read count/bytes/ttl.
+- **`mcptoon select --top` with a non-integer value fails loudly.** `--top abc`
+  used to fall back silently to the default 3, so a scripted `--top $N` with a bad
+  value looked like it worked.
 - **`mcptoon policy clear` on a missing policy errors instead of faking a
   "Cleared" report.** It printed "Cleared: …" and exited 0 even when nothing was
   set, so `mcptoon policy clear s t && echo done` lied. A miss now exits 1.

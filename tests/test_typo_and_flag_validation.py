@@ -107,3 +107,9 @@ def test_head_valid_integer_still_works():
     out, err, code = _run(["search", "file", "--head", "2", "--json"], search=rows)
     assert code == 0
     assert len(json.loads(out)) == 2
+
+
+def test_select_top_non_integer_errors():
+    out, err, code = _run(["select", "file", "--top", "abc"])
+    assert code == 1
+    assert "--top needs an integer" in err

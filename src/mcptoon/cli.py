@@ -1440,7 +1440,11 @@ def _cmd_select(rest, fmt="auto", head_n=0, max_chars=0, full=False):
             try:
                 top = max(1, int(args[i + 1]))
             except ValueError:
-                pass
+                # A non-integer was swallowed, so `--top abc` silently fell back to
+                # the default 3 and a scripted `--top $N` with a bad value looked
+                # like it worked (reported 2026-10-18). Fail loudly, like --head.
+                _err(f"Error: --top needs an integer, got {args[i + 1]!r}")
+                sys.exit(1)
             del args[i:i + 2]
         else:
             del args[i]
@@ -2329,6 +2333,17 @@ def _cmd_retrieve(rest, fmt, max_chars=0):
         info = ccr.stats()
         policy = ccr.policy()
         ttl = policy.get("ttl") or 0
+        # `--json` gives scripts the store stats as data. It printed human text
+        # regardless of format (reported 2026-10-18).
+        if fmt == "json":
+            print(json.dumps({
+                "count": info["count"],
+                "bytes": info["bytes"],
+                "oldest_age": info["oldest_age"],
+                "ttl": ttl,
+                "store_dir": str(ccr._store_dir()),
+            }, ensure_ascii=False))
+            return
         print(f"Stored originals: {info['count']}")
         print(f"Store size:       {info['bytes']:,} bytes")
         print(f"Oldest entry:     {info['oldest_age']}s")

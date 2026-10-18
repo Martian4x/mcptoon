@@ -234,10 +234,18 @@ def test_retrieve_miss_is_an_error_not_an_empty_success(capsys):
 
 def test_retrieve_list_shows_the_store(capsys):
     _store_a_payload()
-    cli._cmd_retrieve(["--list"], "json")
+    cli._cmd_retrieve(["--list"], "auto")
     out = capsys.readouterr().out
     assert "Stored originals: 1" in out
     assert "never expires" in out, "the default retention must be reported honestly"
+
+
+def test_retrieve_list_json_is_structured(capsys):
+    _store_a_payload()
+    cli._cmd_retrieve(["--list"], "json")
+    data = json.loads(capsys.readouterr().out)
+    assert data["count"] == 1
+    assert data["ttl"] == 0
 
 
 def test_retrieve_without_an_argument_prints_usage(capsys):
