@@ -556,7 +556,7 @@ def _run(state: dict) -> None:
     elif command == "import":
         _cmd_import(rest, fmt, head_n, max_chars, full)
     elif command == "doctor":
-        _cmd_doctor(rest)
+        _cmd_doctor(rest, fmt)
     elif command == "install":
         _cmd_install(rest, fmt, full, head_n, max_chars)
     elif command == "update":
@@ -2173,28 +2173,41 @@ def _cmd_add(rest):
 
 
 def _cmd_remove(rest):
-    """Remove a server."""
+    """Remove one or more servers.
+
+    Usage:
+        mcptoon remove <name> [<name> ...]
+    """
     if not rest:
-        _err("Usage: mcptoon remove <name>")
+        _err("Usage: mcptoon remove <name> [<name> ...]")
         sys.exit(1)
-    name = rest[0]
-    if cfg.remove_server(name):
-        # Drop the server's schema cache too. Removing the config left the
-        # per-server cache file behind forever — `add demo; manifest; remove demo`
-        # still showed 1 cache file on disk (measured 2026-10-17). `clear_server_cache`
-        # already existed and is what `uninstall` relies on; `remove` just never
-        # called it. A miss here is fine (the server may never have been cached).
-        from . import cache as cache_mod
-        try:
-            cache_mod.clear_server_cache(name)
-        except Exception:
-            pass
+    # Remove EVERY name given. `remove a b` used to delete only `a` and silently
+    # ignore the rest, so a script that removed several servers left some behind
+    # while reporting success (reported 2026-10-18). All names are attempted; a
+    # missing one is an error, and any missing name makes the whole call exit 1.
+    from . import cache as cache_mod
+    missing = []
+    removed = []
+    for name in rest:
+        if cfg.remove_server(name):
+            # Drop the server's schema cache too. Removing the config left the
+            # per-server cache file behind forever — `add demo; manifest; remove
+            # demo` still showed 1 cache file on disk (measured 2026-10-17).
+            try:
+                cache_mod.clear_server_cache(name)
+            except Exception:
+                pass
+            removed.append(name)
+        else:
+            missing.append(name)
+    for name in removed:
         print(f"Removed server: {name}")
-    else:
+    if missing:
         # A miss is an error, not a no-op: `mcptoon remove foo && echo done` must
-        # not report success when nothing was removed. Matches `update` (which
-        # already exits 1 on the same message) and the other not-found paths.
-        _err(f"Server not found: {name}")
+        # not report success when nothing was removed. Matches `update` and the
+        # other not-found paths.
+        for name in missing:
+            _err(f"Server not found: {name}")
         sys.exit(1)
 
 
@@ -3009,7 +3022,7 @@ def _cmd_config(rest, fmt, head_n=0, max_chars=0, full=False):
         if len(rest) < 2:
             _err("Usage: mcptoon config get <key>")
             sys.exit(1)
-        key = rest[1].lower()
+        key = rest[1].strip().lower()
         if key not in SETTING_DEFAULTS:
             # An unknown key is an error: a scripted `mcptoon config get <key>`
             # must not read as success (and print nothing useful) when the key
@@ -3030,7 +3043,7 @@ def _cmd_config(rest, fmt, head_n=0, max_chars=0, full=False):
         # with uppercase in it would be stored mangled and the user would have no
         # clue why their ranker never ran). So only lowercase enum values.
         from .config import SETTING_CHOICES
-        key = rest[1].lower()
+        key = rest[1].strip().lower()
         value = rest[2].lower() if key in SETTING_CHOICES else rest[2]
         if key == "footer" and value not in ("on", "off"):
             _err("footer accepts only: on | off")
@@ -3060,7 +3073,7 @@ def _cmd_config(rest, fmt, head_n=0, max_chars=0, full=False):
         if len(rest) < 2:
             _err("Usage: mcptoon config unset <key>")
             sys.exit(1)
-        key = rest[1].lower()
+        key = rest[1].strip().lower()
         try:
             default = unset_setting(key)
         except ValueError as e:
@@ -3347,21 +3360,38 @@ def _explain_server_error(raw: str) -> tuple[str, str]:
     return manifest_mod.explain_error(raw)
 
 
-def _cmd_doctor(_rest):
-    """Self-diagnose configuration and connectivity."""
-    print("mcptoon doctor — running diagnostics...")
-    print()
+def _cmd_doctor(rest, fmt="auto"):
+    """Self-diagnose configuration and connectivity.
+
+    Usage:
+        mcptoon doctor            # human-readable diagnostics
+        mcptoon doctor --json     # structured {checks, issues, ok, broken}
+    """
+    json_mode = fmt == "json" or "--json" in rest
+    rows = []          # structured check results for --json
+    broken = []        # (server, reason) for the human summary + JSON
+
+    def emit(status, name, detail, human_line, **extra):
+        rows.append({"name": name, "status": status, "detail": detail, **extra})
+        if not json_mode:
+            print(human_line)
 
     issues = 0
     checks = 0
+
+    if not json_mode:
+        print("mcptoon doctor — running diagnostics...")
+        print()
 
     # 1. Python version
     checks += 1
     py_ver = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
     if sys.version_info >= (3, 10):
-        print(f"  ✓ Python {py_ver} (>=3.10 required)")
+        emit("ok", "python", f"{py_ver} (>=3.10 required)",
+             f"  ✓ Python {py_ver} (>=3.10 required)")
     else:
-        print(f"  ✗ Python {py_ver} — needs 3.10+")
+        emit("error", "python", f"{py_ver} needs 3.10+",
+             f"  ✗ Python {py_ver} — needs 3.10+")
         issues += 1
 
     # 2. Config file
@@ -3373,25 +3403,31 @@ def _cmd_doctor(_rest):
     if cfg.has_config_file():
         servers = cfg.load_config()
         shown = cfg.CONFIG_FILE if cfg.CONFIG_FILE.exists() else cfg.CONFIG_FILE_TOML
-        print(f"  ✓ Config: {shown} ({len(servers)} servers)")
+        emit("ok", "config", f"{shown} ({len(servers)} servers)",
+             f"  ✓ Config: {shown} ({len(servers)} servers)")
     else:
-        print("  ✗ No config found. Run: mcptoon quickstart")
+        emit("error", "config", "no config found",
+             "  ✗ No config found. Run: mcptoon quickstart")
         issues += 1
-        print()
-        print(f"  {checks} checks, {issues} issue(s)")
+        if json_mode:
+            print(json.dumps({"checks": rows, "issues": issues, "ok": False,
+                              "broken": broken}, ensure_ascii=False, indent=2))
+        else:
+            print()
+            print(f"  {checks} checks, {issues} issue(s)")
         sys.exit(1)
 
     # 3. Cache directory
     checks += 1
     if cfg.CACHE_DIR.exists():
-        print(f"  ✓ Cache dir: {cfg.CACHE_DIR}")
+        emit("ok", "cache", str(cfg.CACHE_DIR), f"  ✓ Cache dir: {cfg.CACHE_DIR}")
     else:
-        print("  ! Cache dir missing (will be created on first use)")
+        emit("warn", "cache", "missing (will be created on first use)",
+             "  ! Cache dir missing (will be created on first use)")
         cfg.CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
     # 4. Check each server
     servers = cfg.load_config()
-    broken: list[tuple[str, str]] = []  # (server, plain reason) for the summary
     for name in sorted(servers.keys()):
         s_cfg = servers[name]
         transport = s_cfg.get("transport", "stdio")
@@ -3412,24 +3448,30 @@ def _cmd_doctor(_rest):
                 # output is useful to someone who has never seen a JSON-RPC id.
                 raw = str(errs[0].get("error", ""))
                 reason, next_step = _explain_server_error(raw)
-                print(f"  ✗ {name:20s} [{transport:5s}] cannot start: {raw[:70]}")
-                print(f"      {reason}.")
-                print(f"      → {next_step}")
+                emit("error", f"server:{name}", f"cannot start: {raw[:70]}",
+                     f"  ✗ {name:20s} [{transport:5s}] cannot start: {raw[:70]}\n"
+                     f"      {reason}.\n      → {next_step}",
+                     server=name, transport=transport, reason=reason)
                 issues += 1
                 broken.append((name, reason))
             else:
                 count = len(tools)
                 if count > 0:
-                    print(f"  ✓ {name:20s} [{transport:5s}] {count} tools")
+                    emit("ok", f"server:{name}", f"{count} tools",
+                         f"  ✓ {name:20s} [{transport:5s}] {count} tools",
+                         server=name, transport=transport, tools=count)
                 else:
-                    print(f"  ! {name:20s} [{transport:5s}] 0 tools "
-                          f"(server started but exposes none)")
+                    emit("warn", f"server:{name}", "0 tools (started, exposes none)",
+                         f"  ! {name:20s} [{transport:5s}] 0 tools "
+                         f"(server started but exposes none)",
+                         server=name, transport=transport, tools=0)
         except Exception as e:
             raw = str(e)
             reason, next_step = _explain_server_error(raw)
-            print(f"  ✗ {name:20s} [{transport:5s}] ERROR: {raw[:80]}")
-            print(f"      {reason}.")
-            print(f"      → {next_step}")
+            emit("error", f"server:{name}", f"ERROR: {raw[:80]}",
+                 f"  ✗ {name:20s} [{transport:5s}] ERROR: {raw[:80]}\n"
+                 f"      {reason}.\n      → {next_step}",
+                 server=name, transport=transport, reason=reason)
             issues += 1
             broken.append((name, reason))
 
@@ -3437,9 +3479,20 @@ def _cmd_doctor(_rest):
     checks += 1
     agent_type = os.environ.get("MCPTOON_AGENT_TYPE", "")
     if agent_type:
-        print(f"  ✓ MCPTOON_AGENT_TYPE={agent_type}")
+        emit("ok", "env", f"MCPTOON_AGENT_TYPE={agent_type}",
+             f"  ✓ MCPTOON_AGENT_TYPE={agent_type}")
     else:
-        print("  - MCPTOON_AGENT_TYPE not set (defaulting to auto)")
+        emit("info", "env", "MCPTOON_AGENT_TYPE not set (defaulting to auto)",
+             "  - MCPTOON_AGENT_TYPE not set (defaulting to auto)")
+
+    if json_mode:
+        print(json.dumps({
+            "checks": rows, "issues": issues, "ok": issues == 0,
+            "broken": [{"server": n, "reason": r} for n, r in broken],
+        }, ensure_ascii=False, indent=2))
+        if issues:
+            sys.exit(1)
+        return
 
     print()
     print(f"  {checks} checks, {issues} issue(s)")

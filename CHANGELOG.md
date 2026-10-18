@@ -13,6 +13,15 @@ rule.
 
 ### Fixed
 
+- **`mcptoon doctor --json` returns structured diagnostics.** It printed human text,
+  so CI could not parse the result. JSON carries `checks` / `issues` / `ok` /
+  `broken` and keeps the exit-code contract (1 on any issue).
+- **`mcptoon config get/set/unset` trim surrounding whitespace on the key.**
+  `config get " footer "` used to fail as an unknown key (get lowercased but never
+  stripped; set never stripped).
+- **`mcptoon remove a b` removes every named server.** It used to delete only the
+  first and silently ignore the rest; now all are removed, and any missing name
+  makes the call exit 1.
 - **`mcptoon list` honours `--json` / `--head` / `--max-chars`.** `list` had no
   access to the global output flags, so `--json` printed human text and `--head`
   did nothing — a script could not get the server list as data.
