@@ -32,7 +32,7 @@ def test_remove_unknown_server_exits_nonzero(capsys):
     with pytest.raises(SystemExit) as exc:
         cli._cmd_remove(["ghost"])
     assert exc.value.code == 1
-    assert "Server not found: ghost" in capsys.readouterr().out
+    assert "Server not found: ghost" in capsys.readouterr().err
 
 
 def test_remove_without_a_name_still_exits_nonzero():
@@ -53,7 +53,7 @@ def test_config_get_unknown_key_exits_nonzero(capsys):
     with pytest.raises(SystemExit) as exc:
         cli._cmd_config(["get", "nosuchkey"], "auto")
     assert exc.value.code == 1
-    assert "Unknown setting: nosuchkey" in capsys.readouterr().out
+    assert "Unknown setting: nosuchkey" in capsys.readouterr().err
 
 
 def test_config_get_without_a_key_exits_nonzero():
@@ -81,7 +81,7 @@ def test_config_set_rejects_a_non_boolean_value(key, bad, capsys):
     with pytest.raises(SystemExit) as exc:
         cli._cmd_config(["set", key, bad], "auto")
     assert exc.value.code == 1
-    assert key in capsys.readouterr().out
+    assert key in capsys.readouterr().err
     assert cfg.get_setting(key) == cfg.SETTING_DEFAULTS[key], \
         f"a rejected value must not be persisted for {key}"
 
@@ -96,7 +96,7 @@ def test_config_set_accepts_both_boolean_values(key, good):
 def test_config_set_unknown_value_message_names_the_choices(capsys):
     with pytest.raises(SystemExit):
         cli._cmd_config(["set", "welcome", "maybe"], "auto")
-    assert "not one of" in capsys.readouterr().out
+    assert "not one of" in capsys.readouterr().err
 
 
 def test_welcome_off_via_cli_actually_disables(capsys):
@@ -112,7 +112,7 @@ def test_config_set_rejects_an_unknown_runner_mode(capsys):
     with pytest.raises(SystemExit) as exc:
         cli._cmd_config(["set", "runners", "always"], "auto")
     assert exc.value.code == 1
-    assert "not one of" in capsys.readouterr().out
+    assert "not one of" in capsys.readouterr().err
     assert cfg.get_setting("runners") == cfg.SETTING_DEFAULTS["runners"]
 
 

@@ -13,6 +13,21 @@ rule.
 
 ### Fixed
 
+- **Errors and usage hints go to stderr, not stdout.** A bad argument, a missing
+  server, an unknown policy/setting, or a usage block was printed to stdout, so
+  `mcptoon x >out 2>err` mixed failures into `out` and left `err` empty — a script
+  could not tell success text from a failure. These now go through `cli._err`
+  (stderr) with a non-zero exit; legitimate empty *results* ("No servers
+  configured", a zero-match search) stay on stdout because they are the answer, not
+  an error. `config` with an unknown action now also exits 1 instead of falling
+  through to 0.
+- **`mcptoon config --help` shows config's own usage.** `config` was missing from
+  the per-command handler map even though `_cmd_config` has a `Usage:` docstring, so
+  `config --help` re-dumped the whole global page and never showed its
+  get/set/unset/reset syntax.
+- **`mcptoon add` no longer clobbers an existing server silently.** A re-run or a
+  typo'd name used to replace a working server definition and print "Added". It now
+  refuses with "already exists — use --force" (exit 1) unless `--force` is given.
 - **Config writes are now atomic and keep a `.bak`.** `save_config` called
   `path.write_text(...)` directly, so a crash mid-write, a full disk, or a reader
   landing during the write could leave a truncated/empty `config.json` — the user's

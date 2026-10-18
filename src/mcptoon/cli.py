@@ -138,6 +138,19 @@ def _closest(word, candidates, n=3, cutoff=0.6):
         return []
 
 
+def _err(*args, **kwargs):
+    """Print an error / usage hint to STDERR.
+
+    Error and "how to use this" messages used to go to stdout, so `mcptoon x >out
+    2>err` mixed failures into `out` and left `err` empty — a script could not tell
+    success text from a failure. Every message that is followed by a non-zero exit
+    (a bad argument, a missing server, an unknown policy, a usage block) goes here;
+    legitimate empty *results* ("no matches", an informational list) stay on stdout
+    because they are the command's answer, not an error. Reported 2026-10-17.
+    """
+    print(*args, file=sys.stderr, **kwargs)
+
+
 
 # The output-format flags are one mutually exclusive family: each sets `fmt`, and the
 # last one on the command line wins. Last-wins is a fine convention, so the ordering is
@@ -808,8 +821,8 @@ def _cmd_inspect(rest, fmt, max_chars, full, head_n=0):
     anything. See `_cmd_install` for why the flags travel together.
     """
     if len(rest) < 2:
-        print("Usage: mcptoon inspect <server> <tool>")
-        print("       mcptoon inspect <server>           (list all tools)")
+        _err("Usage: mcptoon inspect <server> <tool>")
+        _err("       mcptoon inspect <server>           (list all tools)")
         sys.exit(1)
 
     server = rest[0]
@@ -820,10 +833,10 @@ def _cmd_inspect(rest, fmt, max_chars, full, head_n=0):
         # Fuzzy match: "Did you mean?"
         suggestions = manifest_mod.fuzzy_match_tool(server, tool)
         if suggestions:
-            print(f"Tool not found: {server}:{tool}")
-            print(f"Did you mean: {', '.join(suggestions)}")
+            _err(f"Tool not found: {server}:{tool}")
+            _err(f"Did you mean: {', '.join(suggestions)}")
         else:
-            print(f"Tool not found: {server}:{tool}")
+            _err(f"Tool not found: {server}:{tool}")
             # Show all tools for this server
             tools = manifest_mod.get_server_tools(server)
             # `get_server_tools` returns an error entry (not `[]`) when the server
@@ -832,7 +845,7 @@ def _cmd_inspect(rest, fmt, max_chars, full, head_n=0):
             names = [t.get("name", "?") for t in tools
                      if isinstance(t, dict) and "error" not in t]
             if names:
-                print(f"Available tools: {' '.join(names)}")
+                _err(f"Available tools: {' '.join(names)}")
             elif errs:
                 # The server never answered. Say why in plain words and what to do
                 # next, instead of echoing a protocol string — this is the moment a
@@ -840,9 +853,9 @@ def _cmd_inspect(rest, fmt, max_chars, full, head_n=0):
                 # cause is their server.
                 raw = str(errs[0].get("error", ""))
                 reason, next_step = manifest_mod.explain_error(raw)
-                print(f"Could not reach {server}: {reason}.")
-                print(f"  → {next_step}")
-                print(f"  (raw: {raw[:120]})")
+                _err(f"Could not reach {server}: {reason}.")
+                _err(f"  → {next_step}")
+                _err(f"  (raw: {raw[:120]})")
         sys.exit(1)
 
     print(output.render(info, fmt=fmt if fmt != "auto" else "json", head_n=head_n,
@@ -904,11 +917,11 @@ def _cmd_call(rest, fmt, head_n, max_chars, full, use_stdin=False, fallback_json
     if is_auto:
         rest = [a for a in rest if a != "--auto"]
         if len(rest) < 1:
-            print("Usage: mcptoon call --auto <tool> [JSON_ARGS] [--destructive] [--stdin]")
-            print("")
-            print("Examples:")
-            print('  mcptoon call --auto search \'{"query":"AI"}\' --toon')
-            print('  mcptoon call --auto fetch \'{"url":"https://example.com"}\'')
+            _err("Usage: mcptoon call --auto <tool> [JSON_ARGS] [--destructive] [--stdin]")
+            _err("")
+            _err("Examples:")
+            _err('  mcptoon call --auto search \'{"query":"AI"}\' --toon')
+            _err('  mcptoon call --auto fetch \'{"url":"https://example.com"}\'')
             sys.exit(1)
 
         tool = rest[0]
@@ -962,16 +975,16 @@ def _cmd_call(rest, fmt, head_n, max_chars, full, use_stdin=False, fallback_json
         return
 
     if len(rest) < 2:
-        print("Usage: mcptoon call <server> <tool> [JSON_ARGS] [--destructive] [--stdin] [--envelope] [--input-responses JSON] [--request-state TOKEN]")
-        print("       mcptoon call --auto <tool> [JSON_ARGS] [--destructive] [--stdin] [--envelope]")
-        print("")
-        print("Examples:")
-        print('  mcptoon call fetch fetch \'{"url":"https://example.com"}\' --toon')
-        print('  mcptoon call exa search \'{"query":"AI"}\' --json')
-        print('  mcptoon call --auto search \'{"query":"AI"}\'  # auto-find server')
-        print('  mcptoon call db query \'{"sql":"SELECT 1"}\' --envelope  # full MCP result envelope')
-        print("  mcptoon call db query '{}' --input-responses '{\"answer\": 42}' --request-state 'st-42'  # MRTR retry (2026-07-28)")
-        print('  echo \'{"huge":"payload"}\' | mcptoon call server tool --stdin --toon')
+        _err("Usage: mcptoon call <server> <tool> [JSON_ARGS] [--destructive] [--stdin] [--envelope] [--input-responses JSON] [--request-state TOKEN]")
+        _err("       mcptoon call --auto <tool> [JSON_ARGS] [--destructive] [--stdin] [--envelope]")
+        _err("")
+        _err("Examples:")
+        _err('  mcptoon call fetch fetch \'{"url":"https://example.com"}\' --toon')
+        _err('  mcptoon call exa search \'{"query":"AI"}\' --json')
+        _err('  mcptoon call --auto search \'{"query":"AI"}\'  # auto-find server')
+        _err('  mcptoon call db query \'{"sql":"SELECT 1"}\' --envelope  # full MCP result envelope')
+        _err("  mcptoon call db query '{}' --input-responses '{\"answer\": 42}' --request-state 'st-42'  # MRTR retry (2026-07-28)")
+        _err('  echo \'{"huge":"payload"}\' | mcptoon call server tool --stdin --toon')
         sys.exit(1)
 
     server = rest[0]
@@ -1000,7 +1013,7 @@ def _cmd_call(rest, fmt, head_n, max_chars, full, use_stdin=False, fallback_json
                     args = json.loads(item)
                     break
                 except json.JSONDecodeError as e:
-                    print(f"Error parsing JSON args: {e}")
+                    _err(f"Error parsing JSON args: {e}")
                     sys.exit(1)
             # key=value
             if "=" in item:
@@ -1141,7 +1154,7 @@ def _cmd_policy(rest, fmt):
     sub = rest[0]
     if sub == "set":
         if len(rest) < 4:
-            print("Usage: mcptoon policy set <server> <tool-or-*> <raw|json|auto|toon|compact|slim|smart>")
+            _err("Usage: mcptoon policy set <server> <tool-or-*> <raw|json|auto|toon|compact|slim|smart>")
             sys.exit(1)
         server, tool, policy = rest[1], rest[2], rest[3]
         if cfg.set_compression_policy(server, tool, policy):
@@ -1152,16 +1165,16 @@ def _cmd_policy(rest, fmt):
                            else f"always rendered as {policy}")
                 print(f"Policy set: {server}:{tool} -> {policy} ({meaning})")
         else:
-            print(f"Unknown policy '{policy}'. Valid: {', '.join(cfg.VALID_POLICIES)}")
+            _err(f"Unknown policy '{policy}'. Valid: {', '.join(cfg.VALID_POLICIES)}")
             sys.exit(1)
     elif sub == "clear":
         if len(rest) < 3:
-            print("Usage: mcptoon policy clear <server> <tool-or-*>")
+            _err("Usage: mcptoon policy clear <server> <tool-or-*>")
             sys.exit(1)
         cfg.set_compression_policy(rest[1], rest[2], None)
         print(f"Cleared: {rest[1]}:{rest[2]} uses the default behaviour.")
     else:
-        print(f"Unknown subcommand '{sub}'. Use: list | set | clear")
+        _err(f"Unknown subcommand '{sub}'. Use: list | set | clear")
         sys.exit(1)
 
 
@@ -1959,18 +1972,30 @@ def _http_url_problem(url: str) -> str:
 def _cmd_add(rest):
     """Add a server to config."""
     if not rest:
-        print("Usage: mcptoon add <name> --stdio <command> [args...]")
-        print("       mcptoon add <name> --http <url> [--header 'Key: Value']")
+        _err("Usage: mcptoon add <name> --stdio <command> [args...]")
+        _err("       mcptoon add <name> --http <url> [--header 'Key: Value']")
         sys.exit(1)
 
     name = rest[0]
     flags = rest[1:]
 
+    # Refuse to clobber an existing server silently. `add foo --stdio python -m a`
+    # then `add foo --stdio python -m b` used to just overwrite a with b and print
+    # "Added server 'foo'" — a typo'd name or a re-run silently replaced a working
+    # server definition (reported 2026-10-17). `--force` opts in to the overwrite.
+    force = "--force" in flags
+    if force:
+        flags = [f for f in flags if f != "--force"]
+    if not force and name in cfg.list_servers():
+        _err(f"Server '{name}' already exists. Use --force to overwrite, "
+             f"or 'mcptoon remove {name}' first.")
+        sys.exit(1)
+
     if "--stdio" in flags:
         idx = flags.index("--stdio")
         cmd_parts = flags[idx + 1:]
         if not cmd_parts:
-            print("Error: --stdio requires a command")
+            _err("Error: --stdio requires a command")
             sys.exit(1)
         # First part is command, rest are args
         server_cfg = {
@@ -1984,7 +2009,7 @@ def _cmd_add(rest):
     elif "--http" in flags:
         idx = flags.index("--http")
         if idx + 1 >= len(flags):
-            print("Error: --http requires a URL")
+            _err("Error: --http requires a URL")
             sys.exit(1)
         url = flags[idx + 1]
         # Refuse a value that cannot be an MCP endpoint. `add` used to accept any
@@ -1994,7 +2019,7 @@ def _cmd_add(rest):
         # still the user's to make; this only rejects non-http(s) and host-less.)
         problem = _http_url_problem(url)
         if problem:
-            print(f"Error: --http {problem}")
+            _err(f"Error: --http {problem}")
             sys.exit(1)
         server_cfg = {"transport": "http", "url": url}
 
@@ -2013,14 +2038,14 @@ def _cmd_add(rest):
         print(f"Added server '{name}' [http]: {url}")
 
     else:
-        print("Error: must specify --stdio or --http")
+        _err("Error: must specify --stdio or --http")
         sys.exit(1)
 
 
 def _cmd_remove(rest):
     """Remove a server."""
     if not rest:
-        print("Usage: mcptoon remove <name>")
+        _err("Usage: mcptoon remove <name>")
         sys.exit(1)
     name = rest[0]
     if cfg.remove_server(name):
@@ -2039,7 +2064,7 @@ def _cmd_remove(rest):
         # A miss is an error, not a no-op: `mcptoon remove foo && echo done` must
         # not report success when nothing was removed. Matches `update` (which
         # already exits 1 on the same message) and the other not-found paths.
-        print(f"Server not found: {name}")
+        _err(f"Server not found: {name}")
         sys.exit(1)
 
 
@@ -2852,21 +2877,21 @@ def _cmd_config(rest, fmt, head_n=0, max_chars=0, full=False):
 
     if action == "get":
         if len(rest) < 2:
-            print("Usage: mcptoon config get <key>")
+            _err("Usage: mcptoon config get <key>")
             sys.exit(1)
         key = rest[1].lower()
         if key not in SETTING_DEFAULTS:
             # An unknown key is an error: a scripted `mcptoon config get <key>`
             # must not read as success (and print nothing useful) when the key
             # does not exist. `config set` already exits 1 on the same mistake.
-            print(f"Unknown setting: {key}. Known: {', '.join(sorted(SETTING_DEFAULTS))}")
+            _err(f"Unknown setting: {key}. Known: {', '.join(sorted(SETTING_DEFAULTS))}")
             sys.exit(1)
         print(load_settings()[key])
         return
 
     if action == "set":
         if len(rest) < 3:
-            print("Usage: mcptoon config set <key> <value>")
+            _err("Usage: mcptoon config set <key> <value>")
             sys.exit(1)
         # The key is always an identifier, so lowercasing it is safe and forgiving.
         # The value is not: closed-choice settings are lowercase enums and accept
@@ -2878,10 +2903,10 @@ def _cmd_config(rest, fmt, head_n=0, max_chars=0, full=False):
         key = rest[1].lower()
         value = rest[2].lower() if key in SETTING_CHOICES else rest[2]
         if key == "footer" and value not in ("on", "off"):
-            print("footer accepts only: on | off")
+            _err("footer accepts only: on | off")
             sys.exit(1)
         if key == "lang" and value not in VALID_LANGS:
-            print("lang accepts only: auto | zh | en")
+            _err("lang accepts only: auto | zh | en")
             sys.exit(1)
         try:
             set_setting(key, value)
@@ -2889,7 +2914,7 @@ def _cmd_config(rest, fmt, head_n=0, max_chars=0, full=False):
             # A rejected value changes nothing, so the exit code must say so —
             # otherwise `mcptoon config set exposure compakt && restart` reads as
             # success and the user never learns the preset is unchanged.
-            print(str(e))
+            _err(str(e))
             sys.exit(1)
         print(f"{key}: {value}   (saved)")
         if key == "footer" and value == "off":
@@ -2903,13 +2928,13 @@ def _cmd_config(rest, fmt, head_n=0, max_chars=0, full=False):
 
     if action == "unset":
         if len(rest) < 2:
-            print("Usage: mcptoon config unset <key>")
+            _err("Usage: mcptoon config unset <key>")
             sys.exit(1)
         key = rest[1].lower()
         try:
             default = unset_setting(key)
         except ValueError as e:
-            print(str(e))
+            _err(str(e))
             sys.exit(1)
         print(f"{key}: {default}   (reset to default)")
         return
@@ -2921,9 +2946,10 @@ def _cmd_config(rest, fmt, head_n=0, max_chars=0, full=False):
             print(f"  {key:12s} = {load_settings()[key]}")
         return
 
-    print(f"Unknown config action: {action}")
-    print("Usage: mcptoon config [get <key> | set <key> <value> | "
-          "unset <key> | reset]")
+    _err(f"Unknown config action: {action}")
+    _err("Usage: mcptoon config [get <key> | set <key> <value> | "
+         "unset <key> | reset]")
+    sys.exit(1)
 
 
 def _cmd_toggle(rest, fmt):
@@ -3758,8 +3784,8 @@ def _cmd_completion(rest):
     }
 
     if shell not in scripts:
-        print(f"Unknown shell: {shell}")
-        print(f"Supported: {', '.join(scripts.keys())}")
+        _err(f"Unknown shell: {shell}")
+        _err(f"Supported: {', '.join(scripts.keys())}")
         sys.exit(1)
 
     name, script = scripts[shell]
@@ -3778,13 +3804,13 @@ def _cmd_completion(rest):
 def _cmd_plugin(rest, fmt):
     """mcptoon plugin — Agent Plugins 1.0.0 support (scan / install / list / remove)."""
     if not rest:
-        print("Usage: mcptoon plugin <scan|install|list|remove> [args]")
-        print("")
-        print("Subcommands:")
-        print("  scan <dir>        Validate a plugin package (read-only)")
-        print("  install <dir>     Install a plugin into every agent (v0.7.1)")
-        print("  list              List installed plugins (v0.7.1)")
-        print("  remove <name>     Remove a plugin (v0.7.1)")
+        _err("Usage: mcptoon plugin <scan|install|list|remove> [args]")
+        _err("")
+        _err("Subcommands:")
+        _err("  scan <dir>        Validate a plugin package (read-only)")
+        _err("  install <dir>     Install a plugin into every agent (v0.7.1)")
+        _err("  list              List installed plugins (v0.7.1)")
+        _err("  remove <name>     Remove a plugin (v0.7.1)")
         sys.exit(1)
 
     sub = rest[0]
@@ -4386,6 +4412,11 @@ def _populate_command_handlers() -> None:
         "install": _cmd_install, "completion": _cmd_completion,
         "sync": _cmd_sync, "off": _cmd_off, "restore": _cmd_restore,
         "uninstall": _cmd_uninstall, "health": _cmd_health, "plugin": _cmd_plugin,
+        # `config` was missing from this map even though `_cmd_config` has a Usage
+        # docstring, so `mcptoon config --help` fell through to the whole global
+        # page and never showed its own get/set/unset/reset syntax (reported
+        # 2026-10-17).
+        "config": _cmd_config,
     }
     _COMMAND_HANDLERS.update(mapping)
 

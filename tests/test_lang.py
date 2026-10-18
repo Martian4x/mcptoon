@@ -34,7 +34,7 @@ import io
 import os
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stdout, redirect_stderr
 from pathlib import Path
 from unittest.mock import patch
 
@@ -312,8 +312,15 @@ class TestSurfacesFollowTheSetting(_IsolatedState):
         self.assertIn('"note": "no servers configured"', out)
 
     def test_config_set_lang_refuses_an_unknown_language(self):
-        out = _run_main(["config", "set", "lang", "fr"])
-        self.assertIn("lang accepts only: auto | zh | en", out)
+        # Errors go to stderr now (2026-10-17); capture it explicitly.
+        buf = io.StringIO()
+        with patch.object(cli.sys, "argv", ["mcptoon", "config", "set", "lang", "fr"]), \
+                redirect_stderr(buf):
+            try:
+                cli.main()
+            except SystemExit:
+                pass
+        self.assertIn("lang accepts only: auto | zh | en", buf.getvalue())
 
     def test_config_set_rejects_a_bad_value_with_a_nonzero_exit(self):
         """A refused value changes nothing, so the exit code must not say success.
@@ -324,7 +331,7 @@ class TestSurfacesFollowTheSetting(_IsolatedState):
         buf = io.StringIO()
         code = 0
         with patch.object(cli.sys, "argv", ["mcptoon", "config", "set", "exposure", "compakt"]), \
-                redirect_stdout(buf):
+                redirect_stderr(buf):
             try:
                 cli.main()
             except SystemExit as e:

@@ -27,7 +27,7 @@ def test_add_http_rejects_an_unusable_url(url, capsys):
     with pytest.raises(SystemExit) as exc:
         cli._cmd_add(["s1", "--http", url])
     assert exc.value.code == 1
-    assert "--http" in capsys.readouterr().out
+    assert "--http" in capsys.readouterr().err
     assert "s1" not in cfg.list_servers(), "a rejected URL must not be written"
 
 
