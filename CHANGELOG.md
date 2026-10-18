@@ -13,6 +13,10 @@ rule.
 
 ### Fixed
 
+- **`mcptoon import <path>` accepts a bare file path.** `import` only ever read
+  `--file`/`--from`, so a positional path was silently dropped: `import
+  /nonexistent/x.json` scanned every client and exited 0 as if the file had been
+  read. One positional is now the file; a conflicting/extra positional errors.
 - **`mcptoon retrieve --list --json` returns structured store stats.** It printed
   human text regardless of format; scripts could not read count/bytes/ttl.
 - **`mcptoon select --top` with a non-integer value fails loudly.** `--top abc`

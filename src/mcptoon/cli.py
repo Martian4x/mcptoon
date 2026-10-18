@@ -3329,15 +3329,36 @@ def _cmd_import(rest, fmt="auto", head_n=0, max_chars=0, full=False):
     from_client = ""
     do_write = "--write" in rest
     do_force = "--force" in rest
+    consumed = set()  # indices of tokens consumed as a flag's value
     for i, a in enumerate(rest):
         if a == "--file" and i + 1 < len(rest):
             file_path = rest[i + 1]
+            consumed.add(i + 1)
         elif a.startswith("--file="):
             file_path = a.split("=", 1)[1]
         elif a == "--from" and i + 1 < len(rest):
             from_client = rest[i + 1]
+            consumed.add(i + 1)
         elif a.startswith("--from="):
             from_client = a.split("=", 1)[1]
+
+    # A bare positional is a file path: `mcptoon import servers.json` is the
+    # natural spelling, but the verb only ever looked at `--file`/`--from`, so a
+    # positional path was silently dropped and `import /nonexistent/x.json`
+    # scanned every client and exited 0 as if the file had been read (reported
+    # 2026-10-18). Accept one positional as the file when neither --file nor
+    # --from was given; reject it when it conflicts with an explicit flag.
+    positionals = [a for j, a in enumerate(rest)
+                   if j not in consumed and not a.startswith("-")]
+    if positionals:
+        if file_path or from_client:
+            _err(f"Error: unexpected argument {positionals[0]!r} "
+                 f"(already given --file/--from)")
+            sys.exit(1)
+        if len(positionals) > 1:
+            _err(f"Error: import takes at most one file path, got {len(positionals)}")
+            sys.exit(1)
+        file_path = positionals[0]
 
     # ─── Gather findings ───
     if file_path:

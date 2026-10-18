@@ -196,7 +196,7 @@ docker run --rm -v ~/.mcptoon:/root/.mcptoon mcptoon manifest --compact
 ```
 
 零第三方导入是 review 阶段硬性规则。新功能必须带测试。
-28,331 行 Python（物理行，含子包）、44 模块。见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+28,352 行 Python（物理行，含子包）、44 模块。见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ---
 

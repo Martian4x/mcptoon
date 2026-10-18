@@ -26,7 +26,13 @@ def _claude_desktop_config(path, servers):
 
 
 def _run(rest, fmt="auto"):
-    """Call the handler directly (skips welcome/self-heal) and return nothing."""
+    """Call the handler directly (skips welcome/self-heal) and return nothing.
+
+    The real dispatch passes everything *after* the `import` verb as `rest`; these
+    tests spell the whole argv, so drop a leading `import` here to match.
+    """
+    if rest and rest[0] == "import":
+        rest = rest[1:]
     _cmd_import(rest, fmt)
 
 
