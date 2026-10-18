@@ -82,6 +82,26 @@ version per the one-release-per-topic rule.
   notice. Someone may want the usage notice without the big savings card, or the
   reverse — one switch for two questions forced all-or-nothing. `brief` keeps the
   notice but drops the host clause.
+- **The gateway's own tools are now in the activity ledger.** `mcptoon_resolve_skills`,
+  `mcptoon_manifest`, `mcptoon_inspect`, `mcptoon_call` and friends are answered
+  in-bridge and never passed through the router, so `usage.track_call` never saw
+  them: a session that only ever *distributed skills* left `activity` empty — the
+  single most important "was I used" event was invisible. They are now recorded
+  under the reserved server name `mcptoon`, so `activity` and `status` show them
+  alongside upstream calls.
+- **A one-per-session "distributed N skills" banner.** The first time
+  `mcptoon_resolve_skills` actually surfaces skills in a session, the result carries
+  one line — `▸ mcptoon distributed N skills for this task (see \`mcptoon activity\`)`
+  — so the "mcptoon is handing your capabilities to the agent" moment is stated, not
+  left for the user to infer. Gated on `presence` and on a non-empty shortlist; it
+  never repeats within a session.
+- **`mcptoon quickstart` names the agents it registered mcptoon into.** The install
+  summary used to say only "your agents can now see mcptoon"; it now lists the hosts
+  ("Cursor, Claude Desktop …") and points at `mcptoon activity` for watching it work.
+- **`mcptoon doctor` teaches how to confirm it is working.** On a fully healthy run
+  with the gateway wired in, it now adds one line — let an agent use a tool, then run
+  `mcptoon activity` — so a clean bill of health also answers "how would I notice it
+  doing anything?".
 
 ### Fixed
 

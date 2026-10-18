@@ -808,7 +808,8 @@ class MCPServerBridge:
                     return self._handle_call_tool(
                         {"name": target, "arguments": target_args})
                 return self._stamp_footer(
-                    native_tools.call_native(name, arguments, self._native_state()))
+                    self._track_native(name, native_tools.call_native(
+                        name, arguments, self._native_state())))
         elif name.startswith("mcptoon_"):
             # Reserved prefix, but not one of ours: say so plainly instead of
             # letting split_namespaced misread "mcptoon" as a server name.
@@ -957,6 +958,74 @@ class MCPServerBridge:
     # ═══════════════════════════════════════════════════
     # Helpers
     # ═══════════════════════════════════════════════════
+
+    def _track_native(self, name: str, payload: dict) -> dict:
+        """Record a gateway-native tool call in the activity ledger.
+
+        The gateway's own tools (`mcptoon_resolve_skills`, `_manifest`, `_inspect`,
+        `_call`, `_skills`) are the ones an agent reaches for first — and
+        `mcptoon_resolve_skills` is the *skill-distribution* moment this whole
+        presence channel exists to make visible. They are answered in-bridge, never
+        through the router, so `usage.track_call` in `_handle_call_tool`'s upstream
+        path never sees them: before this, a session that only ever distributed
+        skills left the activity ledger empty, i.e. the single most important "was I
+        used" event was invisible.
+
+        Counted under the reserved server name ``mcptoon`` so `activity` and
+        `status` can tell a gateway tool from an upstream one. `payload` is the
+        result; errors are recorded as errors like any other call. Never raises —
+        presence accounting must not break the tool it is recording.
+
+        Also the place the one-per-session **skill-delivery banner** is attached
+        (`_maybe_skill_banner`): the moment `mcptoon_resolve_skills` actually hands
+        an agent some skills is the "mcptoon is distributing your capabilities"
+        event the presence channel exists to surface, and it is otherwise invisible
+        to the user.
+        """
+        try:
+            is_err = bool(isinstance(payload, dict) and payload.get("isError"))
+            usage.track_call("mcptoon", name, ok=not is_err, payload=payload)
+        except Exception:
+            pass
+        if name == "mcptoon_resolve_skills":
+            payload = self._maybe_skill_banner(payload)
+        return payload
+
+    def _maybe_skill_banner(self, payload: dict) -> dict:
+        """Attach a one-line 'delivered N skills' notice to the first skill resolve.
+
+        Once per session (``self._skill_banner_done``), only when the resolve
+        actually surfaced skills, only when presence is on, and never on an error.
+        This is best-effort presence: a GUI host may fold the tool result so the
+        user never sees it (Claude Desktop issue #22127) — the durable record is
+        the activity ledger, not this line. It costs a few tokens once, and the
+        payload is otherwise untouched.
+        """
+        if getattr(self, "_skill_banner_done", False):
+            return payload
+        try:
+            from . import config as _cfg
+            if not _cfg.presence_enabled():
+                return payload
+            if not isinstance(payload, dict) or payload.get("isError"):
+                return payload
+            shortlist = payload.get("structuredContent", {}).get("shortlist")
+            if not isinstance(shortlist, list) or not shortlist:
+                return payload
+            content = payload.get("content")
+            if not isinstance(content, list):
+                return payload
+            n = len(shortlist)
+            noun = "skill" if n == 1 else "skills"
+            content.append({
+                "type": "text",
+                "text": (f"▸ mcptoon distributed {n} {noun} for this task "
+                         f"(see `mcptoon activity`)"),
+            })
+            self._skill_banner_done = True
+        except Exception:
+            return payload
+        return payload
 
     def _stamp_footer(self, payload: dict) -> dict:
         """Append the savings line to the first successful result of a session.

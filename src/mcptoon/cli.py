@@ -1955,7 +1955,19 @@ def _cmd_quickstart(rest, fmt="auto"):
             results = sync_to_all(dry_run=False, include_self=include_self)
             print(format_sync_report(results, dry_run=False))
             written = sum(1 for r in results if r.get("written"))
-            if written:
+            if written and include_self:
+                # Name the hosts, not just "your agents": "installed" is only
+                # believable when the user can see *which* app now carries mcptoon,
+                # and the next line tells them where to watch it work.
+                names = [r.get("agent_name") or r.get("agent")
+                         for r in results if r.get("written")]
+                names = [n for n in names if n]
+                shown = ", ".join(names[:4]) + (" …" if len(names) > 4 else "")
+                print("")
+                print(f"  ✓ {shown} can now see mcptoon itself (`mcptoon serve`).")
+                print("    As it routes tools and skills for them, `mcptoon activity`"
+                      " records every call.")
+            elif written:
                 print("")
                 print("  ✓ Your agents can now see mcptoon itself (`mcptoon serve`).")
         except Exception as e:  # never let a sync failure abort onboarding
@@ -4029,6 +4041,17 @@ def _cmd_doctor(rest, fmt="auto"):
     print(f"  {checks} checks, {issues} issue(s)")
     if issues == 0:
         print("  All good! ✓")
+        # A clean bill of health is not the same as "you'd notice it working".
+        # Teach the one thing a healthy-but-silent tool never shows: where to
+        # watch it do its job. Skip when nothing is registered to serve (a bare
+        # config would make "let an agent use a tool" advice hollow).
+        try:
+            _wired = _gateway_wired_in()
+        except Exception:
+            _wired = False
+        if _wired and cfg.presence_enabled():
+            print("  See it working: let an agent use a tool, then run"
+                  " `mcptoon activity`")
     else:
         # Name the broken servers together, once, at the end. The per-server
         # lines scroll away on a machine with a dozen servers, and "see above"
