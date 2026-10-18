@@ -478,7 +478,7 @@ def call_tool(
         usage.track_call(server, tool, ok=not is_error(result), payload=result)
         return result
     except MCPError as e:
-        usage.track_call(server, tool, ok=False)
+        usage.track_call(server, tool, ok=False, err=f"{e.code}: {str(e.message)[:160]}")
         # Provide suggestions for unknown tools
         suggestions = []
         if e.code in ("METHOD_NOT_FOUND", "UNKNOWN_TOOL", "TOOL_NOT_FOUND"):
@@ -498,7 +498,8 @@ def call_tool(
                 err["request_state"] = e.request_state
         return err
     except Exception as e:
-        usage.track_call(server, tool, ok=False)
+        usage.track_call(server, tool, ok=False,
+                         err=f"{type(e).__name__}: {str(e)[:160]}")
         return make_error("CALL_ERROR", str(e)[:200], "router", retry=False, server=server, tool=tool)
 
 

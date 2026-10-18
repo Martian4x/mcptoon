@@ -161,7 +161,7 @@ def _save_usage(data: dict):
 
 
 def track_call(server: str, tool: str, ok: bool = True, tokens_est: int | None = None,
-               payload=None, detail: "str | None" = None):
+               payload=None, detail: "str | None" = None, err: "str | None" = None):
     """Record a tool call.
 
     Crash-safe by contract: usage tracking must never break the actual
@@ -180,6 +180,11 @@ def track_call(server: str, tool: str, ok: bool = True, tokens_est: int | None =
     not just that `mcptoon_resolve_skills` was called. It is not counted or
     tokenised; it exists so the "which of my capabilities did it distribute"
     question has an answer.
+
+    ``err`` is the short failure reason for a failed call (an error code or
+    ``Type: message``), carried into the ledger so `activity` can say *why* a line
+    is red instead of just that it is. Capped, never a full traceback — the ledger
+    must stay one line per call.
     """
     if tokens_est is None:
         tokens_est = count_tokens(payload)
@@ -197,6 +202,12 @@ def track_call(server: str, tool: str, ok: bool = True, tokens_est: int | None =
             if len(data["calls"]) > 1000:
                 data["calls"] = data["calls"][-1000:]
             data["total"] = data.get("total", 0) + 1
+            # Split the lifetime total so `status` can name two different things:
+            # calls routed to *upstream* tools vs the gateway's own native tools
+            # (the skill distribution among them). Additive key; a legacy file
+            # without it reads as 0 native calls, which is the right default.
+            if server == "mcptoon":
+                data["native_total"] = data.get("native_total", 0) + 1
             # Lifetime result-token total, so a cumulative figure exists at all.
             # The window above is capped, so summing it understates history; this
             # counter is the honest lifetime basis for "how much has flowed
@@ -209,20 +220,22 @@ def track_call(server: str, tool: str, ok: bool = True, tokens_est: int | None =
     # The readable half. Separate try/except from the counter write on purpose:
     # one failing must not stop the other, and neither may ever reach the caller.
     note_session_call()
-    _append_activity(server, tool, ok=ok, tokens=int(tokens_est or 0), detail=detail)
+    _append_activity(server, tool, ok=ok, tokens=int(tokens_est or 0), detail=detail,
+                     err=err)
 
 
 def _append_activity(server: str, tool: str, ok: bool = True, tokens: int = 0,
-                     host: "str | None" = None, detail: "str | None" = None) -> None:
+                     host: "str | None" = None, detail: "str | None" = None,
+                     err: "str | None" = None) -> None:
     """Append one line to the activity ledger. Never raises.
 
     One JSON object per line: ``{ts, host, server, tool, ok, tokens}`` plus
     ``detail`` when the caller supplied one (a skill distribution lists the skill
-    names it handed out). ``host`` is the client that drove this process (see
-    ``set_host``) unless the caller passes one explicitly. This is the record
-    `mcptoon activity` and `status` read to answer "was I used, by whom, when,
-    and what did it hand over" — the counter in usage.json can say how many, never
-    which agent, when, or which capability.
+    names it handed out) and ``err`` on a failed call (the short reason). ``host``
+    is the client that drove this process (see ``set_host``) unless the caller
+    passes one explicitly. This is the record `mcptoon activity` and `status` read
+    to answer "was I used, by whom, when, and what did it hand over" — the counter
+    in usage.json can say how many, never which agent, when, or which capability.
     """
     try:
         entry = {
@@ -235,6 +248,8 @@ def _append_activity(server: str, tool: str, ok: bool = True, tokens: int = 0,
         }
         if detail:
             entry["detail"] = str(detail)[:400]
+        if err and not ok:
+            entry["err"] = str(err)[:200]
         line = json.dumps(entry, ensure_ascii=False)
         path = _activity_file()
         with _usage_lock:
@@ -411,7 +426,20 @@ def get_usage_stats() -> dict:
         # which *agent* used them; on a multi-agent machine "who is using me" was
         # unanswerable here. Empty when there is no ledger yet.
         "by_host": _by_host(),
+        # Two different things the single "total_calls" number conflated: calls
+        # routed to upstream tools vs the gateway's own native tools (skill
+        # distribution lives here). `native_calls` is a lifetime counter; the
+        # routed figure is the remainder.
+        "native_calls": _safe_int(data.get("native_total")),
+        "routed_calls": max(0, _lifetime_calls(data) - _safe_int(data.get("native_total"))),
     }
+
+
+def _safe_int(v) -> int:
+    try:
+        return int(v or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 def _by_host() -> dict[str, int]:

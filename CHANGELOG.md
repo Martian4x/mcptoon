@@ -116,6 +116,22 @@ version per the one-release-per-topic rule.
   identical to one that is quietly working. Both surfaces now name that possibility
   in one soft warning line (never an error, never a changed exit code), so a broken
   wiring is not mistaken for a healthy idle install.
+- **`mcptoon activity --export json|csv` dumps the whole ledger.** The on-screen
+  view is a 20-line tail; an audit or a pasted bug report wants every line in a form
+  a spreadsheet or `jq` can take. `--export csv` writes a header plus one row per
+  call (chronological), `--export json` a `{count, ledger, entries}` envelope. Both
+  honour `--host`. The ledger is a local file — export prints it, uploads nothing.
+- **The activity ledger records *why* a failed call failed.** A red line used to say
+  only that it was red; it now carries an `err` field (the error code, or
+  `Type: message` for an exception) capped at 200 chars, and `mcptoon activity`
+  prints it under the call. Full tracebacks are deliberately not stored — the ledger
+  stays one line per call.
+- **`mcptoon status` splits "calls recorded" into routed vs the gateway's own
+  tools.** The single number conflated calls proxied to *upstream* tools with calls
+  to mcptoon's own native tools (skill distribution, manifest, inspect). It now
+  reads "N routed to tools, M via mcptoon's own tools", and `status --json` carries
+  `calls_routed` / `calls_native` — two different things a user deciding whether
+  mcptoon is doing anything cares to tell apart.
 
 ### Fixed
 

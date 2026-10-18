@@ -61,7 +61,7 @@ KNOWN_FLAGS = frozenset(
         "--no-configs",
         "--no-env", "--no-local", "--no-network", "--no-self", "--no-sync", "--npm", "--pip",
         "--quiet", "--quick", "--query", "--raw", "--remove", "--request-state", "--roots", "--search",
-        "--summary", "--clear", "--host",
+        "--summary", "--clear", "--host", "--export",
         "--self", "--pack", "--packs",
         "--slim", "--smart",
         "--stdin", "--stdio", "--takeover", "--timeout", "--tombstone", "--toon", "--tools-k", "--top",
@@ -2594,6 +2594,49 @@ def _cmd_usage(_rest, fmt, head_n=0, max_chars=0, full=False):
                 print(f"  {t:30s} {c}")
 
 
+def _activity_export(export_fmt: str, host_filter=None) -> None:
+    """Dump the whole activity ledger as json or csv on stdout. Never raises.
+
+    The on-screen `activity` view is a tail; an audit or a pasted bug report wants
+    every line in a form `jq` or a spreadsheet can read. ``read_activity(limit=0)``
+    returns the full file (newest first); export reverses to oldest-first so a csv
+    reads chronologically. The ledger is a local file — this prints it, uploads
+    nothing.
+    """
+    entries = usage_mod.read_activity(limit=0, host=host_filter)
+    entries = list(reversed(entries))  # chronological for humans and spreadsheets
+    if export_fmt == "csv":
+        import csv as _csv
+        cols = ["ts", "iso", "host", "server", "tool", "ok", "tokens", "detail", "err"]
+        writer = _csv.writer(sys.stdout)
+        writer.writerow(cols)
+        for e in entries:
+            ts = e.get("ts")
+            iso = (time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts))
+                   if isinstance(ts, (int, float)) else "")
+            writer.writerow([
+                ts if isinstance(ts, (int, float)) else "",
+                iso,
+                e.get("host") or "CLI",
+                e.get("server", ""),
+                e.get("tool", ""),
+                "ok" if e.get("ok") else "error",
+                e.get("tokens") or 0,
+                e.get("detail", ""),
+                e.get("err", ""),
+            ])
+        return
+    # json: a flat array of the ledger objects, plus a small envelope for context.
+    payload = {
+        "count": len(entries),
+        "ledger": str(usage_mod._activity_file()),
+        "entries": entries,
+    }
+    if host_filter:
+        payload["host"] = host_filter
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+
+
 def _cmd_activity(rest, fmt, head_n=0, max_chars=0, full=False):
     """Show the activity ledger — who used mcptoon, when, and on what.
 
@@ -2612,19 +2655,21 @@ def _cmd_activity(rest, fmt, head_n=0, max_chars=0, full=False):
         mcptoon activity --json          # machine-readable
         mcptoon activity --summary       # totals: today, last host, by host
         mcptoon activity --host Cursor   # only one agent's calls
+        mcptoon activity --export csv    # dump the whole ledger as csv/json
         mcptoon activity --clear         # wipe the ledger (usage counters stay)
     """
     rest = rest or []
     if rest and rest[0] in ("-h", "--help"):
-        print("Usage: mcptoon activity [--head N] [--json] [--summary] [--host H] [--clear]")
+        print("Usage: mcptoon activity [--head N] [--json] [--summary] [--host H] [--export json|csv] [--clear]")
         print("")
         print("  One line per tool call mcptoon routed: time, host, tool, tokens.")
         print("  Answers \"is mcptoon being used, and by which agent?\"")
         print("      mcptoon activity              last 20 routed calls")
         print("      mcptoon activity --summary    totals: today, last host, by host")
         print("      mcptoon activity --host H     only calls from agent H (e.g. Cursor)")
+        print("      mcptoon activity --export csv dump the WHOLE ledger as csv (or json)")
         print("      mcptoon activity --clear      wipe the ledger (usage stays)")
-        print("  The ledger is a local file; nothing is uploaded anywhere.")
+        print("  The ledger is a local file on this machine; nothing is uploaded anywhere.")
         return
 
     # `--host <name>` / `--host=<name>`: the ledger already stores the driving
@@ -2639,6 +2684,23 @@ def _cmd_activity(rest, fmt, head_n=0, max_chars=0, full=False):
         if a.startswith("--host="):
             host_filter = a.split("=", 1)[1]
             break
+
+    # `--export json|csv`: the whole ledger, not the on-screen tail. The default
+    # view shows the last 20; an audit or a bug report wants all of it in a form a
+    # spreadsheet or `jq` can take. Bare `--export` defaults to json.
+    export_fmt = None
+    for i, a in enumerate(rest):
+        if a == "--export":
+            nxt = rest[i + 1] if i + 1 < len(rest) else ""
+            export_fmt = nxt if nxt in ("json", "csv") else "json"
+            break
+        if a.startswith("--export="):
+            v = a.split("=", 1)[1]
+            export_fmt = v if v in ("json", "csv") else "json"
+            break
+
+    if export_fmt:
+        return _activity_export(export_fmt, host_filter)
 
     if "--clear" in rest:
         path = usage_mod._activity_file()
@@ -2728,6 +2790,11 @@ def _cmd_activity(rest, fmt, head_n=0, max_chars=0, full=False):
         detail = e.get("detail")
         if detail:
             print(f"      ↳ {detail}")
+        # `err` says why a line is red — the difference between "it failed" and
+        # "it failed because the server returned METHOD_NOT_FOUND".
+        err = e.get("err")
+        if err and not e.get("ok"):
+            print(f"      ✗ {err}")
     print(line)
     print(f"  showing {len(entries)} of {total} total · full ledger: "
           f"{usage_mod._activity_file()}")
@@ -3049,8 +3116,12 @@ def _cmd_status(_rest, fmt):
     try:
         stats = usage_mod.get_usage_stats()
         calls = int(stats.get("total_calls", 0))
+        routed_calls = int(stats.get("routed_calls", calls))
+        native_calls = int(stats.get("native_calls", 0))
     except Exception:
         calls = 0
+        routed_calls = 0
+        native_calls = 0
 
     # Is the gateway itself registered in any agent config? Read-only check.
     wired = _gateway_wired_in()
@@ -3110,6 +3181,8 @@ def _cmd_status(_rest, fmt):
             "gateway_pct": gw_pct,
             "token_caliber": caliber,
             "calls_recorded": calls,
+            "calls_routed": routed_calls,
+            "calls_native": native_calls,
             "gateway_registered": wired,
             "footer_enabled": cfg.footer_enabled(),
             "presence_enabled": cfg.presence_enabled(),
@@ -3148,6 +3221,12 @@ def _cmd_status(_rest, fmt):
             print(f"  Tool definitions   : {full_tokens:,} → {slim_tokens:,} tokens "
                   f"(saved {saved:,}, {_slim_saved}%)  [{caliber}]")
     print(f"  Calls recorded     : {calls}")
+    # Two different things, once behind one number: calls routed to *upstream*
+    # tools vs the gateway's own native tools (skill distribution lives here).
+    # A user deciding whether mcptoon is "doing anything for my agent" cares which.
+    if calls:
+        print(f"                       {routed_calls} routed to tools, "
+              f"{native_calls} via mcptoon's own tools (skills, manifest, inspect)")
     # Presence: who is using it and when — the question `Calls recorded` alone
     # cannot answer. "No routed calls yet" is itself the useful fact (it means the
     # gateway is installed but nothing has gone through it).

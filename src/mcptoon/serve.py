@@ -903,13 +903,16 @@ class MCPServerBridge:
             return self._stamp_footer(result)
 
         except MCPError as e:
-            usage.track_call(server, tool, ok=False)
+            usage.track_call(server, tool, ok=False,
+                             err=f"{e.code}: {str(e.message)[:160]}")
             return _make_tool_error(f"[{e.code}] {e.message}")
         except concurrent.futures.TimeoutError:
-            usage.track_call(server, tool, ok=False)
+            usage.track_call(server, tool, ok=False,
+                             err=f"timeout after {_get_call_timeout()}s")
             return _make_tool_error(f"Call timed out after {_get_call_timeout()}s")
         except Exception as e:
-            usage.track_call(server, tool, ok=False)
+            usage.track_call(server, tool, ok=False,
+                             err=f"{type(e).__name__}: {str(e)[:160]}")
             return _make_tool_error(f"Call failed: {str(e)[:200]}")
 
     def _call_with_timeout(
@@ -985,6 +988,16 @@ class MCPServerBridge:
         try:
             is_err = bool(isinstance(payload, dict) and payload.get("isError"))
             detail = None
+            err = None
+            if is_err:
+                # Pull the short reason off the error payload so `activity` can
+                # say *why* a native call is red, not just that it is.
+                try:
+                    blocks = payload.get("content") or []
+                    txt = blocks[0].get("text", "") if blocks else ""
+                    err = str(txt)[:160] or "native tool error"
+                except Exception:
+                    err = "native tool error"
             if name == "mcptoon_resolve_skills" and not is_err:
                 # Record *which* skills were distributed, not just that the tool
                 # ran: "distributing your capabilities" is only meaningful if the
@@ -996,7 +1009,7 @@ class MCPServerBridge:
                     if slugs:
                         detail = "distributed: " + ", ".join(slugs)
             usage.track_call("mcptoon", name, ok=not is_err, payload=payload,
-                             detail=detail)
+                             detail=detail, err=err)
         except Exception:
             pass
         if name == "mcptoon_resolve_skills":
