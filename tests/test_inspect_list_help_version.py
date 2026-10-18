@@ -26,8 +26,6 @@ import json
 from contextlib import redirect_stdout, redirect_stderr
 from unittest.mock import patch
 
-import pytest
-
 from mcptoon import cli
 
 
