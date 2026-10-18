@@ -24,6 +24,8 @@ zero-match prints the same tips `search` does and exits 0, and a match still
 works.
 """
 
+import json
+
 import pytest
 
 from mcptoon import cli
@@ -83,8 +85,13 @@ def test_matching_query_still_prints_results(wired, capsys):
 
 
 def test_json_zero_match_is_also_clean(wired, capsys):
-    """--json on a miss must behave the same, not fall through to the human path."""
+    """--json on a miss must emit parseable JSON (an empty list), not prose.
+
+    Previously the zero-match branch printed human text for every format, so
+    `mcptoon select q --json | jq` crashed on non-JSON (reported 2026-10-18).
+    """
     with pytest.raises(SystemExit) as ei:
         cli._cmd_select(["zzzzz"], fmt="json")
     assert ei.value.code == 0
-    assert "No tools found" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert json.loads(out) == []

@@ -1317,6 +1317,14 @@ def _cmd_search(rest, fmt, head_n, max_chars, full):
     results = manifest_mod.search_tools(query, limit=20)
 
     if not results:
+        # A machine consumer (`mcptoon search q --json | jq`) must always get
+        # parseable output. The empty branch printed human text + tips for EVERY
+        # format, so a zero-match `--json` emitted prose and the pipe crashed
+        # (reported 2026-10-18). Emit an empty structure for machine formats and
+        # keep the friendly tips for humans.
+        if fmt in ("json", "toon", "slim", "compact"):
+            print(output.render([], fmt=fmt, head_n=head_n, max_chars=max_chars, full=full))
+            sys.exit(0)
         print(f"No tools found matching '{query}'.")
         print("")
         print("Tips:")
@@ -1439,6 +1447,9 @@ def _cmd_select(rest, fmt="auto", head_n=0, max_chars=0, full=False):
                          "description": t.get("description", "")})
 
     if not flat:
+        if fmt in ("json", "toon", "slim", "compact"):
+            print(output.render([], fmt=fmt, head_n=head_n, max_chars=max_chars, full=full))
+            sys.exit(0)
         print("No tools to choose from.")
         print("  - Check your servers are configured: mcptoon list")
         sys.exit(0)
@@ -1459,6 +1470,13 @@ def _cmd_select(rest, fmt="auto", head_n=0, max_chars=0, full=False):
         # traceback. Mirror `search`'s empty branch (same tips, exit 0) and add
         # the registry exit, because `select` is the "help me pick" command and a
         # miss is exactly when a user needs to know they can install more.
+        #
+        # Machine formats must stay parseable: a zero-match `--json` used to emit
+        # prose and break `... | jq` (reported 2026-10-18). Emit an empty
+        # structure for machine formats, keep the tips for humans.
+        if fmt in ("json", "toon", "slim", "compact"):
+            print(output.render([], fmt=fmt, head_n=head_n, max_chars=max_chars, full=full))
+            sys.exit(0)
         print(f"No tools found matching '{query}'.")
         print("")
         print("Tips:")

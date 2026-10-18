@@ -13,6 +13,10 @@ rule.
 
 ### Fixed
 
+- **`search` / `select` zero-match keep machine formats parseable.** A query with no
+  hits printed human text + tips for every format, so `search q --json | jq` (and
+  `select ... --json`) crashed on non-JSON. Machine formats now emit an empty
+  structure; humans still get the tips.
 - **`mcptoon select --head N` caps the number of top picks shown.** Only the json
   branch forwarded `--head` to the renderer; the human output printed every `--top`
   result regardless.
