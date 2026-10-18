@@ -67,6 +67,10 @@ KNOWN_FLAGS = frozenset(
         "--version", "--version-gate", "--view", "--watch",
         "--allow-tracked-deletes",
         "--watch-mode", "--write", "--yes", "--engine",
+        # `completion`-only flags. They are registered here for the same reason
+        # `--npm`/`--pip`/`--url` are: the central parser must not reject them as
+        # unknown; `_cmd_completion` consumes them out of `rest`.
+        "--install", "--uninstall",
     }
 )
 
@@ -921,6 +925,48 @@ def _cmd_inspect(rest, fmt, max_chars, full, head_n=0):
                         max_chars=max_chars, full=full))
 
 
+def _call_json_error_hint(server, tool):
+    """The lines to print after a JSON-arguments parse error in `call`.
+
+    A raw `Expecting property name enclosed in double quotes` is a Python
+    traceback fragment, not an instruction: it tells the user their JSON is bad
+    but not what good looks like for *this* tool. `call` now follows it with a
+    correct invocation. When the tool's schema is available we fill the required
+    arguments in, so the line is directly runnable; otherwise we fall back to the
+    generic shape plus the `inspect` pointer. The JSON is wrapped in single quotes,
+    matching every other `call` example in this CLI — both POSIX shells and
+    PowerShell keep the inner double quotes literal inside single quotes.
+    """
+    example_args = '{"arg":"value"}'
+    if server and tool:
+        try:
+            info = manifest_mod.inspect_tool(server, tool)
+        except Exception:
+            info = None
+        schema = (info or {}).get("inputSchema") or {}
+        props = schema.get("properties") or {}
+        required = schema.get("required") or []
+        if required:
+            example = {}
+            for pname in required:
+                ptype = (props.get(pname) or {}).get("type", "string")
+                if isinstance(ptype, list):
+                    ptype = ptype[0] if ptype else "string"
+                example[pname] = _placeholder_for_type(ptype)
+            example_args = json.dumps(example, ensure_ascii=False)
+
+    lines = []
+    if server and tool:
+        lines.append(f"  Correct form: mcptoon call {server} {tool} '{example_args}'")
+    else:
+        lines.append(f"  Correct form: mcptoon call <server> <tool> '{example_args}'")
+    if server and tool:
+        lines.append(f"  See required args: mcptoon inspect {server} {tool}")
+    else:
+        lines.append("  See required args: mcptoon inspect <server> <tool>")
+    return lines
+
+
 def _read_stdin_text():
     """Read a `--stdin` payload as UTF-8 instead of as the console code page.
 
@@ -1015,7 +1061,9 @@ def _cmd_call(rest, fmt, head_n, max_chars, full, use_stdin=False, fallback_json
                         args = json.loads(item)
                         break
                     except json.JSONDecodeError as e:
-                        print(f"Error parsing JSON args: {e}")
+                        _err(f"Error parsing JSON args: {e}")
+                        for line in _call_json_error_hint("", tool):
+                            _err(line)
                         sys.exit(1)
                 if "=" in item:
                     k, v = item.split("=", 1)
@@ -1085,6 +1133,8 @@ def _cmd_call(rest, fmt, head_n, max_chars, full, use_stdin=False, fallback_json
                     break
                 except json.JSONDecodeError as e:
                     _err(f"Error parsing JSON args: {e}")
+                    for line in _call_json_error_hint(server, tool):
+                        _err(line)
                     sys.exit(1)
             # key=value
             if "=" in item:
@@ -1312,6 +1362,49 @@ def _cmd_policy(rest, fmt, head_n=0, max_chars=0, full=False):
 # Search command
 # ═══════════════════════════════════════════════════
 
+def _placeholder_for_type(ptype):
+    """A sample value for one argument type, used to build a copyable call.
+
+    Only the *shape* matters here — the point is that `mcptoon call ... '{"path":
+    "..."}'` is syntactically valid so the user can paste and edit it. A number is
+    `0` and a boolean is `false` because those are valid JSON; a string is `"..."`
+    so it is obvious what to replace.
+    """
+    if ptype in ("number", "integer", "int", "float"):
+        return 0
+    if ptype == "boolean":
+        return False
+    if ptype == "array":
+        return []
+    if ptype == "object":
+        return {}
+    return "..."
+
+
+def _call_example(server, name, params):
+    """Build a copy-pasteable `mcptoon call` line from a search hit's params.
+
+    `search` used to stop at `params: message:string*`, leaving the user to
+    hand-assemble the JSON arguments and to remember which of them were required
+    (the `*` marker is easy to miss). This renders the required arguments as a
+    JSON skeleton so the next step is a copy, not a construction. Optional
+    arguments are omitted on purpose: the goal is the smallest *valid* call, not
+    an exhaustive template. Returns "" when nothing is required (a `{}` call is
+    still shown, because "this tool takes no arguments" is useful to see).
+    """
+    example = {}
+    for part in (params or "").split(","):
+        part = part.strip()
+        if not part or ":" not in part:
+            continue
+        pname, ptype = part.split(":", 1)
+        if not ptype.endswith("*"):
+            continue  # only required params are needed for a valid call
+        example[pname] = _placeholder_for_type(ptype[:-1])
+    args = json.dumps(example, ensure_ascii=False)
+    return f"  → mcptoon call {server} {name} '{args}'"
+
+
 def _cmd_search(rest, fmt, head_n, max_chars, full):
     """Search tools across all configured servers.
 
@@ -1399,6 +1492,10 @@ def _cmd_search(rest, fmt, head_n, max_chars, full):
                 print(f"    {desc}")
             if params:
                 print(f"    params: {params}")
+            # The copyable next step. `search` used to stop at `params:` and leave
+            # the user to assemble the call by hand (and to spot the `*` that marks
+            # a required argument). One ready-to-edit line closes that gap.
+            print(_call_example(server, name, params))
             print("")
 
 
@@ -4070,8 +4167,127 @@ Register-ArgumentCompleter -CommandName mcptoon -ScriptBlock $scriptBlock
 '''
 
 
+def _completion_rc_path(shell: str):
+    """The rc/profile file a shell reads at startup, where `--install` writes.
+
+    A shell that is asked to install its own completion has to know *where* the
+    user's startup file lives; hardcoding it per shell here keeps the answer in
+    one place instead of making the user copy a path out of the docs. Windows has
+    no `~/.bashrc` by convention, so bash/zsh fall back to the same dotfile names
+    they use everywhere else (Git Bash / WSL honour them), and PowerShell uses its
+    documented profile location.
+    """
+    from pathlib import Path
+    home = Path.home()
+    if shell in ("powershell", "ps"):
+        if os.name == "nt":
+            return home / "Documents" / "PowerShell" / "Microsoft.PowerShell_profile.ps1"
+        return home / ".config" / "powershell" / "profile.ps1"
+    if shell == "zsh":
+        return home / ".zshrc"
+    if shell == "fish":
+        return home / ".config" / "fish" / "config.fish"
+    return home / ".bashrc"
+
+
+# Delimiters that make `--install` idempotent (a second run replaces the block
+# instead of appending a duplicate) and `--uninstall` exact (it removes only what
+# mcptoon wrote, never a line the user added).
+_COMPLETION_BEGIN = "# >>> mcptoon completion >>>"
+_COMPLETION_END = "# <<< mcptoon completion <<<"
+
+
+def _completion_block(script: str) -> str:
+    # The shell scripts open with a newline (the raw string starts on its own
+    # line); trim it so the block does not begin with a blank line after the marker.
+    return f"{_COMPLETION_BEGIN}\n{script.strip(chr(10))}\n{_COMPLETION_END}\n"
+
+
+def _install_completion(shell: str, script: str, name: str) -> None:
+    """Write the completion block into the shell's rc file, idempotently.
+
+    Re-running replaces the existing block in place, so the file never grows a
+    second copy; running it when the block is already byte-identical reports
+    "already installed" and touches nothing (a mtime-only change on a config file
+    is exactly the kind of surprise a routine command should avoid).
+    """
+    path = _completion_rc_path(shell)
+    block = _completion_block(script)
+    existing = ""
+    if path.exists():
+        existing = path.read_text(encoding="utf-8")
+
+    if _COMPLETION_BEGIN in existing and _COMPLETION_END in existing:
+        start = existing.index(_COMPLETION_BEGIN)
+        end = existing.index(_COMPLETION_END) + len(_COMPLETION_END)
+        # `tail` already carries the newline(s) that followed the end marker; add
+        # them back verbatim so a byte-identical block compares equal and reports
+        # "already installed" instead of rewriting the file on every run.
+        tail = existing[end:]
+        updated = existing[:start] + block.rstrip("\n") + tail
+        if updated == existing:
+            print(f"mcptoon completion for {name} is already installed in {path}")
+            return
+        path.write_text(updated, encoding="utf-8")
+        print(f"mcptoon completion for {name} updated in {path}")
+        return
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    prefix = existing
+    if prefix and not prefix.endswith("\n"):
+        prefix += "\n"
+    if prefix:
+        prefix += "\n"  # one blank line between the user's content and our block
+    path.write_text(prefix + block, encoding="utf-8")
+    print(f"mcptoon completion for {name} installed in {path}")
+    print("  Open a new shell (or source the file) to activate it.")
+
+
+def _uninstall_completion(shell: str, name: str) -> None:
+    """Remove mcptoon's completion block from the shell's rc file, if present."""
+    path = _completion_rc_path(shell)
+    if not path.exists():
+        print(f"mcptoon completion for {name} is not installed ({path} does not exist)")
+        return
+    existing = path.read_text(encoding="utf-8")
+    if _COMPLETION_BEGIN not in existing or _COMPLETION_END not in existing:
+        print(f"mcptoon completion for {name} is not installed in {path}")
+        return
+    start = existing.index(_COMPLETION_BEGIN)
+    end = existing.index(_COMPLETION_END) + len(_COMPLETION_END)
+    before = existing[:start].rstrip("\r\n")
+    after = existing[end:].lstrip("\r\n")
+    if before:
+        before += "\n"
+    updated = before + after
+    path.write_text(updated, encoding="utf-8")
+    print(f"mcptoon completion for {name} removed from {path}")
+
+
 def _cmd_completion(rest):
-    """Generate shell completion script."""
+    """Generate shell completion script (optionally install/uninstall it).
+
+    Usage:
+        mcptoon completion bash            Print the completion script
+        mcptoon completion bash --install  Write it into ~/.bashrc (idempotent)
+        mcptoon completion bash --uninstall Remove it from ~/.bashrc
+
+    Printing a script and telling the user to paste it into the right file is a
+    dead end for most people — they have to know which rc file their shell reads
+    and where it lives. `--install` closes that loop; the block is wrapped in
+    markers so a re-run updates in place and `--uninstall` removes exactly what
+    mcptoon added. Without either flag the behaviour is unchanged (print to
+    stdout) so `eval "$(mcptoon completion bash)"` keeps working.
+    """
+    do_install = "--install" in rest
+    do_uninstall = "--uninstall" in rest
+    rest = [a for a in rest if a not in ("--install", "--uninstall")]
+
+    # With `--install`/`--uninstall` and no shell named, detect one so
+    # `mcptoon completion --install` is not a usage error.
+    if not rest and (do_install or do_uninstall):
+        rest = [_detect_shell()]
+
     shell = rest[0] if rest else "bash"
 
     scripts = {
@@ -4091,9 +4307,34 @@ def _cmd_completion(rest):
     # One source of truth for the verb list; each shell script embeds a marker.
     script = script.replace("__MC_TOON_COMMANDS__", _CMD_WORDS)
     script = script.replace("__MC_TOON_COMMANDS_PS__", _CMD_PS_WORDS)
+
+    if do_install:
+        _install_completion(shell, script, name)
+        return
+    if do_uninstall:
+        _uninstall_completion(shell, name)
+        return
+
     print(f"# mcptoon completion for {name}")
     print("# Install: eval this script or add to your shell config")
     print(script)
+
+
+def _detect_shell() -> str:
+    """Best-effort guess at the user's shell, for `completion --install` with none named.
+
+    `$SHELL` is authoritative on POSIX; on Windows there is no such variable, so
+    PowerShell is the safe default (it is the shell this CLI's docs and examples
+    assume there). A shell we cannot map falls back to bash, which is the same
+    default the plain `completion` command uses.
+    """
+    shell_env = (os.environ.get("SHELL") or "").lower()
+    for cand in ("zsh", "fish", "bash"):
+        if cand in shell_env:
+            return cand
+    if os.name == "nt":
+        return "powershell"
+    return "bash"
 
 
 # ═══════════════════════════════════════════════════
@@ -4487,6 +4728,7 @@ Usage:
     mcptoon policy                        Per-tool compression policy (raw/toon/slim/smart)
     mcptoon doctor                        Self-diagnose config + connectivity
     mcptoon completion <shell>            Generate shell completion (bash|zsh|fish|ps)
+    mcptoon completion <shell> --install  Write it into that shell's rc file (idempotent)
     mcptoon install <name> --npm <pkg>    Install MCP server from npm
     mcptoon install <name> --pip <pkg>    Install MCP server from pip
     mcptoon install <name> --url <url>    Install HTTP/SSE MCP server

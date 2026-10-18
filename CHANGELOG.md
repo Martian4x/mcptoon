@@ -11,6 +11,24 @@ CLI papercuts and data-safety fixes reported on 2026-10-17, each reproduced befo
 fixing and pinned by a test. Held for the next version per the one-release-per-topic
 rule.
 
+### Added
+
+- **`mcptoon search` prints a copyable `call` line for every hit.** It used to stop
+  at `params: message:string*`, leaving the user to assemble the JSON arguments and
+  to spot the `*` that marks a required one. Each result now ends with a
+  ready-to-edit `→ mcptoon call <server> <tool> '{"required":"..."}'` built from the
+  tool's required arguments. Human output only; `--json` stays pure data.
+- **`mcptoon call` explains how to fix malformed JSON instead of only quoting the
+  parser.** A bad argument object printed the raw `JSONDecodeError` and nothing else.
+  It now follows with the correct invocation (required args filled in from the tool
+  schema when available, else a generic skeleton) and the `mcptoon inspect` pointer.
+- **`mcptoon completion <shell> --install` / `--uninstall`.** `completion` only
+  printed a script and told the user to paste it into the right rc file. `--install`
+  writes it into that file inside `# >>> mcptoon completion >>>` markers, idempotently
+  (a re-run updates in place and reports "already installed"); `--uninstall` removes
+  exactly that block and leaves the user's own lines untouched. Printing the script
+  (no flag) is unchanged, so `eval "$(mcptoon completion bash)"` still works.
+
 ### Fixed
 
 - **`mcptoon import <path>` accepts a bare file path.** `import` only ever read
