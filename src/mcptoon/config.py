@@ -248,7 +248,7 @@ FOOTER_STATE_FILE = Path(os.environ.get(
 SETTING_DEFAULTS = {"footer": "on", "welcome": "on", "lang": "auto",
                     "exposure": "compact", "compress": "smart",
                     "runners": "prefer-installed", "select.engine": "lexical",
-                    "select.command": ""}
+                    "select.command": "", "presence": "on"}
 
 # How mcptoon ranks candidate tools for a query ("which tools should the agent
 # look at for this task?").
@@ -326,6 +326,22 @@ COMPRESS_MODES = ("smart", "off", "toon")
 # Settings that are a plain on/off switch.
 BOOL_MODES = ("on", "off")
 
+# The "am I being used?" presence channel, separate from the savings `footer`.
+#
+#   on    — after a command that actually routed a call, print one short line to
+#           stderr saying so ("▸ mcptoon routed 3 calls"). The point is that the
+#           user sees mcptoon *working*, not only what it saved.
+#   brief — the same signal, but only when the activity ledger has not been shown
+#           recently; quieter, for people who mostly trust it.
+#   off   — never print it.
+#
+# Why its own switch and not folded into `footer`: `footer` is the token-savings
+# broadcast. Someone may want to be told "mcptoon is being used" while turning the
+# big savings card off, or the reverse. One switch for two different questions
+# forced all-or-nothing. Default on — a tool nobody notices is the problem this
+# whole channel exists to fix.
+PRESENCE_MODES = ("on", "brief", "off")
+
 # Settings whose value must be one of a fixed set. Validated in `set_setting`,
 # so a typo fails loudly instead of silently persisting a value nothing honours.
 #
@@ -347,7 +363,8 @@ BOOL_MODES = ("on", "off")
 # banner showing while the user believed they had turned it off.
 SETTING_CHOICES = {"exposure": EXPOSURE_MODES, "compress": COMPRESS_MODES,
                    "footer": BOOL_MODES, "welcome": BOOL_MODES,
-                   "runners": RUNNER_MODES, "select.engine": SELECT_ENGINES}
+                   "runners": RUNNER_MODES, "select.engine": SELECT_ENGINES,
+                   "presence": PRESENCE_MODES}
 
 # Windows LANGID primary-language ids worth naming. Anything unnamed falls back
 # to the locale string and then to English, so an unlisted language degrades to
@@ -980,6 +997,22 @@ def auto_smart_enabled() -> bool:
 def welcome_enabled() -> bool:
     """Whether the one-time first-run welcome may print. Default: on."""
     return get_setting("welcome").strip().lower() not in ("off", "0", "false", "no")
+
+
+def presence_mode() -> str:
+    """The presence channel's level: "on" (default), "brief", or "off".
+
+    An unrecognized stored value falls back to "on" — the safe direction for a
+    channel whose whole purpose is being noticed is to keep showing, not to
+    silently vanish on a hand-edited typo.
+    """
+    value = get_setting("presence").strip().lower()
+    return value if value in PRESENCE_MODES else PRESENCE_MODES[0]
+
+
+def presence_enabled() -> bool:
+    """Whether the routed-a-call presence line may print at all."""
+    return presence_mode() != "off"
 
 
 def welcome_seen() -> bool:

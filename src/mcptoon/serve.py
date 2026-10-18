@@ -514,6 +514,17 @@ class MCPServerBridge:
         else gets the legacy default.
         """
         _log(f"Initialize from client: {params.get('clientInfo', {})}")
+        # Remember who is driving us, so the activity ledger and `status` can say
+        # "last used by Cursor, 2 minutes ago" instead of only counting calls. The
+        # MCP handshake carries the client's self-reported name; a client that
+        # omits it leaves the host unknown (never guessed). Best-effort: an
+        # unknown client must not break the handshake it is reporting in.
+        try:
+            _ci = params.get("clientInfo")
+            if isinstance(_ci, dict):
+                usage.set_host(_ci.get("name") or _ci.get("title"))
+        except Exception:
+            pass
         client_version = params.get("protocolVersion", PROTOCOL_VERSION)
         version = (
             client_version

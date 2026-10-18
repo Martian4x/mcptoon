@@ -7,9 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-CLI papercuts and data-safety fixes reported on 2026-10-17, each reproduced before
-fixing and pinned by a test. Held for the next version per the one-release-per-topic
-rule.
+CLI papercuts and data-safety fixes reported on 2026-10-17, plus a presence channel so
+a user who installed mcptoon and forgot can tell it is being used, by which agent, and
+when. Each item was reproduced before fixing and pinned by a test. Held for the next
+version per the one-release-per-topic rule.
 
 ### Added
 
@@ -53,6 +54,34 @@ rule.
   making the totals lie. The note appears only when a cap was actually requested.
 - **`mcptoon config get <near-miss>` suggests the closest key** ("did you mean:
   footer?"), using the same matcher as the command/option typo hints.
+- **`mcptoon activity` — a readable ledger of what mcptoon actually did.** `usage`
+  answers "how many, which servers" from a capped counter that cannot say *which
+  agent* or *when*. Every routed call now also appends one line to `activity.jsonl`
+  (time, host, `server:tool`, ok, tokens); `mcptoon activity` shows the last 20
+  newest-first, `--summary` gives totals (today, last host, by host), `--json` is
+  machine-readable, `--clear` wipes the ledger (the `usage` counters are separate
+  and untouched). Append-only and capped at 2000 lines, so it never grows without
+  bound.
+- **Host identity — mcptoon records which agent is using it.** `serve` reads the
+  client's self-reported name from the MCP `initialize` handshake and stores it, so
+  the ledger and `status` say "Cursor" or "Claude Desktop" instead of only counting
+  calls. A client that sends no name leaves the host unknown (null), never guessed.
+- **`mcptoon status` shows a "Last used" row** — who last drove it, when, and how
+  many calls today, with a pointer to `mcptoon activity`. On a machine nothing has
+  routed through yet it says so plainly ("no routed calls yet"), which is itself the
+  answer a fresh install needs. `status --json` carries the same fields
+  (`activity_entries`, `activity_today`, `last_host`, `last_used_ts`,
+  `presence_enabled`).
+- **A one-line presence notice after a command that routed a call.** When a command
+  actually used mcptoon, one short line goes to stderr: `▸ mcptoon routed 3 calls
+  for Cursor this command — see \`mcptoon activity\``. It fires only when something
+  was really routed, so `mcptoon status` stays silent, and it is stderr-only so
+  `--json`/piped output stays pure data.
+- **A `presence` setting (`on|brief|off`, default `on`), separate from `footer`.**
+  `footer` is the token-savings broadcast; `presence` is the "you were just used"
+  notice. Someone may want the usage notice without the big savings card, or the
+  reverse — one switch for two questions forced all-or-nothing. `brief` keeps the
+  notice but drops the host clause.
 
 ### Fixed
 

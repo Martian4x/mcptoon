@@ -28,6 +28,7 @@ import json
 import sys
 import os
 import re
+import time
 import difflib
 import inspect
 import textwrap
@@ -60,6 +61,7 @@ KNOWN_FLAGS = frozenset(
         "--no-configs",
         "--no-env", "--no-local", "--no-network", "--no-self", "--no-sync", "--npm", "--pip",
         "--quiet", "--quick", "--query", "--raw", "--remove", "--request-state", "--roots", "--search",
+        "--summary", "--clear",
         "--self", "--pack", "--packs",
         "--slim", "--smart",
         "--stdin", "--stdio", "--takeover", "--timeout", "--tombstone", "--toon", "--tools-k", "--top",
@@ -94,7 +96,7 @@ _COMMANDS_WITH_OWN_HELP = frozenset({"demo", "demo-server", "serve"})
 # makes the next verb a one-line addition; tests/test_completion.py derives the
 # dispatch set from this file and fails if the two ever disagree.
 _COMPLETION_COMMANDS = (
-    "add", "bench", "call", "completion", "config", "demo", "demo-server",
+    "activity", "add", "bench", "call", "completion", "config", "demo", "demo-server",
     "discover", "docs", "doctor", "footer-facts", "health", "help", "import",
     "init", "inspect", "install", "list", "manifest", "off", "plugin", "policy",
     "quickstart", "remove", "report", "restore", "retrieve", "search", "select",
@@ -544,6 +546,8 @@ def _run(state: dict) -> None:
         _cmd_status(rest, fmt)
     elif command == "stats":
         _cmd_stats(rest, fmt, head_n, max_chars, full)
+    elif command == "activity":
+        _cmd_activity(rest, fmt, head_n, max_chars, full)
     elif command == "report":
         from . import report as report_mod
         report_mod.run(rest, fmt, head_n, max_chars, full)
@@ -662,14 +666,62 @@ def main() -> None:
         _run(state)
     except SystemExit as exc:
         if not exc.code:
+            _emit_presence(state.get("command", ""))
             _emit_footer(state.get("command", ""))
         raise
+    _emit_presence(state.get("command", ""))
     _emit_footer(state.get("command", ""))
 
 
 # Commands whose streams are a protocol, not a human terminal, plus the one
 # command that has already printed the same block.
 _FOOTER_SILENT_COMMANDS = frozenset({"serve", "demo-server", "footer-facts", "report"})
+
+
+def _emit_presence(command: str) -> None:
+    """Print the short "mcptoon routed N calls" line to stderr — the presence channel.
+
+    The savings footer says how much was *saved*; this says mcptoon was *used at
+    all*, which is the thing a person who installed it and forgot is actually
+    asking ("is this even doing anything?"). It fires only when this command
+    really routed at least one call (`usage.take_session_calls`), so an ordinary
+    `mcptoon status` stays silent — there is nothing to announce.
+
+    stderr, never stdout: the same rule as the footer — stdout is machine output.
+    Its own switch (`presence`, default on) so it can be kept while the savings
+    card is turned off, and its own dedupe via `footer.changed`/`remember` under a
+    distinct key so a repeated line is not re-printed turn after turn.
+
+    Never raises: presence is a courtesy and must not fail a command.
+    """
+    if not command or command.startswith("-") or command in _FOOTER_SILENT_COMMANDS:
+        return
+    try:
+        from . import config as cfg
+        from . import footer as footer_mod
+        from . import usage as usage_mod
+
+        if not cfg.presence_enabled():
+            return
+        n = usage_mod.take_session_calls()
+        if n <= 0:
+            return
+        host = usage_mod.get_host()
+        # "brief" only speaks when the fuller ledger has not been seen lately;
+        # without a cheap recency signal it behaves like "on" for the call count
+        # but skips the host clause. Kept simple on purpose — the win is being
+        # noticed, not tuning verbosity per turn.
+        if cfg.presence_mode() == "brief":
+            host = None
+        calls = "1 call" if n == 1 else f"{n} calls"
+        via = f" for {host}" if host else ""
+        line = f"▸ mcptoon routed {calls}{via} this command — see `mcptoon activity`"
+        if not footer_mod.changed("presence:" + line):
+            return
+        print(line, file=sys.stderr)
+        footer_mod.remember("presence:" + line)
+    except Exception:
+        return
 
 
 def _emit_footer(command: str) -> None:
@@ -2523,6 +2575,115 @@ def _cmd_usage(_rest, fmt, head_n=0, max_chars=0, full=False):
                 print(f"  {t:30s} {c}")
 
 
+def _cmd_activity(rest, fmt, head_n=0, max_chars=0, full=False):
+    """Show the activity ledger — who used mcptoon, when, and on what.
+
+    The readable counterpart to `mcptoon usage`'s counters. `usage` answers "how
+    many, which servers" and is deliberately lossy (its window caps at 1000). This
+    answers the different question a person who installed mcptoon and forgot asks:
+    "is it even doing anything, and for which agent?" — one line per routed call
+    (time, host, server:tool, ok, tokens), newest first.
+
+    `head_n`/`max_chars`/`full` are the global output flags, forwarded so
+    `activity --json` honours them like every other record view.
+
+    Usage:
+        mcptoon activity                 # last 20 routed calls
+        mcptoon activity --head 50       # last 50 (global --head)
+        mcptoon activity --json          # machine-readable
+        mcptoon activity --summary       # totals: today, last host, by host
+        mcptoon activity --clear         # wipe the ledger (usage counters stay)
+    """
+    rest = rest or []
+    if rest and rest[0] in ("-h", "--help"):
+        print("Usage: mcptoon activity [--head N] [--json] [--summary] [--clear]")
+        print("")
+        print("  One line per tool call mcptoon routed: time, host, tool, tokens.")
+        print("  Answers \"is mcptoon being used, and by which agent?\"")
+        print("      mcptoon activity              last 20 routed calls")
+        print("      mcptoon activity --summary    totals: today, last host, by host")
+        print("      mcptoon activity --clear      wipe the ledger (usage stays)")
+        return
+
+    if "--clear" in rest:
+        path = usage_mod._activity_file()
+        try:
+            path.unlink(missing_ok=True)
+            removed = True
+        except OSError:
+            removed = False
+        if fmt == "json":
+            print(json.dumps({"cleared": removed, "path": str(path)},
+                             ensure_ascii=False))
+            return
+        if removed:
+            print(f"Cleared the activity ledger: {path}")
+            print("  (the `usage` counters are separate and were not touched)")
+        else:
+            print(f"Could not clear the ledger at {path}", file=sys.stderr)
+            sys.exit(1)
+        return
+
+    if "--summary" in rest:
+        summary = usage_mod.activity_summary()
+        if fmt in ("toon", "mcptoon", "compact", "json"):
+            print(output.render(output.stamp_schema(summary), fmt=fmt,
+                                head_n=head_n, max_chars=max_chars, full=full))
+            return
+        n = summary["entries"]
+        if not n:
+            print("No routed calls recorded yet.")
+            return
+        print("mcptoon activity — summary")
+        print(f"  Calls recorded  : {n}")
+        print(f"  Today           : {summary['today_calls']}")
+        last_ts = summary.get("last_ts")
+        when = (time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(last_ts))
+                if isinstance(last_ts, (int, float)) else "—")
+        print(f"  Last used       : {summary.get('last_host') or '—'}  at {when}")
+        hosts = summary.get("hosts") or {}
+        if hosts:
+            print("  By host         :")
+            for h, c in hosts.items():
+                print(f"    {h:20s} {c}")
+        return
+
+    limit = head_n if head_n and head_n > 0 else 20
+    entries = usage_mod.read_activity(limit=limit)
+    total = usage_mod.activity_summary()["entries"]
+
+    if fmt in ("toon", "mcptoon", "compact", "json"):
+        payload = {"entries": entries, "count": len(entries), "total": total,
+                   "path": str(usage_mod._activity_file())}
+        print(output.render(output.stamp_schema(payload), fmt=fmt, head_n=head_n,
+                            max_chars=max_chars, full=full))
+        return
+
+    if not entries:
+        print("No routed calls recorded yet.")
+        print("  Use a tool through mcptoon (or let your agent use one), then check"
+              " again.")
+        print(f"  Ledger: {usage_mod._activity_file()}")
+        return
+
+    print(f"mcptoon activity — last {len(entries)} routed call"
+          f"{'' if len(entries) == 1 else 's'}")
+    line = "─" * 66
+    print(line)
+    for e in entries:
+        ts = e.get("ts")
+        when = (time.strftime("%m-%d %H:%M:%S", time.localtime(ts))
+                if isinstance(ts, (int, float)) else "—")
+        host = (e.get("host") or "CLI")[:16]
+        sk = f"{e.get('server','')}:{e.get('tool','')}"[:30]
+        ok = "ok " if e.get("ok") else "ERR"
+        tok = e.get("tokens") or 0
+        print(f"  {when}  {host:16s} {sk:30s} {ok}  {tok:>7,} tok")
+    print(line)
+    print(f"  showing {len(entries)} of {total} total · full ledger: "
+          f"{usage_mod._activity_file()}")
+
+
 def _cmd_retrieve(rest, fmt, max_chars=0):
     """mcptoon retrieve <handle> — the CLI's read half of compression.
 
@@ -2869,6 +3030,17 @@ def _cmd_status(_rest, fmt):
         except Exception:
             skills_live = None
 
+    # The presence answer: is mcptoon being used at all, and by which agent?
+    # Read off the activity ledger (who/when), never the counter (how many). A
+    # `status` that only talks about savings cannot answer the question a person
+    # who installed this and forgot actually has. Cheap: the ledger is a small
+    # local file, no servers touched.
+    try:
+        act = usage_mod.activity_summary()
+    except Exception:
+        act = {"entries": 0, "last_host": None, "last_ts": None,
+               "today_calls": 0, "hosts": {}}
+
     if fmt == "json":
         print(json.dumps(output.stamp_schema({
             "servers": n_servers,
@@ -2891,6 +3063,11 @@ def _cmd_status(_rest, fmt):
             "calls_recorded": calls,
             "gateway_registered": wired,
             "footer_enabled": cfg.footer_enabled(),
+            "presence_enabled": cfg.presence_enabled(),
+            "activity_entries": act.get("entries", 0),
+            "activity_today": act.get("today_calls", 0),
+            "last_host": act.get("last_host"),
+            "last_used_ts": act.get("last_ts"),
         }), indent=2, ensure_ascii=False))
         return
 
@@ -2922,6 +3099,19 @@ def _cmd_status(_rest, fmt):
             print(f"  Tool definitions   : {full_tokens:,} → {slim_tokens:,} tokens "
                   f"(saved {saved:,}, {_slim_saved}%)  [{caliber}]")
     print(f"  Calls recorded     : {calls}")
+    # Presence: who is using it and when — the question `Calls recorded` alone
+    # cannot answer. "No routed calls yet" is itself the useful fact (it means the
+    # gateway is installed but nothing has gone through it).
+    if act.get("entries"):
+        last_ts = act.get("last_ts")
+        when = (time.strftime("%Y-%m-%d %H:%M", time.localtime(last_ts))
+                if isinstance(last_ts, (int, float)) else "—")
+        who = act.get("last_host") or "CLI"
+        print(f"  Last used          : {who} at {when}"
+              f"  ·  {act.get('today_calls', 0)} today  ·  see `mcptoon activity`")
+    else:
+        print("  Last used          : no routed calls yet — let an agent use a tool,"
+              " then `mcptoon activity`")
     if wired:
         print("  Gateway in agents  : yes — agents can see mcptoon itself")
     else:
@@ -2931,7 +3121,7 @@ def _cmd_status(_rest, fmt):
     print("    mcptoon off          remove the gateway from your agents")
     print("    mcptoon restore      drop the gateway and put your servers back")
     print("    mcptoon uninstall    full cleanup (preview with --dry)")
-    print("  Prove the numbers: mcptoon bench   ·   what it did: mcptoon usage")
+    print("  Prove the numbers: mcptoon bench   ·   what it did: mcptoon activity")
     print("")
 
 
@@ -3312,6 +3502,10 @@ def _cmd_config(rest, fmt, head_n=0, max_chars=0, full=False):
             print(f"  {key:12s} = {values[key]}")
         print()
         print("  footer on|off controls the one-line token-savings disclosure.")
+        print("  presence on|brief|off controls the short \"mcptoon routed N calls\""
+              " line after a command that used it;")
+        print("    separate from footer — turn off savings, keep the usage notice,"
+              " or the reverse.")
         print("  lang auto|zh|en picks the language of that line;"
               " auto follows the OS language.")
         print("  compress smart|off|toon controls result compression;"
@@ -4887,6 +5081,8 @@ Usage:
     mcptoon add <name> [options]          Add a server
     mcptoon remove <name>                 Remove a server
     mcptoon usage                         Show usage stats
+    mcptoon activity                      Who used mcptoon, when, on what (last 20 calls)
+    mcptoon activity --summary            Totals: today, last host, by host
     mcptoon status                        One-screen: what's here and what it saves
     mcptoon stats                         Token-savings dashboard (vs raw JSON)
     mcptoon report                        Whole savings account on one screen
@@ -5180,7 +5376,7 @@ def _populate_command_handlers() -> None:
         "call": _cmd_call, "quickstart": _cmd_quickstart, "qs": _cmd_quickstart,
         "init": _cmd_init, "add": _cmd_add, "remove": _cmd_remove,
         "usage": _cmd_usage, "status": _cmd_status, "brief": _cmd_status,
-        "stats": _cmd_stats, "retrieve": _cmd_retrieve,
+        "stats": _cmd_stats, "retrieve": _cmd_retrieve, "activity": _cmd_activity,
         "footer-facts": _cmd_footer_facts, "toggle": _cmd_toggle,
         "policy": _cmd_policy, "import": _cmd_import, "doctor": _cmd_doctor,
         "install": _cmd_install, "completion": _cmd_completion,

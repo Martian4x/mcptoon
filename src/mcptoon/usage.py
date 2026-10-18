@@ -17,19 +17,94 @@ mcptoon usage — Lightweight usage tracking
 
 Tracks tool calls per server for cost analysis.
 Data stored in ~/.cache/mcptoon/usage.json
+
+Also keeps a plain-text *activity ledger* (activity.jsonl), which answers a
+different question than usage.json does. usage.json is a counter ("how many
+calls, which servers") and is deliberately lossy — its window is capped at 1000.
+The ledger is the readable history a person scrolls when they ask "is mcptoon
+even doing anything, and for which agent?" — one line per routed call, newest
+last, `mcptoon activity` reads it back. Two files, two jobs: a counter cannot
+answer "when was the last time Cursor used me", and a log is the wrong shape to
+sum.
 """
 import json
 import os
 import threading
 import time
+from pathlib import Path
 
 from .config import CACHE_DIR
 
 _USAGE_FILE = CACHE_DIR / "usage.json"
+# The activity ledger. Kept beside usage.json (same cache root) so one HOME move
+# relocates both; MCPTOON_ACTIVITY_FILE lets a caller (a test, or an agent that
+# wants its own trail) point it elsewhere without touching the counter file.
+_ACTIVITY_FILE = CACHE_DIR / "activity.jsonl"
+
+# How many ledger lines to keep. A tool that has routed for months must not grow
+# an unbounded file on someone's disk; the tail is what `activity` shows anyway.
+_ACTIVITY_KEEP = 2000
 
 # Concurrency guard: multiple agent processes/servers may record calls
 # simultaneously (backported from the private layer, v0.5.6).
 _usage_lock = threading.Lock()
+
+# Which host is driving this process, when it can be known. `serve` learns it
+# from the MCP `initialize` handshake (params.clientInfo.name) and calls
+# `set_host`; a bare CLI run has no host. Process-global because one process is
+# one conversation with one client — the same assumption `serve` already makes
+# for its footer stamp. `None` means "not known", never a guessed name.
+_HOST: "str | None" = None
+
+
+def set_host(name: "str | None") -> None:
+    """Record which agent/host this process is serving (called by `serve`).
+
+    Best-effort and never raises: an unknown or malformed clientInfo must not
+    break the bridge that is trying to report it. The value is only ever echoed
+    into the ledger and `status`; nothing decides behaviour from it.
+    """
+    global _HOST
+    try:
+        cleaned = (name or "").strip()
+        _HOST = cleaned[:60] or None
+    except Exception:
+        _HOST = None
+
+
+def get_host() -> "str | None":
+    """The host recorded for this process, or None if unknown."""
+    return _HOST
+
+
+# Routed-call count for *this* process only. `_emit_footer` reads it once at the
+# end of a command to decide whether to print the presence line — "this command
+# used mcptoon" is a per-process fact, so it must not be read off the on-disk
+# counter (that is lifetime). `take_session_calls` returns and resets, so a
+# long-lived process (serve) never accumulates across conversations.
+_SESSION_CALLS = 0
+
+
+def note_session_call() -> None:
+    """Bump the per-process routed-call count. Called from `track_call`."""
+    global _SESSION_CALLS
+    try:
+        _SESSION_CALLS += 1
+    except Exception:
+        pass
+
+
+def take_session_calls() -> int:
+    """Return and reset the per-process routed-call count."""
+    global _SESSION_CALLS
+    n = _SESSION_CALLS
+    _SESSION_CALLS = 0
+    return n
+
+
+def _activity_file():
+    override = os.environ.get("MCPTOON_ACTIVITY_FILE", "").strip()
+    return Path(override) if override else _ACTIVITY_FILE
 
 
 def _load_usage() -> dict:
@@ -124,6 +199,143 @@ def track_call(server: str, tool: str, ok: bool = True, tokens_est: int | None =
             _save_usage(data)
     except Exception:
         pass
+    # The readable half. Separate try/except from the counter write on purpose:
+    # one failing must not stop the other, and neither may ever reach the caller.
+    note_session_call()
+    _append_activity(server, tool, ok=ok, tokens=int(tokens_est or 0))
+
+
+def _append_activity(server: str, tool: str, ok: bool = True, tokens: int = 0,
+                     host: "str | None" = None) -> None:
+    """Append one line to the activity ledger. Never raises.
+
+    One JSON object per line: ``{ts, host, server, tool, ok, tokens}``. ``host``
+    is the client that drove this process (see ``set_host``) unless the caller
+    passes one explicitly. This is the record `mcptoon activity` and `status`
+    read to answer "was I used, by whom, when" — the counter in usage.json can
+    say how many, never which agent or when.
+    """
+    try:
+        entry = {
+            "ts": round(time.time(), 3),
+            "host": (host if host is not None else _HOST) or None,
+            "server": server,
+            "tool": tool,
+            "ok": bool(ok),
+            "tokens": int(tokens or 0),
+        }
+        line = json.dumps(entry, ensure_ascii=False)
+        path = _activity_file()
+        with _usage_lock:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            # Read-then-rewrite only when trimming: appending is the common path
+            # and stays O(1). A cross-process lost line during a trim is the same
+            # accepted trade the other counters make (see record_skill_use).
+            trimmed = None
+            if path.exists():
+                try:
+                    with path.open("r", encoding="utf-8", errors="replace") as fh:
+                        lines = fh.readlines()
+                    if len(lines) >= _ACTIVITY_KEEP:
+                        trimmed = lines[-(_ACTIVITY_KEEP - 1):]
+                except OSError:
+                    trimmed = None
+            if trimmed is not None:
+                with path.open("w", encoding="utf-8") as fh:
+                    fh.writelines(trimmed)
+            with path.open("a", encoding="utf-8") as fh:
+                fh.write(line + "\n")
+    except Exception:
+        pass
+
+
+def read_activity(limit: int = 20, host: "str | None" = None) -> list[dict]:
+    """The most recent ledger entries, newest first. Never raises.
+
+    ``limit`` caps how many come back (a big file must not flood a terminal);
+    ``host`` filters to one client when given. A malformed line is skipped, not
+    fatal — the ledger is append-only from many processes and one torn write
+    from a crash must not hide the rest.
+    """
+    path = _activity_file()
+    if not path.exists():
+        return []
+    out: list[dict] = []
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as fh:
+            lines = fh.readlines()
+    except OSError:
+        return []
+    for raw in reversed(lines):
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            entry = json.loads(raw)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if not isinstance(entry, dict):
+            continue
+        if host is not None and entry.get("host") != host:
+            continue
+        out.append(entry)
+        if limit and len(out) >= limit:
+            break
+    return out
+
+
+def activity_summary() -> dict:
+    """Totals read off the ledger, for `status` and `activity --summary`.
+
+    Everything here comes from the ledger, so it can answer "who and when",
+    which the counter cannot. ``last_host`` / ``last_ts`` are the newest line's;
+    ``today_calls`` counts entries whose local calendar day is today.
+    """
+    path = _activity_file()
+    if not path.exists():
+        return {"entries": 0, "last_host": None, "last_ts": None,
+                "today_calls": 0, "hosts": {}}
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as fh:
+            lines = fh.readlines()
+    except OSError:
+        return {"entries": 0, "last_host": None, "last_ts": None,
+                "today_calls": 0, "hosts": {}}
+    hosts: dict[str, int] = {}
+    entries = 0
+    last_host = None
+    last_ts = None
+    today_calls = 0
+    today = time.strftime("%Y-%m-%d")
+    for raw in lines:
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            e = json.loads(raw)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if not isinstance(e, dict):
+            continue
+        entries += 1
+        h = e.get("host") or "CLI"
+        hosts[h] = hosts.get(h, 0) + 1
+        ts = e.get("ts")
+        if isinstance(ts, (int, float)):
+            last_ts = ts
+            try:
+                if time.strftime("%Y-%m-%d", time.localtime(ts)) == today:
+                    today_calls += 1
+            except (OSError, ValueError, OverflowError):
+                pass
+        last_host = h
+    return {
+        "entries": entries,
+        "last_host": last_host,
+        "last_ts": last_ts,
+        "today_calls": today_calls,
+        "hosts": dict(sorted(hosts.items(), key=lambda x: -x[1])),
+    }
 
 
 def _lifetime_calls(data: dict) -> int:
@@ -207,5 +419,13 @@ def _lifetime_result_tokens(data: dict) -> int:
 
 
 def reset_usage():
-    """Clear all usage data."""
+    """Clear all usage data — the counter *and* the activity ledger.
+
+    Both are "what has mcptoon done for me", so clearing one and leaving the
+    other would make `usage` say 0 while `activity` still listed history.
+    """
     _save_usage({"calls": [], "total": 0})
+    try:
+        _activity_file().unlink(missing_ok=True)
+    except OSError:
+        pass
