@@ -2403,6 +2403,12 @@ def _cmd_status(_rest, fmt):
             "tools": total_tools,
             "skills": n_skills,
             "skills_source": "index" if n_skills else None,
+            # The human view flags "index may be stale" when the built index lags
+            # the live catalog; a script consuming --json needs the same signal or
+            # it will trust a stale count. `skills_stale` is True only when the
+            # index count is known to be behind the live count.
+            "skills_live": skills_live,
+            "skills_stale": bool(n_skills and skills_live and skills_live > n_skills),
             "tokens_full": full_tokens,
             "tokens_slim": slim_tokens,
             "tokens_saved_est": saved,
@@ -2815,8 +2821,11 @@ def _cmd_config(rest, fmt, head_n=0, max_chars=0, full=False):
         mcptoon config                 Show every setting
         mcptoon config get <key>       Print one value
         mcptoon config set <key> <v>   Persist one value
+        mcptoon config unset <key>     Forget one value (back to its default)
+        mcptoon config reset           Forget every override (all defaults)
     """
-    from .config import SETTING_DEFAULTS, VALID_LANGS, load_settings, resolve_lang, set_setting
+    from .config import (SETTING_DEFAULTS, VALID_LANGS, load_settings,
+                         reset_settings, resolve_lang, set_setting, unset_setting)
 
     action = rest[0].lower() if rest else "show"
 
@@ -2892,8 +2901,29 @@ def _cmd_config(rest, fmt, head_n=0, max_chars=0, full=False):
             print(f"The savings line will speak: {resolve_lang()}")
         return
 
+    if action == "unset":
+        if len(rest) < 2:
+            print("Usage: mcptoon config unset <key>")
+            sys.exit(1)
+        key = rest[1].lower()
+        try:
+            default = unset_setting(key)
+        except ValueError as e:
+            print(str(e))
+            sys.exit(1)
+        print(f"{key}: {default}   (reset to default)")
+        return
+
+    if action == "reset":
+        reset_settings()
+        print("All settings reset to defaults.")
+        for key in sorted(load_settings()):
+            print(f"  {key:12s} = {load_settings()[key]}")
+        return
+
     print(f"Unknown config action: {action}")
-    print("Usage: mcptoon config [get <key> | set <key> <value>]")
+    print("Usage: mcptoon config [get <key> | set <key> <value> | "
+          "unset <key> | reset]")
 
 
 def _cmd_toggle(rest, fmt):

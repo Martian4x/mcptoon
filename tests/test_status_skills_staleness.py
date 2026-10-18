@@ -65,3 +65,28 @@ def test_no_hint_when_counts_agree(monkeypatch, tmp_path):
     out = _status_out()
     assert "469" in out
     assert "stale" not in out, out
+
+
+def _status_json():
+    import json
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        cli._cmd_status([], fmt="json")
+    return json.loads(buf.getvalue())
+
+
+def test_json_exposes_skills_live_and_stale_flag(monkeypatch, tmp_path):
+    # The human view warns "index may be stale"; a script reading --json needs the
+    # same signal, or it trusts a stale count. index 464 < live 469 -> stale True.
+    _wire(monkeypatch, tmp_path, index_n=464, live_n=469)
+    data = _status_json()
+    assert data["skills"] == 464
+    assert data["skills_live"] == 469
+    assert data["skills_stale"] is True
+
+
+def test_json_stale_is_false_when_counts_agree(monkeypatch, tmp_path):
+    _wire(monkeypatch, tmp_path, index_n=469, live_n=469)
+    data = _status_json()
+    assert data["skills_stale"] is False
+

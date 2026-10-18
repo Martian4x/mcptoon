@@ -7,11 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Five CLI papercuts reported on 2026-10-17, each reproduced before fixing and pinned
-by a test. Held for the next version per the one-release-per-topic rule.
+CLI papercuts and data-safety fixes reported on 2026-10-17, each reproduced before
+fixing and pinned by a test. Held for the next version per the one-release-per-topic
+rule.
 
 ### Fixed
 
+- **Config writes are now atomic and keep a `.bak`.** `save_config` called
+  `path.write_text(...)` directly, so a crash mid-write, a full disk, or a reader
+  landing during the write could leave a truncated/empty `config.json` — the user's
+  whole server list, which is not regenerable. It also overwrote a good file with no
+  snapshot (the other half of the 2026-10-02 "whole list replaced, no `.bak`"
+  incident). The write now goes through a unique temp file + `os.replace`, and the
+  last good file is copied to `<config>.bak` once before the first overwrite.
+  `set_setting` uses the same atomic write.
 - **`mcptoon remove` (and `install --remove`) now drop the server's schema cache.**
   Removing a server from config left its per-server cache file on disk forever —
   `add demo; manifest; remove demo` still showed 1 file under `cache/schema_cache/`.
@@ -24,6 +33,18 @@ by a test. Held for the next version per the one-release-per-topic rule.
   `mcptoon manifest --jsn` failed with only "unknown ...". Both error paths now use
   `cli._closest` (difflib) to add a `did you mean: select, serve?` line, while
   keeping the exit codes (1 for a command, 2 for a flag).
+
+### Added
+
+- **`mcptoon config unset <key>` and `mcptoon config reset`.** `config set` had no
+  inverse — once you set `lang=en` there was no supported way back to `auto` short of
+  hand-editing `~/.mcptoon/settings.json`. `unset` forgets one override (back to its
+  default); `reset` forgets them all. Unknown keys fail loudly (exit 1), matching
+  `config set`.
+- **`status --json` reports `skills_live` and `skills_stale`.** The human view already
+  warned "index may be stale" when the built index lagged the live catalog, but a
+  script reading `--json` saw only the index count and trusted it. The JSON now
+  carries the live count and a `skills_stale` boolean.
 
 ### Changed
 

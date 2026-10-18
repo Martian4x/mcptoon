@@ -41,6 +41,7 @@ import json
 import locale
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -693,6 +694,54 @@ def load_config() -> dict:
     return strip_self_entries(servers)
 
 
+def _atomic_write_text(path: Path, text: str) -> None:
+    """Write `text` to `path` atomically via a unique temp file + os.replace.
+
+    The config is the user's server list — the one thing a bad write destroys for
+    good. `save_config` used to call `path.write_text(...)` directly, so a crash,
+    a full disk, or a reader landing mid-write could leave a truncated or empty
+    `config.json` (the same class of bug the schema cache had; the config is worse
+    because it is not regenerable). A unique temp name (mkstemp) also means two
+    concurrent writers never share a scratch file, and `os.replace` swaps the whole
+    file in one step on both Windows and POSIX.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".tmp-cfg-", suffix=path.suffix)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as fh:
+            fh.write(text)
+        os.replace(tmp, str(path))
+    except OSError:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def _backup_before_overwrite(path: Path) -> None:
+    """Copy the current config to `<path>.bak` once, before `save_config` replaces it.
+
+    `_preserve_unreadable` only snapshots a file we *could not parse*. The other
+    loss path is a perfectly good file being overwritten by a `save_config` that
+    wrote the wrong thing — exactly the 2026-10-02 incident where a whole server
+    list was replaced by only the new servers "with no `.bak`". Snapshot the last
+    good config here too. Never clobbers an existing `.bak`: the first snapshot is
+    the one closest to the original, and re-copying on every add would erase the
+    pre-edit state. Best-effort — a failed backup must not block the save.
+    """
+    try:
+        if not path.exists():
+            return
+        bak = path.with_suffix(path.suffix + ".bak")
+        if bak.exists():
+            return
+        raw = path.read_text(encoding="utf-8")
+        bak.write_text(raw, encoding="utf-8")
+    except OSError:
+        pass
+
+
 def save_config(servers: dict, fmt: str = ""):
     """Save server configuration to user config file.
 
@@ -714,14 +763,13 @@ def save_config(servers: dict, fmt: str = ""):
             fmt = "json"
 
     if fmt == "toml":
-        toml_file.write_text(
-            _dump_toml(servers),
-            encoding="utf-8",
-        )
+        _backup_before_overwrite(toml_file)
+        _atomic_write_text(toml_file, _dump_toml(servers))
     else:
-        json_file.write_text(
+        _backup_before_overwrite(json_file)
+        _atomic_write_text(
+            json_file,
             json.dumps({"servers": servers}, indent=2, ensure_ascii=False),
-            encoding="utf-8",
         )
 
 
@@ -824,8 +872,56 @@ def set_setting(key: str, value: str) -> None:
             current = {}
     current[key] = value
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(current, indent=2, ensure_ascii=False), encoding="utf-8")
+    _atomic_write_text(
+        path, json.dumps(current, indent=2, ensure_ascii=False))
+
+
+def _read_settings_raw() -> dict:
+    """The settings file as a dict, or {} if missing/unreadable/non-dict."""
+    path = _settings_file()
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def unset_setting(key: str) -> str:
+    """Remove one setting so it falls back to its default. Returns the default.
+
+    `config set` had no inverse: once you set `lang=en` there was no supported way
+    to go back to `auto` short of hand-editing `~/.mcptoon/settings.json`. Unknown
+    keys raise ValueError so a typo fails loudly (mirrors `set_setting`). Removing a
+    key that is already absent is a no-op success — the effective value is the
+    default either way.
+    """
+    if key not in SETTING_DEFAULTS:
+        raise ValueError(
+            f"unknown setting {key!r}; known: {', '.join(sorted(SETTING_DEFAULTS))}")
+    current = _read_settings_raw()
+    if key in current:
+        del current[key]
+        path = _settings_file()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _atomic_write_text(path, json.dumps(current, indent=2, ensure_ascii=False))
+    return SETTING_DEFAULTS[key]
+
+
+def reset_settings() -> None:
+    """Reset every setting to its default by clearing the settings file.
+
+    The whole-file inverse of `config set`. We delete the stored overrides rather
+    than writing the defaults out, so a future default change is picked up on the
+    next run instead of being frozen at today's values.
+    """
+    path = _settings_file()
+    try:
+        if path.exists():
+            path.unlink()
+    except OSError:
+        pass
 
 
 def footer_enabled() -> bool:
