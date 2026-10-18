@@ -28,6 +28,31 @@ rule.
   (a re-run updates in place and reports "already installed"); `--uninstall` removes
   exactly that block and leaves the user's own lines untouched. Printing the script
   (no flag) is unchanged, so `eval "$(mcptoon completion bash)"` still works.
+- **`mcptoon inspect <server> <tool>` prints a copyable `call` line.** It printed the
+  schema and stopped; the reader still had to turn `required`/`properties` into an
+  argument object. It now adds the ready-to-edit `→ mcptoon call …` line to stderr,
+  so `inspect … > schema.json` and every machine format stay pure data.
+- **`mcptoon select` prints a `call` line for its top pick**, next to the existing
+  `Inspect one:` hint — same shape as `search`.
+- **`mcptoon search --json` carries a `call_hint` field per hit**, so an agent driving
+  the CLI reaches the call as data, not just a human reading a terminal. An extra key;
+  existing consumers are unaffected.
+- **`mcptoon completion … --install --dry` previews the write.** Prints the target rc
+  file and the exact block that would be written, changes nothing.
+- **`mcptoon call` warns about a missing required argument before it runs.** When the
+  tool's schema is cached, `call echo add '{"a":1}'` now says
+  `Warning: missing required argument(s) for add: b` and points at `inspect`, instead
+  of surfacing a downstream `KeyError`/server validation text. Cache-only, so a `call`
+  never spawns a server just to pre-check.
+- **`mcptoon policy set` names the scope in plain words** — "every tool on 'server'
+  (current and future)" for the `*` wildcard, "only 'server:tool'" otherwise.
+- **`mcptoon toggle` prints the command that reverses it** ("Re-enable it: …" /
+  "Disable it again: …"), so the undo is stated rather than remembered.
+- **`mcptoon stats` / `mcptoon report` say `--head` does not apply** when it is given:
+  both are aggregates (sums over all servers), so a cap cannot shrink them without
+  making the totals lie. The note appears only when a cap was actually requested.
+- **`mcptoon config get <near-miss>` suggests the closest key** ("did you mean:
+  footer?"), using the same matcher as the command/option typo hints.
 
 ### Fixed
 

@@ -817,6 +817,17 @@ def _cmd_manifest(rest, fmt, head_n, max_chars, full, export_format=""):
     if export_format:
         exported = manifest_mod.export_manifest(manifest, export_format)
         print(exported)
+        # An exported manifest is almost always headed for a file or a pipe; when
+        # this is going to a terminal (not redirected, no --json), point at the
+        # save step so the user is not left to invent a redirect. Guarded by
+        # isatty so a scripted `manifest --format openai > tools.json` gets clean
+        # data on stdout with no hint appended.
+        try:
+            to_tty = sys.stdout.isatty()
+        except Exception:
+            to_tty = False
+        if to_tty and fmt in ("auto", "human"):
+            _err(f"  Save to a file: mcptoon manifest --format {export_format} > tools.json")
         return
 
     # `--head N` limits the number of SERVERS shown (manifest is keyed by server).
@@ -923,6 +934,12 @@ def _cmd_inspect(rest, fmt, max_chars, full, head_n=0):
 
     print(output.render(info, fmt=fmt if fmt != "auto" else "json", head_n=head_n,
                         max_chars=max_chars, full=full))
+    # `inspect` printed the schema and stopped, leaving the reader to turn
+    # `required`/`properties` into an argument object. Show the ready-to-edit call.
+    # To stderr and only in human mode, so `inspect ... > schema.json` and every
+    # machine format (json/toon/slim/compact) stay pure data.
+    if fmt in ("auto", "human"):
+        _err(_call_example_from_schema(server, tool, info))
 
 
 def _call_json_error_hint(server, tool):
@@ -944,16 +961,8 @@ def _call_json_error_hint(server, tool):
         except Exception:
             info = None
         schema = (info or {}).get("inputSchema") or {}
-        props = schema.get("properties") or {}
-        required = schema.get("required") or []
-        if required:
-            example = {}
-            for pname in required:
-                ptype = (props.get(pname) or {}).get("type", "string")
-                if isinstance(ptype, list):
-                    ptype = ptype[0] if ptype else "string"
-                example[pname] = _placeholder_for_type(ptype)
-            example_args = json.dumps(example, ensure_ascii=False)
+        if schema.get("required"):
+            example_args = json.dumps(_schema_args_skeleton(schema), ensure_ascii=False)
 
     lines = []
     if server and tool:
@@ -965,6 +974,68 @@ def _call_json_error_hint(server, tool):
     else:
         lines.append("  See required args: mcptoon inspect <server> <tool>")
     return lines
+
+
+def _cached_tool_schema(server, tool):
+    """A tool's `inputSchema` from the on-disk cache, or {} when not cached.
+
+    Cache-only on purpose: callers use this to *add* a hint to an otherwise-fine
+    command, and must never spawn a server (or a second one) to do it. An uncached
+    server simply yields no hint.
+    """
+    if not (server and tool):
+        return {}
+    try:
+        from . import cache as _cache
+        cached, _age = _cache.get_cached_tools_any_age(server)
+    except Exception:
+        return {}
+    if not cached:
+        return {}
+    for t in cached:
+        if isinstance(t, dict) and t.get("name") == tool:
+            return t.get("inputSchema") or {}
+    return {}
+
+
+def _missing_required_args(server, tool, args):
+    """Required arguments the caller left out, from the CACHED tool schema.
+
+    A tool that is *called* with a required argument missing fails at the server
+    in its own words — the echo test server dies with `KeyError: 'b'`, a real
+    server returns its own validation text — and none of that names the argument
+    in a way the user can act on. When the schema is already cached we can name
+    the missing argument *before* the call. Deliberately cache-only (the same
+    offline rule `policy set`/`toggle` use): a `call` must never spawn a second
+    server just to pre-check its arguments, and an uncached server is never
+    blocked by a guess. Returns [] when the schema is not cached.
+    """
+    schema = _cached_tool_schema(server, tool)
+    required = schema.get("required") or []
+    if not required:
+        return []
+    given = set(args.keys()) if isinstance(args, dict) else set()
+    return [name for name in required if name not in given]
+
+
+def _warn_missing_args(server, tool, args):
+    """Print a one-line warning for required args the caller omitted (stderr).
+
+    A warning, not a refusal: the server is the authority on what it accepts, and
+    a schema that over-declares `required` would otherwise block a call that would
+    have worked. But a call that is *going* to fail at the server should say why
+    up front, in the argument's own name, instead of surfacing a downstream
+    `KeyError` or a server-specific validation message. Silent when the schema is
+    not cached or nothing is missing.
+    """
+    missing = _missing_required_args(server, tool, args)
+    if not missing:
+        return
+    names = ", ".join(missing)
+    hint = f"  See required args: mcptoon inspect {server} {tool}" if server \
+        else "  See required args: mcptoon inspect <server> <tool>"
+    _err(f"Warning: missing required argument(s) for {tool}: {names}")
+    _err(hint)
 
 
 def _read_stdin_text():
@@ -1074,6 +1145,7 @@ def _cmd_call(rest, fmt, head_n, max_chars, full, use_stdin=False, fallback_json
                     args[k] = v
 
         from .router import call_tool_auto
+        _warn_missing_args("", tool, args)
         result = call_tool_auto(tool, args, is_destructive=is_destructive,
                                 return_envelope=return_envelope,
                                 skip_poisoning_check=(fmt == "raw"))
@@ -1146,6 +1218,7 @@ def _cmd_call(rest, fmt, head_n, max_chars, full, use_stdin=False, fallback_json
                     pass
                 args[k] = v
 
+    _warn_missing_args(server, tool, args)
     result = call_tool(server, tool, args, is_destructive=is_destructive,
                        return_envelope=return_envelope,
                        input_responses=input_responses,
@@ -1157,7 +1230,6 @@ def _cmd_call(rest, fmt, head_n, max_chars, full, use_stdin=False, fallback_json
                        # hatch did nothing. A hint that names a flag the code does not
                        # read is worse than no hint — the user already failed once.
                        skip_poisoning_check=(fmt == "raw"))
-
     if is_error(result):
         err = result["_error"]
         print(f"Error [{err['code']}]: {err['message']}", file=sys.stderr)
@@ -1336,6 +1408,14 @@ def _cmd_policy(rest, fmt, head_n=0, max_chars=0, full=False):
                 meaning = ("never compressed" if policy in ("raw", "json")
                            else f"always rendered as {policy}")
                 print(f"Policy set: {server}:{tool} -> {policy} ({meaning})")
+                # Say *what this applies to*, because `tool` can be the wildcard
+                # `*`. "Policy set: exa:* -> raw" leaves a first-time user unsure
+                # whether that covers every current tool or every future one too;
+                # name the scope in plain words.
+                if tool == "*":
+                    print(f"  Scope: every tool on '{server}' (current and future).")
+                else:
+                    print(f"  Scope: only '{server}:{tool}'.")
         else:
             _err(f"Unknown policy '{policy}'. Valid: {', '.join(cfg.VALID_POLICIES)}")
             sys.exit(1)
@@ -1402,6 +1482,40 @@ def _call_example(server, name, params):
             continue  # only required params are needed for a valid call
         example[pname] = _placeholder_for_type(ptype[:-1])
     args = json.dumps(example, ensure_ascii=False)
+    return f"  → mcptoon call {server} {name} '{args}'"
+
+
+def _schema_args_skeleton(schema):
+    """A minimal JSON-args dict from a tool's `inputSchema`.
+
+    Only the `required` list is filled — the goal is the smallest *valid* call,
+    not an exhaustive template — and each value is a placeholder of the right JSON
+    type so the printed example parses. Shared by the `inspect` call hint and the
+    `call` JSON-error hint so both build the skeleton the same way (one source of
+    truth; the two used to be written twice).
+    """
+    schema = schema or {}
+    props = schema.get("properties") or {}
+    required = schema.get("required") or []
+    example = {}
+    for pname in required:
+        ptype = (props.get(pname) or {}).get("type", "string")
+        if isinstance(ptype, list):
+            ptype = ptype[0] if ptype else "string"
+        example[pname] = _placeholder_for_type(ptype)
+    return example
+
+
+def _call_example_from_schema(server, name, info):
+    """A copyable `mcptoon call` line built from a tool's full schema.
+
+    `inspect <server> <tool>` prints the schema and then stops; the reader still
+    has to turn `required`/`properties` into an argument object. This closes that
+    last gap the same way `search` does — the schema is already in hand here, so
+    there is no reason to make the user reassemble it.
+    """
+    schema = (info or {}).get("inputSchema") or {}
+    args = json.dumps(_schema_args_skeleton(schema), ensure_ascii=False)
     return f"  → mcptoon call {server} {name} '{args}'"
 
 
@@ -1473,7 +1587,13 @@ def _cmd_search(rest, fmt, head_n, max_chars, full):
         names = [f"{r['server']}/{r['name']}" for r in results]
         print(" ".join(names))
     elif fmt == "json":
-        print(output.render(results, fmt="json", head_n=head_n, max_chars=max_chars, full=full))
+        # Add the copyable next step as data too, so an agent driving the CLI (not
+        # a human reading a terminal) can reach the call without reassembling the
+        # JSON from `params`. It is an extra key, so existing consumers that read
+        # server/name/description/params/score are unaffected.
+        rows = [{**r, "call_hint": _call_example(r["server"], r["name"], r["params"]).strip()}
+                for r in results]
+        print(output.render(rows, fmt="json", head_n=head_n, max_chars=max_chars, full=full))
     elif fmt == "toon":
         print(output.render(results, fmt="toon", head_n=head_n, max_chars=max_chars, full=full))
     else:
@@ -1630,6 +1750,17 @@ def _cmd_select(rest, fmt="auto", head_n=0, max_chars=0, full=False):
             print(f"    {desc[:120]}")
     print("")
     print(f"  Inspect one: mcptoon inspect {ranked[0]['server']} {ranked[0]['name']}")
+    # `select` told the user which tool to inspect but not how to call it; the
+    # top pick's schema is one cache lookup away, so show the call line too (same
+    # shape as `search`). Cache-only and best-effort: a ranker payload without a
+    # cached schema must not crash the whole command or spawn a server.
+    try:
+        schema = _cached_tool_schema(ranked[0]["server"], ranked[0]["name"])
+        if schema:
+            args = json.dumps(_schema_args_skeleton(schema), ensure_ascii=False)
+            print(f"  → mcptoon call {ranked[0]['server']} {ranked[0]['name']} '{args}'")
+    except Exception:
+        pass
 
 
 def _cmd_quickstart(rest, fmt="auto"):
@@ -2644,6 +2775,15 @@ def _cmd_stats(_rest, fmt, head_n=0, max_chars=0, full=False):
                 ss = by_server_slim.get(s, 0)
                 sp = ((sf - ss) / sf * 100) if sf > 0 else 0
                 print(f"    {s:20s} {sf:>6,} → {ss:>6,}  (-{sp:.0f}%)")
+        # The dashboard is an aggregate: its headline numbers are sums over every
+        # server, so `--head` (documented as a global flag) cannot cap them without
+        # making the totals lie. Rather than silently ignore it, say so — a flag
+        # that is accepted and does nothing is the exact silent-degradation this
+        # project treats as a defect. Only when a cap was actually requested.
+        if head_n and head_n > 0:
+            print()
+            print(f"  note: --head {head_n} does not apply to this dashboard "
+                  f"(the totals are sums over all servers).")
 
 
 def _cmd_status(_rest, fmt):
@@ -3192,6 +3332,11 @@ def _cmd_config(rest, fmt, head_n=0, max_chars=0, full=False):
             # must not read as success (and print nothing useful) when the key
             # does not exist. `config set` already exits 1 on the same mistake.
             _err(f"Unknown setting: {key}. Known: {', '.join(sorted(SETTING_DEFAULTS))}")
+            # Same "did you mean" the command/option parsers use, so a near-miss
+            # key (`footr` -> `footer`) is a fix, not a hunt through the list.
+            near = _closest(key, SETTING_DEFAULTS)
+            if near:
+                _err(f"  did you mean: {', '.join(near)}?")
             sys.exit(1)
         print(load_settings()[key])
         return
@@ -3322,6 +3467,13 @@ def _cmd_toggle(rest, fmt, head_n=0, max_chars=0, full=False):
     new_state = cfg.toggle_tool(server, tool)
     status = "ENABLED ✓" if new_state else "DISABLED ✗"
     print(f"{server}:{tool} → {status}")
+    # A toggle is reversible, but the output only said the new state — a user who
+    # just hid a tool had to remember that the same command brings it back. State
+    # the undo explicitly; it is the whole point of a toggle.
+    if new_state:
+        print(f"  Disable it again: mcptoon toggle {server} {tool}")
+    else:
+        print(f"  Re-enable it:     mcptoon toggle {server} {tool}")
 
 
 def _cmd_auto_discover(rest, fmt, head_n=0, max_chars=0, full=False):
@@ -4203,16 +4355,28 @@ def _completion_block(script: str) -> str:
     return f"{_COMPLETION_BEGIN}\n{script.strip(chr(10))}\n{_COMPLETION_END}\n"
 
 
-def _install_completion(shell: str, script: str, name: str) -> None:
+def _install_completion(shell: str, script: str, name: str, dry: bool = False) -> None:
     """Write the completion block into the shell's rc file, idempotently.
 
     Re-running replaces the existing block in place, so the file never grows a
     second copy; running it when the block is already byte-identical reports
     "already installed" and touches nothing (a mtime-only change on a config file
-    is exactly the kind of surprise a routine command should avoid).
+    is exactly the kind of surprise a routine command should avoid). `dry=True`
+    prints the target file and the exact block that would be written, without
+    writing — so a user can preview before letting a command edit their dotfile.
     """
     path = _completion_rc_path(shell)
     block = _completion_block(script)
+    if dry:
+        already = path.exists() and _COMPLETION_BEGIN in path.read_text(encoding="utf-8")
+        action = "replace the existing block" if already else "append a new block"
+        print(f"Would install mcptoon completion for {name} into: {path}")
+        print(f"  ({action})")
+        print("-" * 60)
+        print(block, end="")
+        print("-" * 60)
+        print("No file was changed (--dry).")
+        return
     existing = ""
     if path.exists():
         existing = path.read_text(encoding="utf-8")
@@ -4270,18 +4434,21 @@ def _cmd_completion(rest):
     Usage:
         mcptoon completion bash            Print the completion script
         mcptoon completion bash --install  Write it into ~/.bashrc (idempotent)
+        mcptoon completion bash --install --dry  Preview the write, change nothing
         mcptoon completion bash --uninstall Remove it from ~/.bashrc
 
     Printing a script and telling the user to paste it into the right file is a
     dead end for most people — they have to know which rc file their shell reads
     and where it lives. `--install` closes that loop; the block is wrapped in
     markers so a re-run updates in place and `--uninstall` removes exactly what
-    mcptoon added. Without either flag the behaviour is unchanged (print to
-    stdout) so `eval "$(mcptoon completion bash)"` keeps working.
+    mcptoon added. `--dry` previews the target path and exact block without
+    touching the file. Without any of these flags the behaviour is unchanged
+    (print to stdout) so `eval "$(mcptoon completion bash)"` keeps working.
     """
     do_install = "--install" in rest
     do_uninstall = "--uninstall" in rest
-    rest = [a for a in rest if a not in ("--install", "--uninstall")]
+    dry = "--dry" in rest
+    rest = [a for a in rest if a not in ("--install", "--uninstall", "--dry")]
 
     # With `--install`/`--uninstall` and no shell named, detect one so
     # `mcptoon completion --install` is not a usage error.
@@ -4309,9 +4476,13 @@ def _cmd_completion(rest):
     script = script.replace("__MC_TOON_COMMANDS_PS__", _CMD_PS_WORDS)
 
     if do_install:
-        _install_completion(shell, script, name)
+        _install_completion(shell, script, name, dry=dry)
         return
     if do_uninstall:
+        if dry:
+            print(f"Would remove mcptoon completion for {name} from: {_completion_rc_path(shell)}")
+            print("No file was changed (--dry).")
+            return
         _uninstall_completion(shell, name)
         return
 

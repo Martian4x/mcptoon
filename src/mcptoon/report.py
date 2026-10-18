@@ -252,3 +252,11 @@ def run(rest: list[str], fmt: str = "auto", head_n: int = 0, max_chars: int = 0,
         return
     from . import config as cfg
     print(render(data, lng=cfg.resolve_lang()))
+    # This report is an aggregate (counts and totals), not a record list, so
+    # `--head` has nothing to cap here. Say so rather than accept the flag and do
+    # nothing — a silently ignored flag reads as success. Only when one was asked
+    # for.
+    if head_n and head_n > 0:
+        print()
+        print(f"  note: --head {head_n} does not apply to this report "
+              f"(it is an aggregate, not a list).")
