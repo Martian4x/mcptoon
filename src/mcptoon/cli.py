@@ -1293,8 +1293,16 @@ def _cmd_policy(rest, fmt, head_n=0, max_chars=0, full=False):
         if len(rest) < 3:
             _err("Usage: mcptoon policy clear <server> <tool-or-*>")
             sys.exit(1)
+        key = f"{rest[1]}:{rest[2]}"
+        # `policy clear` printed "Cleared: X uses the default behaviour" and exited
+        # 0 even when no policy existed for X — a false report of an action that
+        # never happened, so `mcptoon policy clear s t && echo done` lied. A miss
+        # is an error here, matching `remove` / `update` (reported 2026-10-18).
+        if key not in cfg.list_policies():
+            _err(f"No policy set for {key} — already using the default behaviour.")
+            sys.exit(1)
         cfg.set_compression_policy(rest[1], rest[2], None)
-        print(f"Cleared: {rest[1]}:{rest[2]} uses the default behaviour.")
+        print(f"Cleared: {key} uses the default behaviour.")
     else:
         _err(f"Unknown subcommand '{sub}'. Use: list | set | clear")
         sys.exit(1)

@@ -13,6 +13,9 @@ rule.
 
 ### Fixed
 
+- **`mcptoon policy clear` on a missing policy errors instead of faking a
+  "Cleared" report.** It printed "Cleared: …" and exited 0 even when nothing was
+  set, so `mcptoon policy clear s t && echo done` lied. A miss now exits 1.
 - **`mcptoon policy list --json` returns the policy map as JSON.** It printed human
   text regardless of format; scripts could not read it.
 - **A bare `mcptoon retrieve` exits 1.** It printed usage but exited 0, so
