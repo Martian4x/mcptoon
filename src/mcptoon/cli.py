@@ -985,6 +985,8 @@ def _cmd_call(rest, fmt, head_n, max_chars, full, use_stdin=False, fallback_json
 
         # Render with fallback-json if needed
         _render_result(result, fmt, head_n, max_chars, full, fallback_json)
+        if _tool_result_failed(result):
+            sys.exit(1)
         return
 
     if len(rest) < 2:
@@ -1078,6 +1080,8 @@ def _cmd_call(rest, fmt, head_n, max_chars, full, use_stdin=False, fallback_json
 
     _render_result(result, _effective_fmt(server, tool, fmt),
                    head_n, max_chars, full, fallback_json, server=server, tool=tool)
+    if _tool_result_failed(result):
+        sys.exit(1)
 
 
 def _render_result(result, fmt, head_n, max_chars, full, fallback_json=False,
@@ -1114,6 +1118,22 @@ def _render_result(result, fmt, head_n, max_chars, full, fallback_json=False,
     except (ValueError, TypeError, KeyError) as e:
         print(f"# fallback-json: {fmt} encoding failed ({e}), falling back to JSON", file=sys.stderr)
         print(output.render(result, fmt="json", head_n=head_n, max_chars=max_chars, full=full))
+
+
+def _tool_result_failed(result) -> bool:
+    """True when a tool *ran* but reported failure (the MCP ``isError: true`` case).
+
+    Distinct from ``is_error`` (a routing/protocol failure envelope). A tool that
+    executed and returned an error comes back from the client as
+    ``{"error": True, "message": ...}``. ``call`` used to print that and exit 0, so
+    ``mcptoon call ... && next`` ran the next step on a failed tool — a script could
+    not tell success from failure by exit code (reported 2026-10-17). The
+    ``"message"`` requirement keeps a legitimate tool payload that merely has an
+    ``"error"`` field from being misread as a failure.
+    """
+    return (isinstance(result, dict)
+            and result.get("error") is True
+            and "message" in result)
 
 
 # ═══════════════════════════════════════════════════
@@ -2041,9 +2061,21 @@ def _cmd_add(rest):
         for j, f in enumerate(flags):
             if f == "--header" and j + 1 < len(flags):
                 h = flags[j + 1]
-                if ":" in h:
-                    k, v = h.split(":", 1)
-                    headers[k.strip()] = v.strip()
+                if ":" not in h:
+                    # A header without a colon used to be dropped silently: `add
+                    # svc --http URL --header "Bearer abc"` wrote the server with
+                    # NO Authorization header and printed a cheerful "Added" — the
+                    # auth then failed at call time with no clue why (reported
+                    # 2026-10-17). Refuse it at the keyboard instead.
+                    _err(f"Error: --header must be 'Key: Value', got {h!r} "
+                         f"(no ':' to split on).")
+                    sys.exit(1)
+                k, v = h.split(":", 1)
+                k, v = k.strip(), v.strip()
+                if not k:
+                    _err(f"Error: --header has an empty name: {h!r}")
+                    sys.exit(1)
+                headers[k] = v
         if headers:
             server_cfg["headers"] = headers
 
@@ -3242,7 +3274,7 @@ def _cmd_doctor(_rest):
         issues += 1
         print()
         print(f"  {checks} checks, {issues} issue(s)")
-        return
+        sys.exit(1)
 
     # 3. Cache directory
     checks += 1
@@ -3332,6 +3364,14 @@ def _cmd_doctor(_rest):
         print("  Found this useful? A GitHub star helps others find mcptoon:")
         print("  https://github.com/activeing123/mcptoon")
         _mark_star_hint_shown()
+
+    # A diagnostic that found problems must say so in its exit code. `doctor`
+    # printed "✗ … cannot start" and "N issue(s)" yet exited 0, so a CI health
+    # check or `mcptoon doctor && deploy` read a broken machine as healthy
+    # (reported 2026-10-17). Warnings (e.g. an empty cache dir, printed with `!`)
+    # are not issues and do not change the code — only real `✗` findings do.
+    if issues:
+        sys.exit(1)
 
 
 def _star_hint_marker():

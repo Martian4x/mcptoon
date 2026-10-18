@@ -13,6 +13,18 @@ rule.
 
 ### Fixed
 
+- **`mcptoon call` exits non-zero when the tool itself reports an error.** A tool
+  that ran and returned `isError: true` (e.g. a missing required argument) printed
+  its message and exited 0, so `mcptoon call ... && next` ran the next step on a
+  failed tool. A tool-level failure is now exit 1; a payload that merely contains
+  an `error` field (not the MCP error shape) is not misread as a failure.
+- **`mcptoon add --header` refuses a header with no `:`.** `--header "Bearer abc"`
+  used to be dropped silently — the server was written with no Authorization header
+  and a cheerful "Added", so auth failed later with no clue why. It now errors and
+  exits 1 before writing.
+- **`mcptoon doctor` exits non-zero when it finds issues.** It printed "✗ … cannot
+  start" and "N issue(s)" yet exited 0, so a CI health check read a broken machine
+  as healthy. Warnings (`!`, e.g. an empty cache dir) are not issues and keep exit 0.
 - **`mcptoon inspect <server>` (one argument) lists that server's tools.** Its own
   usage block advertised this "list all tools" form, but the code required two
   arguments and exited 1, so the documented path was dead. Now a single argument

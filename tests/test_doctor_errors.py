@@ -64,7 +64,10 @@ def _run_doctor(tmp_path, tools_by_server):
          patch.object(manifest_mod, "get_server_tools", side_effect=fake_tools), \
          patch.dict(os.environ, {"MCPTOON_NO_STAR_HINT": "1", "CI": ""}), \
          contextlib.redirect_stdout(buf):
-        _cmd_doctor([])
+        try:
+            _cmd_doctor([])
+        except SystemExit:
+            pass  # issues exit non-zero now (2026-10-17); the text is what we assert
     return buf.getvalue()
 
 

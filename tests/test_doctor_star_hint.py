@@ -6,6 +6,8 @@ import json
 import os
 from unittest.mock import patch
 
+import pytest
+
 from mcptoon import cli
 from mcptoon import config as cfg
 from mcptoon.cli import _cmd_doctor
@@ -62,7 +64,9 @@ class TestDoctorStarHint:
              patch.object(cfg, "CACHE_DIR", cache_dir), \
              patch.dict(os.environ, {"MCPTOON_NO_STAR_HINT": "", "CI": ""}), \
              contextlib.redirect_stdout(buf):
-            _cmd_doctor([])
+            # issues now exit non-zero (2026-10-17); still must not show the hint.
+            with pytest.raises(SystemExit):
+                _cmd_doctor([])
         out = buf.getvalue()
         assert "issue(s)" in out
         assert "Found this useful?" not in out
@@ -93,7 +97,8 @@ class TestDoctorReportsAServerThatCannotStart:
                           return_value=[{"error": "[WinError 2] not found"}]), \
              patch.dict(os.environ, {"MCPTOON_NO_STAR_HINT": "1"}), \
              contextlib.redirect_stdout(buf):
-            _cmd_doctor([])
+            with pytest.raises(SystemExit):
+                _cmd_doctor([])
         out = buf.getvalue()
         assert "cannot start" in out
         assert "0 tools (server may be empty)" not in out
