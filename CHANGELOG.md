@@ -13,6 +13,16 @@ rule.
 
 ### Fixed
 
+- **`mcptoon inspect <server>` (one argument) lists that server's tools.** Its own
+  usage block advertised this "list all tools" form, but the code required two
+  arguments and exited 1, so the documented path was dead. Now a single argument
+  renders the server's tool list; an unreachable server still errors to stderr.
+- **`mcptoon help <command>` shows that command's own page.** It used to ignore the
+  argument and print the whole global page, so the two documented routes to a
+  command's help (`help <cmd>` and `<cmd> --help`) disagreed. They now share one
+  renderer and produce identical output; `help` with no argument stays the global page.
+- **`mcptoon --version --json` prints structured JSON** (`version`, `python`,
+  `platform`) for CI/scripts; the plain `--version` line is unchanged.
 - **Errors and usage hints go to stderr, not stdout.** A bad argument, a missing
   server, an unknown policy/setting, or a usage block was printed to stdout, so
   `mcptoon x >out 2>err` mixed failures into `out` and left `err` empty — a script

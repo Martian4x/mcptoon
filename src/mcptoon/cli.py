@@ -383,7 +383,17 @@ def _run(state: dict) -> None:
         sys.exit(0)
 
     if args[0] in ("--version", "-V"):
-        print(f"mcptoon {__import__('mcptoon').__version__}")
+        # `--version --json` gives CI/scripts a machine-readable answer instead of
+        # a line they must grep. The plain form is byte-for-byte unchanged.
+        if "--json" in args:
+            import platform
+            print(json.dumps({
+                "version": __import__("mcptoon").__version__,
+                "python": platform.python_version(),
+                "platform": platform.platform(),
+            }, ensure_ascii=False))
+        else:
+            print(f"mcptoon {__import__('mcptoon').__version__}")
         return
 
     # ─── Parse global output flags ───
@@ -484,34 +494,7 @@ def _run(state: dict) -> None:
     # print the *general* help byte-for-byte, so there was no way to learn a
     # subcommand's own flags (reported 2026-10-17).
     if command not in _COMMANDS_WITH_OWN_HELP and any(a in ("-h", "--help") for a in rest):
-        usage = _command_usage(command)
-        if usage:
-            lines = usage.splitlines()
-            first = lines[0].strip()
-            body = "\n".join(lines[1:]).strip()
-            # Name the command in a header so `mcptoon manifest --help` says which
-            # command it is describing. Some docstrings (skills) already open with
-            # "mcptoon <cmd> — ..."; don't double the prefix.
-            if first.lower().startswith("mcptoon"):
-                print(first)
-            else:
-                print(f"mcptoon {command} — {first}")
-            if body:
-                print()
-                print(body)
-            flags = _command_flags(command)
-            if flags:
-                print()
-                print(f"Options for '{command}': {', '.join(flags)}")
-            print()
-            # Stop here instead of dumping the whole ~8k-char global reference.
-            # Printing "own usage + full reference" made `skills --help` (10,814
-            # chars) LONGER than `mcptoon --help` (8,234) — a subcommand page that
-            # buries the command you asked about (reported 2026-10-17). The pointer
-            # keeps the global page one keystroke away without repeating it.
-            print("Global flags and every other command: run 'mcptoon --help'.")
-            return
-        _print_help()
+        _print_command_help(command)
         return
 
     # First real command on this machine introduces mcptoon once (see _maybe_welcome).
@@ -608,7 +591,15 @@ def _run(state: dict) -> None:
     elif command == "config":
         _cmd_config(rest, fmt, head_n, max_chars, full)
     elif command in ("help", "-h", "--help"):
-        _print_help()
+        # `mcptoon help <command>` shows that command's own page, exactly like
+        # `mcptoon <command> --help`. It used to ignore the argument and always
+        # print the global page, so the two documented routes to a command's help
+        # disagreed (reported 2026-10-17). No argument (or an unknown one) still
+        # prints the global reference — `_print_command_help` falls back for us.
+        if rest and rest[0].lower() not in ("help", "-h", "--help"):
+            _print_command_help(rest[0].lower())
+        else:
+            _print_help()
     else:
         # Try natural language: "mcptoon 有什么工具"
         _try_natural(command, rest, fmt, head_n, max_chars, full)
@@ -820,12 +811,34 @@ def _cmd_inspect(rest, fmt, max_chars, full, head_n=0):
     here; it is accepted and forwarded for uniformity, not because it shrinks
     anything. See `_cmd_install` for why the flags travel together.
     """
-    if len(rest) < 2:
+    if not rest:
         _err("Usage: mcptoon inspect <server> <tool>")
         _err("       mcptoon inspect <server>           (list all tools)")
         sys.exit(1)
 
     server = rest[0]
+
+    # `inspect <server>` with no tool lists that server's tools. The usage block
+    # has always advertised this form, but the code required two args and exited 1
+    # on one — the documented "list all tools" path was simply dead (reported
+    # 2026-10-17). Honour it: same fetch `get_server_tools` uses for the not-found
+    # fallback below, rendered through the normal output formatter.
+    if len(rest) < 2:
+        tools = manifest_mod.get_server_tools(server)
+        errs = [t for t in tools if isinstance(t, dict) and "error" in t]
+        if not tools or errs:
+            raw = str(errs[0].get("error", "")) if errs else ""
+            if raw:
+                reason, next_step = manifest_mod.explain_error(raw)
+                _err(f"Could not reach {server}: {reason}.")
+                _err(f"  → {next_step}")
+            else:
+                _err(f"Server not found: {server}")
+            sys.exit(1)
+        print(output.render(tools, fmt=fmt if fmt != "auto" else "json", head_n=head_n,
+                            max_chars=max_chars, full=full))
+        return
+
     tool = rest[1]
 
     info = manifest_mod.inspect_tool(server, tool)
@@ -4002,6 +4015,39 @@ def _try_natural(command, rest, fmt, head_n, max_chars, full):
 # ═══════════════════════════════════════════════════
 # Help
 # ═══════════════════════════════════════════════════
+
+def _print_command_help(command: str) -> None:
+    """Print one command's own usage page (or the global page if it has none).
+
+    Shared by `<command> --help` and `mcptoon help <command>` so the two routes
+    cannot drift. Deliberately short: the command's own usage, an `Options for`
+    line, and a one-line pointer to `mcptoon --help` — never a re-dump of the whole
+    global reference (that made `skills --help` longer than the front door).
+    """
+    usage = _command_usage(command)
+    if not usage:
+        _print_help()
+        return
+    lines = usage.splitlines()
+    first = lines[0].strip()
+    body = "\n".join(lines[1:]).strip()
+    # Name the command in a header so `mcptoon manifest --help` says which command
+    # it is describing. Some docstrings (skills) already open with "mcptoon <cmd>
+    # — ..."; don't double the prefix.
+    if first.lower().startswith("mcptoon"):
+        print(first)
+    else:
+        print(f"mcptoon {command} — {first}")
+    if body:
+        print()
+        print(body)
+    flags = _command_flags(command)
+    if flags:
+        print()
+        print(f"Options for '{command}': {', '.join(flags)}")
+    print()
+    print("Global flags and every other command: run 'mcptoon --help'.")
+
 
 def _command_usage(command: str) -> str:
     """The command's own usage text: its handler's docstring, cleaned up.
