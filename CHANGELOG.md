@@ -13,6 +13,14 @@ rule.
 
 ### Fixed
 
+- **A mistyped command that is close to a real one now errors instead of running
+  the wrong command.** `mcptoon listt` matched "list" inside the word and ran
+  `manifest`; `mcptoon healthh` matched "health" and ran the health check — both
+  exit 0, so a typo'd command in CI reported success. It now fails with a
+  did-you-mean hint (exit 1). Genuine natural-language phrases still route.
+- **`--head` / `--max-chars` with a non-integer value fail loudly.** `--head abc`
+  used to be swallowed (head_n stayed 0 = unlimited) and printed everything, so a
+  scripted `--head $N` with a bad value looked like it worked.
 - **`search` / `select` zero-match keep machine formats parseable.** A query with no
   hits printed human text + tips for every format, so `search q --json | jq` (and
   `select ... --json`) crashed on non-JSON. Machine formats now emit an empty

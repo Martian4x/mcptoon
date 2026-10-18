@@ -426,24 +426,32 @@ def _run(state: dict) -> None:
             try:
                 head_n = int(args[i + 1])
             except ValueError:
-                pass
+                # A non-integer used to be swallowed silently, so `--head abc`
+                # (or `--head=xyz`) left head_n at 0 = "unlimited" and printed
+                # every result. A scripted `search q --head $N` with a bad $N then
+                # looked like it worked (reported 2026-10-18). Fail loudly instead.
+                _err(f"Error: --head needs an integer, got {args[i + 1]!r}")
+                sys.exit(1)
             i += 1
         elif a == "--max-chars" and i + 1 < len(args):
             try:
                 max_chars = int(args[i + 1])
             except ValueError:
-                pass
+                _err(f"Error: --max-chars needs an integer, got {args[i + 1]!r}")
+                sys.exit(1)
             i += 1
         elif a.startswith("--head="):
             try:
                 head_n = int(a.split("=", 1)[1])
             except ValueError:
-                pass
+                _err(f"Error: --head needs an integer, got {a.split('=', 1)[1]!r}")
+                sys.exit(1)
         elif a.startswith("--max-chars="):
             try:
                 max_chars = int(a.split("=", 1)[1])
             except ValueError:
-                pass
+                _err(f"Error: --max-chars needs an integer, got {a.split('=', 1)[1]!r}")
+                sys.exit(1)
         elif a == "--dir" and i + 1 < len(args):
             # Already applied by `_apply_dir_flag` before dispatch; consumed here
             # only so it is not mistaken for the command name.
@@ -4198,8 +4206,32 @@ def _cmd_plugin_scan(args, fmt):
 # ═══════════════════════════════════════════════════
 
 def _try_natural(command, rest, fmt, head_n, max_chars, full):
-    """Try to interpret natural language input."""
+    """Try to interpret natural language input.
+
+    Only genuine phrases are routed here. A *single* mistyped word that happens
+    to contain a keyword as a substring used to be treated as natural language:
+    `mcptoon listt` matched "list" inside the word and ran `manifest`, and
+    `mcptoon healthh` matched "health" and ran the health check — both exiting 0,
+    so a typo'd command in a CI step reported success (reported 2026-10-18). A
+    single bare word (no extra arguments) must be a real command; anything else
+    falls through to the "unknown command" path with a did-you-mean hint.
+    """
     text = " ".join([command] + rest).lower()
+
+    # A lone word that is *close to a real command* is a mistyped command, not a
+    # phrase. `mcptoon listt` matched "list" inside the word and ran `manifest`,
+    # and `mcptoon healthh` matched "health" and ran the health check — both
+    # exiting 0, so a typo'd command in a CI step reported success (reported
+    # 2026-10-18). Refuse to keyword-match a near-command so the typo surfaces as
+    # an error. A genuine single-token phrase (e.g. `mcptoon 有什么工具`) is not
+    # close to any command, so it still reaches the keyword routing below.
+    if not rest and _closest(command, _COMPLETION_COMMANDS):
+        print(f"mcptoon: unknown command '{command}'", file=sys.stderr)
+        print(f"  did you mean: {', '.join(_closest(command, _COMPLETION_COMMANDS))}?",
+              file=sys.stderr)
+        print("Run 'mcptoon help' for the command list, or 'mcptoon --help'.",
+              file=sys.stderr)
+        sys.exit(1)
 
     if any(kw in text for kw in ["什么", "有哪些", "工具", "tools", "list", "manifest"]):
         _cmd_manifest(rest, fmt, head_n, max_chars, full)
