@@ -161,7 +161,7 @@ def _save_usage(data: dict):
 
 
 def track_call(server: str, tool: str, ok: bool = True, tokens_est: int | None = None,
-               payload=None):
+               payload=None, detail: "str | None" = None):
     """Record a tool call.
 
     Crash-safe by contract: usage tracking must never break the actual
@@ -173,6 +173,13 @@ def track_call(server: str, tool: str, ok: bool = True, tokens_est: int | None =
     ``mcptoon usage`` reported ``Tokens (est): 0`` on every machine — a tool that
     claims to save tokens and can never show one. Errors and unknown results
     still record 0 rather than guessing.
+
+    ``detail`` is an optional short, human-readable note carried into the activity
+    ledger only (never the usage counter): for a skill distribution it is the
+    skill names handed out, so `mcptoon activity` can show *what* capability moved,
+    not just that `mcptoon_resolve_skills` was called. It is not counted or
+    tokenised; it exists so the "which of my capabilities did it distribute"
+    question has an answer.
     """
     if tokens_est is None:
         tokens_est = count_tokens(payload)
@@ -202,18 +209,20 @@ def track_call(server: str, tool: str, ok: bool = True, tokens_est: int | None =
     # The readable half. Separate try/except from the counter write on purpose:
     # one failing must not stop the other, and neither may ever reach the caller.
     note_session_call()
-    _append_activity(server, tool, ok=ok, tokens=int(tokens_est or 0))
+    _append_activity(server, tool, ok=ok, tokens=int(tokens_est or 0), detail=detail)
 
 
 def _append_activity(server: str, tool: str, ok: bool = True, tokens: int = 0,
-                     host: "str | None" = None) -> None:
+                     host: "str | None" = None, detail: "str | None" = None) -> None:
     """Append one line to the activity ledger. Never raises.
 
-    One JSON object per line: ``{ts, host, server, tool, ok, tokens}``. ``host``
-    is the client that drove this process (see ``set_host``) unless the caller
-    passes one explicitly. This is the record `mcptoon activity` and `status`
-    read to answer "was I used, by whom, when" — the counter in usage.json can
-    say how many, never which agent or when.
+    One JSON object per line: ``{ts, host, server, tool, ok, tokens}`` plus
+    ``detail`` when the caller supplied one (a skill distribution lists the skill
+    names it handed out). ``host`` is the client that drove this process (see
+    ``set_host``) unless the caller passes one explicitly. This is the record
+    `mcptoon activity` and `status` read to answer "was I used, by whom, when,
+    and what did it hand over" — the counter in usage.json can say how many, never
+    which agent, when, or which capability.
     """
     try:
         entry = {
@@ -224,6 +233,8 @@ def _append_activity(server: str, tool: str, ok: bool = True, tokens: int = 0,
             "ok": bool(ok),
             "tokens": int(tokens or 0),
         }
+        if detail:
+            entry["detail"] = str(detail)[:400]
         line = json.dumps(entry, ensure_ascii=False)
         path = _activity_file()
         with _usage_lock:
@@ -395,7 +406,20 @@ def get_usage_stats() -> dict:
         "lifetime_result_tokens": _lifetime_result_tokens(data),
         "by_server": dict(sorted(by_server.items(), key=lambda x: -x[1])),
         "top_tools": dict(sorted(by_tool.items(), key=lambda x: -x[1])[:10]),
+        # By-agent breakdown, derived from the activity ledger (the counter window
+        # records no host). `usage` could say which *servers* were used but never
+        # which *agent* used them; on a multi-agent machine "who is using me" was
+        # unanswerable here. Empty when there is no ledger yet.
+        "by_host": _by_host(),
     }
+
+
+def _by_host() -> dict[str, int]:
+    """Per-agent call counts from the ledger, newest-host ordering. Never raises."""
+    try:
+        return activity_summary().get("hosts") or {}
+    except Exception:
+        return {}
 
 
 def _lifetime_result_tokens(data: dict) -> int:

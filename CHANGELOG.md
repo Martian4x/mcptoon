@@ -102,6 +102,20 @@ version per the one-release-per-topic rule.
   with the gateway wired in, it now adds one line — let an agent use a tool, then run
   `mcptoon activity` — so a clean bill of health also answers "how would I notice it
   doing anything?".
+- **The activity ledger now records *which* skills were distributed.** A
+  `mcptoon_resolve_skills` call used to record only that it ran; it now carries a
+  `detail` line naming the skill slugs it handed out (`distributed: xiewen-shipin,
+  duanju-juben`), and `mcptoon activity` prints it under the call. "Distributing your
+  capabilities" is only legible if the ledger says *which* capabilities.
+- **`mcptoon usage` shows a by-host breakdown, and `mcptoon activity --host <name>`
+  filters to one agent.** `usage` could say which *servers* were used but never which
+  *agent* used them, and the ledger's host column was only filterable by hand-editing
+  JSON. Both now answer "was it Cursor or Claude just now?" on a multi-agent machine.
+- **`status` and `doctor` warn when the gateway is wired in but silent.** A gateway
+  registered in an agent that has recorded no call — ever, or for over a day — looks
+  identical to one that is quietly working. Both surfaces now name that possibility
+  in one soft warning line (never an error, never a changed exit code), so a broken
+  wiring is not mistaken for a healthy idle install.
 
 ### Fixed
 

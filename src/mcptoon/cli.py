@@ -61,7 +61,7 @@ KNOWN_FLAGS = frozenset(
         "--no-configs",
         "--no-env", "--no-local", "--no-network", "--no-self", "--no-sync", "--npm", "--pip",
         "--quiet", "--quick", "--query", "--raw", "--remove", "--request-state", "--roots", "--search",
-        "--summary", "--clear",
+        "--summary", "--clear", "--host",
         "--self", "--pack", "--packs",
         "--slim", "--smart",
         "--stdin", "--stdio", "--takeover", "--timeout", "--tombstone", "--toon", "--tools-k", "--top",
@@ -2577,6 +2577,13 @@ def _cmd_usage(_rest, fmt, head_n=0, max_chars=0, full=False):
         rate = stats.get("success_rate") or ""
         print(f"Success rate: {rate}" if calls else "Success rate: —")
         print(f"Tokens (est): {stats['total_tokens_est']}")
+        # By agent, from the ledger — the counter alone never knew the host. Only
+        # shown once a ledger exists, so a pre-ledger machine looks unchanged.
+        by_host = stats.get("by_host") or {}
+        if by_host:
+            print("\nBy host:")
+            for h, c in by_host.items():
+                print(f"  {h:20s} {c}")
         if stats["by_server"]:
             print("\nBy server:")
             for s, c in stats["by_server"].items():
@@ -2604,18 +2611,34 @@ def _cmd_activity(rest, fmt, head_n=0, max_chars=0, full=False):
         mcptoon activity --head 50       # last 50 (global --head)
         mcptoon activity --json          # machine-readable
         mcptoon activity --summary       # totals: today, last host, by host
+        mcptoon activity --host Cursor   # only one agent's calls
         mcptoon activity --clear         # wipe the ledger (usage counters stay)
     """
     rest = rest or []
     if rest and rest[0] in ("-h", "--help"):
-        print("Usage: mcptoon activity [--head N] [--json] [--summary] [--clear]")
+        print("Usage: mcptoon activity [--head N] [--json] [--summary] [--host H] [--clear]")
         print("")
         print("  One line per tool call mcptoon routed: time, host, tool, tokens.")
         print("  Answers \"is mcptoon being used, and by which agent?\"")
         print("      mcptoon activity              last 20 routed calls")
         print("      mcptoon activity --summary    totals: today, last host, by host")
+        print("      mcptoon activity --host H     only calls from agent H (e.g. Cursor)")
         print("      mcptoon activity --clear      wipe the ledger (usage stays)")
+        print("  The ledger is a local file; nothing is uploaded anywhere.")
         return
+
+    # `--host <name>` / `--host=<name>`: the ledger already stores the driving
+    # client, and `read_activity(host=)` already filters, but the CLI never
+    # exposed it — so "was it Cursor or Claude just now?" had no answer short of
+    # reading JSON by hand.
+    host_filter = None
+    for i, a in enumerate(rest):
+        if a == "--host" and i + 1 < len(rest):
+            host_filter = rest[i + 1]
+            break
+        if a.startswith("--host="):
+            host_filter = a.split("=", 1)[1]
+            break
 
     if "--clear" in rest:
         path = usage_mod._activity_file()
@@ -2661,25 +2684,33 @@ def _cmd_activity(rest, fmt, head_n=0, max_chars=0, full=False):
         return
 
     limit = head_n if head_n and head_n > 0 else 20
-    entries = usage_mod.read_activity(limit=limit)
+    entries = usage_mod.read_activity(limit=limit, host=host_filter)
     total = usage_mod.activity_summary()["entries"]
 
     if fmt in ("toon", "mcptoon", "compact", "json"):
         payload = {"entries": entries, "count": len(entries), "total": total,
                    "path": str(usage_mod._activity_file())}
+        if host_filter:
+            payload["host"] = host_filter
         print(output.render(output.stamp_schema(payload), fmt=fmt, head_n=head_n,
                             max_chars=max_chars, full=full))
         return
 
     if not entries:
-        print("No routed calls recorded yet.")
-        print("  Use a tool through mcptoon (or let your agent use one), then check"
-              " again.")
+        if host_filter:
+            print(f"No routed calls recorded from host {host_filter!r}.")
+            print("  Drop --host to see every agent, or `mcptoon activity --summary`"
+                  " for the by-host totals.")
+        else:
+            print("No routed calls recorded yet.")
+            print("  Use a tool through mcptoon (or let your agent use one), then check"
+                  " again.")
         print(f"  Ledger: {usage_mod._activity_file()}")
         return
 
+    scope = f" from {host_filter}" if host_filter else ""
     print(f"mcptoon activity — last {len(entries)} routed call"
-          f"{'' if len(entries) == 1 else 's'}")
+          f"{'' if len(entries) == 1 else 's'}{scope}")
     line = "─" * 66
     print(line)
     for e in entries:
@@ -2691,6 +2722,12 @@ def _cmd_activity(rest, fmt, head_n=0, max_chars=0, full=False):
         ok = "ok " if e.get("ok") else "ERR"
         tok = e.get("tokens") or 0
         print(f"  {when}  {host:16s} {sk:30s} {ok}  {tok:>7,} tok")
+        # `detail` names what actually moved (e.g. the skills a resolve handed
+        # out) — the difference between "resolve_skills ran" and "it distributed
+        # xiewen-shipin and duanju-juben".
+        detail = e.get("detail")
+        if detail:
+            print(f"      ↳ {detail}")
     print(line)
     print(f"  showing {len(entries)} of {total} total · full ledger: "
           f"{usage_mod._activity_file()}")
@@ -3121,9 +3158,19 @@ def _cmd_status(_rest, fmt):
         who = act.get("last_host") or "CLI"
         print(f"  Last used          : {who} at {when}"
               f"  ·  {act.get('today_calls', 0)} today  ·  see `mcptoon activity`")
+        if _installed_but_silent(act):
+            print("  ⚠ Nothing routed in over a day. If your agent stopped using "
+                  "mcptoon, run `mcptoon doctor`.")
     else:
         print("  Last used          : no routed calls yet — let an agent use a tool,"
               " then `mcptoon activity`")
+        # The one case that looks identical to "quietly working" but is not:
+        # wired into an agent, yet nothing has ever come through. Say the
+        # possibility out loud — softly, as a warning line, never an error, and
+        # never changing the exit code — so a broken wiring gets noticed.
+        if _installed_but_silent(act):
+            print("  ⚠ Wired into an agent, but no call has come through. If your "
+                  "agent never uses it, run `mcptoon doctor`.")
     if wired:
         print("  Gateway in agents  : yes — agents can see mcptoon itself")
     else:
@@ -3459,6 +3506,27 @@ def _cmd_uninstall(rest, fmt):
     print("    pip uninstall mcptoon")
     print(line)
     print("")
+
+
+def _installed_but_silent(act: dict) -> bool:
+    """True when the gateway is wired into an agent but has recorded nothing for
+    over a day — the "quietly working" vs "quietly broken" ambiguity.
+
+    A user who installs mcptoon and then sees no sign of it cannot tell those two
+    apart, and the honest, non-alarming answer is to name the possibility rather
+    than stay mute. Returns False as soon as there is any routed call (even one),
+    so a working install never nags, and requires the gateway to actually be wired
+    in (a config with nothing registered is not "broken", it is unconfigured).
+    """
+    try:
+        if not act.get("entries"):
+            return _gateway_wired_in()
+        last_ts = act.get("last_ts")
+        if not isinstance(last_ts, (int, float)):
+            return False
+        return (time.time() - last_ts) > 24 * 3600
+    except Exception:
+        return False
 
 
 def _gateway_wired_in() -> bool:
@@ -4050,8 +4118,21 @@ def _cmd_doctor(rest, fmt="auto"):
         except Exception:
             _wired = False
         if _wired and cfg.presence_enabled():
-            print("  See it working: let an agent use a tool, then run"
-                  " `mcptoon activity`")
+            try:
+                _act = usage_mod.activity_summary()
+            except Exception:
+                _act = {}
+            if _installed_but_silent(_act):
+                # Healthy components, but nothing has actually flowed through.
+                # "All good" alone would hide a wiring problem the checks cannot
+                # see (they test each server, not whether an agent ever calls the
+                # gateway). Name the ambiguity instead of declaring victory.
+                print("  ⚠ All components check out, but no call has come through "
+                      "the gateway yet. If your agent never uses mcptoon, that is a "
+                      "wiring problem, not a health problem — see `mcptoon activity`.")
+            else:
+                print("  See it working: let an agent use a tool, then run"
+                      " `mcptoon activity`")
     else:
         # Name the broken servers together, once, at the end. The per-server
         # lines scroll away on a machine with a dozen servers, and "see above"

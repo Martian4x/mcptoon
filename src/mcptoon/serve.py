@@ -984,7 +984,19 @@ class MCPServerBridge:
         """
         try:
             is_err = bool(isinstance(payload, dict) and payload.get("isError"))
-            usage.track_call("mcptoon", name, ok=not is_err, payload=payload)
+            detail = None
+            if name == "mcptoon_resolve_skills" and not is_err:
+                # Record *which* skills were distributed, not just that the tool
+                # ran: "distributing your capabilities" is only meaningful if the
+                # ledger names the capabilities. Slugs only, capped, best-effort.
+                shortlist = (payload.get("structuredContent") or {}).get("shortlist")
+                if isinstance(shortlist, list) and shortlist:
+                    slugs = [str(s.get("slug")) for s in shortlist
+                             if isinstance(s, dict) and s.get("slug")]
+                    if slugs:
+                        detail = "distributed: " + ", ".join(slugs)
+            usage.track_call("mcptoon", name, ok=not is_err, payload=payload,
+                             detail=detail)
         except Exception:
             pass
         if name == "mcptoon_resolve_skills":
