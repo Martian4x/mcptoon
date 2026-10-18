@@ -241,7 +241,11 @@ def test_retrieve_list_shows_the_store(capsys):
 
 
 def test_retrieve_without_an_argument_prints_usage(capsys):
-    cli._cmd_retrieve([], "json")  # must not raise or exit non-zero
+    # A bare `retrieve` is a usage error and must exit 1 (it used to exit 0 on a
+    # no-op, so `mcptoon retrieve && echo ok` lied — reported 2026-10-18).
+    with pytest.raises(SystemExit) as ei:
+        cli._cmd_retrieve([], "json")
+    assert ei.value.code == 1
     assert "Usage: mcptoon retrieve" in capsys.readouterr().out
 
 

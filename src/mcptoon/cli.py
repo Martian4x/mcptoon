@@ -553,7 +553,7 @@ def _run(state: dict) -> None:
     elif command == "toggle":
         _cmd_toggle(rest, fmt, head_n, max_chars, full)
     elif command == "policy":
-        _cmd_policy(rest, fmt)
+        _cmd_policy(rest, fmt, head_n, max_chars, full)
     elif command == "discover":
         if "--health" in rest:
             # Legacy health-check mode
@@ -1216,7 +1216,7 @@ def _effective_fmt(server, tool, fmt):
         return fmt
 
 
-def _cmd_policy(rest, fmt):
+def _cmd_policy(rest, fmt, head_n=0, max_chars=0, full=False):
     """Per-tool compression policy: pin how a tool's results are compressed.
 
     Usage:
@@ -1233,6 +1233,12 @@ def _cmd_policy(rest, fmt):
     """
     if not rest or rest[0] in ("--list", "list"):
         policies = cfg.list_policies()
+        # `--json` gives scripts the policy map as data. It used to print human
+        # text regardless of format (reported 2026-10-18).
+        if fmt == "json":
+            print(output.render(dict(policies or {}), fmt="json", head_n=head_n,
+                                max_chars=max_chars, full=full))
+            return
         if not policies:
             print("No compression policies configured - default behaviour applies everywhere.")
             print("")
@@ -2297,12 +2303,18 @@ def _cmd_retrieve(rest, fmt, max_chars=0):
     from . import ccr
 
     if not rest or rest[0] in ("-h", "--help"):
+        # A bare `retrieve` is a usage error: it did nothing useful yet exited 0,
+        # so `mcptoon retrieve && echo ok` reported success on a no-op (reported
+        # 2026-10-18). `--help` is a legitimate success, so only the no-arg case
+        # exits 1. Same contract as `inspect` / `call`.
         print("Usage: mcptoon retrieve <handle>")
         print("       mcptoon retrieve --list        Show what is in the store")
         print("")
         print("  Handles are printed by any --smart command, e.g.:")
         print("      mcptoon install --list --smart")
         print("      mcptoon call <server> <tool> --smart")
+        if not rest:
+            sys.exit(1)
         return
 
     if rest[0] == "--list":

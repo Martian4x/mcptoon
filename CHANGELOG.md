@@ -13,6 +13,11 @@ rule.
 
 ### Fixed
 
+- **`mcptoon policy list --json` returns the policy map as JSON.** It printed human
+  text regardless of format; scripts could not read it.
+- **A bare `mcptoon retrieve` exits 1.** It printed usage but exited 0, so
+  `mcptoon retrieve && echo ok` reported success on a no-op. `retrieve --help`
+  still exits 0.
 - **A mistyped command that is close to a real one now errors instead of running
   the wrong command.** `mcptoon listt` matched "list" inside the word and ran
   `manifest`; `mcptoon healthh` matched "health" and ran the health check — both
