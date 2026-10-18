@@ -13,6 +13,15 @@ rule.
 
 ### Fixed
 
+- **`mcptoon search --head N` caps the result list in every output mode.** Only the
+  json/toon renderers honoured it; slim/compact/human printed all 20 hits, so
+  `search file --head 5` (documented "limit to 5 results") showed 20.
+- **`mcptoon call --envelope` exits non-zero on a tool error.** The envelope result
+  carries `isError: true`; that path printed it and exited 0 while the non-envelope
+  path already exited 1.
+- **`mcptoon toggle <server> <unknown-tool>` is refused.** It used to write a dead
+  "disabled" entry and exit 0. The tool is checked against the cache when the server
+  is cached (same offline-only rule as `policy set`).
 - **`mcptoon call` refuses a JSON argument and `--stdin` together.** `--stdin`
   silently won, so `echo '{...A}' | mcptoon call s t '{...B}' --stdin` used A and
   dropped B with no warning. Passing both is now an error; either alone works.

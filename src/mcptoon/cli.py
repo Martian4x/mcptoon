@@ -1135,15 +1135,21 @@ def _tool_result_failed(result) -> bool:
 
     Distinct from ``is_error`` (a routing/protocol failure envelope). A tool that
     executed and returned an error comes back from the client as
-    ``{"error": True, "message": ...}``. ``call`` used to print that and exit 0, so
-    ``mcptoon call ... && next`` ran the next step on a failed tool — a script could
-    not tell success from failure by exit code (reported 2026-10-17). The
-    ``"message"`` requirement keeps a legitimate tool payload that merely has an
+    ``{"error": True, "message": ...}`` — or, under ``--envelope``, as the raw MCP
+    result ``{"isError": true, "content": [...]}``. ``call`` used to print either and
+    exit 0, so ``mcptoon call ... && next`` ran the next step on a failed tool — a
+    script could not tell success from failure by exit code (reported 2026-10-17).
+    The ``"message"`` requirement keeps a legitimate tool payload that merely has an
     ``"error"`` field from being misread as a failure.
     """
-    return (isinstance(result, dict)
-            and result.get("error") is True
-            and "message" in result)
+    if not isinstance(result, dict):
+        return False
+    if result.get("error") is True and "message" in result:
+        return True
+    # --envelope returns the full MCP result, which carries `isError` instead.
+    if result.get("isError") is True:
+        return True
+    return False
 
 
 # ═══════════════════════════════════════════════════
@@ -1286,6 +1292,15 @@ def _cmd_search(rest, fmt, head_n, max_chars, full):
               f"(17,000+ MCP servers): mcptoon install --search '{query}'")
         sys.exit(0)
 
+    # `--head N` caps the result list for every output mode. It used to be honoured
+    # only by the json/toon renderers; slim/compact/human ignored it and printed all
+    # 20 hits, so `search file --head 5` (documented "limit to 5 results") showed
+    # 20 (reported 2026-10-17). Cap once, up front, so the count line and every
+    # format agree.
+    total = len(results)
+    if head_n and head_n > 0:
+        results = results[:head_n]
+
     if fmt == "slim":
         # Ultra-compact: server/tool_name|params
         lines = []
@@ -1302,7 +1317,8 @@ def _cmd_search(rest, fmt, head_n, max_chars, full):
         print(output.render(results, fmt="toon", head_n=head_n, max_chars=max_chars, full=full))
     else:
         # Human-readable
-        print(f"Found {len(results)} tool(s) matching '{query}':")
+        shown = f"{len(results)} of {total}" if len(results) < total else f"{len(results)}"
+        print(f"Found {shown} tool(s) matching '{query}':")
         print("")
         for r in results:
             server = r["server"]
@@ -3064,9 +3080,22 @@ def _cmd_toggle(rest, fmt):
     # Verify server and tool exist
     servers = cfg.load_config()
     if server not in servers:
-        print(f"Server '{server}' not found.")
-        print(f"Available: {', '.join(sorted(servers.keys()))}")
+        _err(f"Server '{server}' not found.")
+        _err(f"Available: {', '.join(sorted(servers.keys()))}")
         sys.exit(1)
+
+    # A disabled entry for a tool that does not exist is a silent no-op: the tool
+    # stays visible (it was never there) and `toggle --list` shows a rule the user
+    # cannot match to any real tool. Check the cache when we have it — the same
+    # offline-only rule `policy set` uses (2026-10-17).
+    from . import cache as _cache
+    cached, _age = _cache.get_cached_tools_any_age(server)
+    if cached is not None:
+        names = {t.get("name") for t in cached if isinstance(t, dict) and "error" not in t}
+        if tool not in names:
+            _err(f"Tool '{tool}' not found on '{server}'.")
+            _err(f"See its tools: mcptoon inspect {server}")
+            sys.exit(1)
 
     new_state = cfg.toggle_tool(server, tool)
     status = "ENABLED ✓" if new_state else "DISABLED ✗"
