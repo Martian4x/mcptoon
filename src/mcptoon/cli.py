@@ -507,7 +507,7 @@ def _run(state: dict) -> None:
 
     # ─── Dispatch ───
     if command in ("list", "servers"):
-        _cmd_list(rest)
+        _cmd_list(rest, fmt, head_n, max_chars, full)
     elif command in ("manifest", "tools"):
         _cmd_manifest(rest, fmt, head_n, max_chars, full, export_format)
     elif command == "inspect":
@@ -543,7 +543,7 @@ def _run(state: dict) -> None:
     elif command == "footer-facts":
         _cmd_footer_facts(rest, fmt, max_chars)
     elif command == "toggle":
-        _cmd_toggle(rest, fmt)
+        _cmd_toggle(rest, fmt, head_n, max_chars, full)
     elif command == "policy":
         _cmd_policy(rest, fmt)
     elif command == "discover":
@@ -740,25 +740,56 @@ def _fix_suggestion(code: str, server: str = "", tool: str = "") -> str:
 # Commands
 # ═══════════════════════════════════════════════════
 
-def _cmd_list(_rest):
-    """List configured servers."""
+def _cmd_list(rest, fmt="auto", head_n=0, max_chars=0, full=False):
+    """List configured servers.
+
+    Usage:
+        mcptoon list                  # human-readable list
+        mcptoon list --json           # structured [{name, transport, command/url}]
+        mcptoon list --head 5         # first 5 servers only
+
+    `--json`/`--head`/`--max-chars` were ignored: `list` had no access to the
+    global flags, so a script could not get the server list as data and `--head`
+    did nothing (reported 2026-10-18). Now honoured.
+    """
     servers = cfg.list_servers()
     if not servers:
-        print("No servers configured. Run: mcptoon quickstart")
-        return
-    print(f"Configured servers ({len(servers)}):")
-    for name in servers:
-        s_cfg = cfg.get_server_config(name)
-        transport = s_cfg.get("transport", "stdio") if s_cfg else "?"
-        if transport == "stdio":
-            cmd_str = " ".join(
-                (s_cfg.get("command", []) if isinstance(s_cfg.get("command"), list) else [s_cfg.get("command", [])])
-                + s_cfg.get("args", [])
-            )
-            print(f"  {name:20s} [stdio]  {cmd_str}")
+        if fmt == "json":
+            print(output.render([], fmt="json", head_n=head_n, max_chars=max_chars, full=full))
         else:
-            url = s_cfg.get("url", "?") if s_cfg else "?"
-            print(f"  {name:20s} [http]   {url}")
+            print("No servers configured. Run: mcptoon quickstart")
+        return
+
+    records = []
+    for name in servers:
+        s_cfg = cfg.get_server_config(name) or {}
+        transport = s_cfg.get("transport", "stdio")
+        if transport == "stdio":
+            cmd = s_cfg.get("command", [])
+            cmd_list = cmd if isinstance(cmd, list) else [cmd]
+            records.append({
+                "name": name, "transport": "stdio",
+                "command": cmd_list + s_cfg.get("args", []),
+            })
+        else:
+            records.append({"name": name, "transport": "http",
+                            "url": s_cfg.get("url", "?")})
+
+    if fmt in ("json", "toon", "slim", "compact", "mcptoon"):
+        print(output.render(records, fmt=("json" if fmt == "auto" else fmt),
+                            head_n=head_n, max_chars=max_chars, full=full))
+        return
+
+    total = len(records)
+    if head_n and head_n > 0:
+        records = records[:head_n]
+    shown = f"{len(records)} of {total}" if len(records) < total else f"{len(records)}"
+    print(f"Configured servers ({shown}):")
+    for r in records:
+        if r["transport"] == "stdio":
+            print(f"  {r['name']:20s} [stdio]  {' '.join(r['command'])}")
+        else:
+            print(f"  {r['name']:20s} [http]   {r['url']}")
 
 
 def _cmd_manifest(rest, fmt, head_n, max_chars, full, export_format=""):
@@ -775,6 +806,13 @@ def _cmd_manifest(rest, fmt, head_n, max_chars, full, export_format=""):
         exported = manifest_mod.export_manifest(manifest, export_format)
         print(exported)
         return
+
+    # `--head N` limits the number of SERVERS shown (manifest is keyed by server).
+    # It used to be ignored in the human/compact/toon paths, so `manifest --head 2`
+    # printed all servers (reported 2026-10-18). The slim path is tool-oriented and
+    # already caps tool count through output.render, so it is left to that.
+    if head_n and head_n > 0 and fmt != "slim":
+        manifest = dict(list(manifest.items())[:head_n])
 
     if fmt == "slim":
         # For slim, output ultra-compact tool schemas
@@ -3044,15 +3082,22 @@ def _cmd_config(rest, fmt, head_n=0, max_chars=0, full=False):
     sys.exit(1)
 
 
-def _cmd_toggle(rest, fmt):
+def _cmd_toggle(rest, fmt, head_n=0, max_chars=0, full=False):
     """Toggle a tool on/off (persisted in ~/.mcptoon/toggles.json).
 
     Usage:
         mcptoon toggle <server> <tool>     Toggle a specific tool
         mcptoon toggle --list              List all toggled tools
+        mcptoon toggle --list --json       List disabled tools as JSON
     """
     if "--list" in rest or not rest:
         disabled = cfg.list_disabled_tools()
+        # `--json` gives scripts the disabled-tool list as data. It used to print
+        # human text regardless (reported 2026-10-18).
+        if fmt == "json" or "--json" in rest:
+            print(output.render(sorted(disabled), fmt="json", head_n=head_n,
+                                max_chars=max_chars, full=full))
+            return
         if not disabled:
             print("No tools are disabled. All tools are active.")
             print("")

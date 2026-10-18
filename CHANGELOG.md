@@ -13,6 +13,12 @@ rule.
 
 ### Fixed
 
+- **`mcptoon list` honours `--json` / `--head` / `--max-chars`.** `list` had no
+  access to the global output flags, so `--json` printed human text and `--head`
+  did nothing — a script could not get the server list as data.
+- **`mcptoon manifest --head N` limits the number of servers shown.** It was ignored
+  in the human/compact/toon paths (slim already capped tools via the renderer).
+- **`mcptoon toggle --list --json` returns JSON.** It printed human text regardless.
 - **`mcptoon search --head N` caps the result list in every output mode.** Only the
   json/toon renderers honoured it; slim/compact/human printed all 20 hits, so
   `search file --head 5` (documented "limit to 5 results") showed 20.
