@@ -13,6 +13,9 @@ rule.
 
 ### Fixed
 
+- **`mcptoon select --head N` caps the number of top picks shown.** Only the json
+  branch forwarded `--head` to the renderer; the human output printed every `--top`
+  result regardless.
 - **`mcptoon doctor --json` returns structured diagnostics.** It printed human text,
   so CI could not parse the result. JSON carries `checks` / `issues` / `ok` /
   `broken` and keeps the exit-code contract (1 on any issue).

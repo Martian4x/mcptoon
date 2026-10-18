@@ -1445,6 +1445,12 @@ def _cmd_select(rest, fmt="auto", head_n=0, max_chars=0, full=False):
 
     ranked, engine = manifest_mod.rank_tools(query, flat)
     ranked = ranked[:top]
+    # `--head N` caps how many of the top picks are shown in the human output.
+    # It used to be ignored here (only the json branch forwarded it to the
+    # renderer), so `select ... --head 1` still printed all `--top` results
+    # (reported 2026-10-18). Cap once, up front, so both branches agree.
+    if head_n and head_n > 0:
+        ranked = ranked[:head_n]
 
     if not ranked:
         # The engine's contract is "always succeeds, may return []" (manifest.py).
