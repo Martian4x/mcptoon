@@ -132,6 +132,22 @@ version per the one-release-per-topic rule.
   reads "N routed to tools, M via mcptoon's own tools", and `status --json` carries
   `calls_routed` / `calls_native` — two different things a user deciding whether
   mcptoon is doing anything cares to tell apart.
+- **Each activity line records how long the call took, and slow calls are flagged.**
+  The ledger gains an `ms` field (wall-clock, whole call as the caller experienced
+  it); `mcptoon activity` prints it and marks anything over 3 s `SLOW`. A call that
+  hung for eight seconds used to look identical to one that took ten milliseconds.
+- **`mcptoon activity --follow` streams new calls live.** A `tail -f` for the
+  ledger: it starts at the current end and prints each new routed call as it
+  arrives (honours `--host`), so you can watch an agent drive mcptoon in real time.
+  Ctrl-C to stop.
+- **`mcptoon activity --summary` reports the retention cap and the ledger's size.**
+  The ledger silently keeps only the newest 2000 calls; that roll-off was invisible.
+  The summary now names the cap and the current file size, so a user treating it as
+  an audit log knows what it actually keeps.
+- **`mcptoon status` names the most recent failed call.** A separate question from
+  "is it being used": when a call has failed, `status` shows the agent, the tool,
+  when, and the short reason ("Last failure: Cursor fetch:boom at … (CALL_ERROR: …)").
+  `status --json` carries the same as `last_fail`.
 
 ### Fixed
 

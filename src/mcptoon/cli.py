@@ -61,7 +61,7 @@ KNOWN_FLAGS = frozenset(
         "--no-configs",
         "--no-env", "--no-local", "--no-network", "--no-self", "--no-sync", "--npm", "--pip",
         "--quiet", "--quick", "--query", "--raw", "--remove", "--request-state", "--roots", "--search",
-        "--summary", "--clear", "--host", "--export",
+        "--summary", "--clear", "--host", "--export", "--follow",
         "--self", "--pack", "--packs",
         "--slim", "--smart",
         "--stdin", "--stdio", "--takeover", "--timeout", "--tombstone", "--toon", "--tools-k", "--top",
@@ -75,6 +75,27 @@ KNOWN_FLAGS = frozenset(
         "--install", "--uninstall",
     }
 )
+
+
+# A routed call slower than this is flagged in `mcptoon activity`. 3000 ms is a
+# deliberately high bar: normal MCP calls are tens to hundreds of ms, so crossing
+# it means the user was actually kept waiting, not that the machine blinked.
+_SLOW_CALL_MS = 3000
+
+
+def _human_bytes(n: int) -> str:
+    """A short human file size (e.g. '12.4 KB'). Plain, no locale, no deps."""
+    try:
+        n = int(n)
+    except (TypeError, ValueError):
+        return "—"
+    if n < 1024:
+        return f"{n} B"
+    for unit in ("KB", "MB", "GB"):
+        n /= 1024.0
+        if n < 1024 or unit == "GB":
+            return f"{n:.1f} {unit}"
+    return f"{n:.1f} GB"
 
 
 # Subcommands that print their own help text and therefore handle -h/--help
@@ -2660,7 +2681,7 @@ def _cmd_activity(rest, fmt, head_n=0, max_chars=0, full=False):
     """
     rest = rest or []
     if rest and rest[0] in ("-h", "--help"):
-        print("Usage: mcptoon activity [--head N] [--json] [--summary] [--host H] [--export json|csv] [--clear]")
+        print("Usage: mcptoon activity [--head N] [--json] [--summary] [--host H] [--export json|csv] [--follow] [--clear]")
         print("")
         print("  One line per tool call mcptoon routed: time, host, tool, tokens.")
         print("  Answers \"is mcptoon being used, and by which agent?\"")
@@ -2668,6 +2689,7 @@ def _cmd_activity(rest, fmt, head_n=0, max_chars=0, full=False):
         print("      mcptoon activity --summary    totals: today, last host, by host")
         print("      mcptoon activity --host H     only calls from agent H (e.g. Cursor)")
         print("      mcptoon activity --export csv dump the WHOLE ledger as csv (or json)")
+        print("      mcptoon activity --follow     stream new calls live (Ctrl-C to stop)")
         print("      mcptoon activity --clear      wipe the ledger (usage stays)")
         print("  The ledger is a local file on this machine; nothing is uploaded anywhere.")
         return
@@ -2701,6 +2723,11 @@ def _cmd_activity(rest, fmt, head_n=0, max_chars=0, full=False):
 
     if export_fmt:
         return _activity_export(export_fmt, host_filter)
+
+    # `--follow`: block and stream new calls (tail -f). Handled before the
+    # snapshot views so it never falls through to a one-shot print.
+    if "--follow" in rest:
+        return _activity_follow(host_filter)
 
     if "--clear" in rest:
         path = usage_mod._activity_file()
@@ -2743,6 +2770,18 @@ def _cmd_activity(rest, fmt, head_n=0, max_chars=0, full=False):
             print("  By host         :")
             for h, c in hosts.items():
                 print(f"    {h:20s} {c}")
+        # Retention and size were invisible: the ledger silently rolls off old
+        # lines at a fixed cap, and a user deciding whether it is "an audit log"
+        # deserves to know both the cap and how close the file is to it.
+        keep = getattr(usage_mod, "_ACTIVITY_KEEP", 2000)
+        path = usage_mod._activity_file()
+        try:
+            size = path.stat().st_size
+        except OSError:
+            size = 0
+        print(f"  Retention       : newest {keep:,} calls kept "
+              f"(older lines roll off)")
+        print(f"  Ledger size     : {_human_bytes(size)} at {path}")
         return
 
     limit = head_n if head_n and head_n > 0 else 20
@@ -2776,28 +2815,96 @@ def _cmd_activity(rest, fmt, head_n=0, max_chars=0, full=False):
     line = "─" * 66
     print(line)
     for e in entries:
-        ts = e.get("ts")
-        when = (time.strftime("%m-%d %H:%M:%S", time.localtime(ts))
-                if isinstance(ts, (int, float)) else "—")
-        host = (e.get("host") or "CLI")[:16]
-        sk = f"{e.get('server','')}:{e.get('tool','')}"[:30]
-        ok = "ok " if e.get("ok") else "ERR"
-        tok = e.get("tokens") or 0
-        print(f"  {when}  {host:16s} {sk:30s} {ok}  {tok:>7,} tok")
-        # `detail` names what actually moved (e.g. the skills a resolve handed
-        # out) — the difference between "resolve_skills ran" and "it distributed
-        # xiewen-shipin and duanju-juben".
-        detail = e.get("detail")
-        if detail:
-            print(f"      ↳ {detail}")
-        # `err` says why a line is red — the difference between "it failed" and
-        # "it failed because the server returned METHOD_NOT_FOUND".
-        err = e.get("err")
-        if err and not e.get("ok"):
-            print(f"      ✗ {err}")
+        print(_activity_line(e))
     print(line)
     print(f"  showing {len(entries)} of {total} total · full ledger: "
           f"{usage_mod._activity_file()}")
+
+
+def _activity_line(e: dict) -> str:
+    """Render one ledger entry as a (possibly multi-line) block. Shared by the
+    list view and `--follow`, so the two can never drift in shape."""
+    ts = e.get("ts")
+    when = (time.strftime("%m-%d %H:%M:%S", time.localtime(ts))
+            if isinstance(ts, (int, float)) else "—")
+    host = (e.get("host") or "CLI")[:16]
+    sk = f"{e.get('server','')}:{e.get('tool','')}"[:30]
+    ok = "ok " if e.get("ok") else "ERR"
+    tok = e.get("tokens") or 0
+    # Wall-clock duration, when the caller timed it. A slow call is flagged
+    # inline: a line that took 8 seconds is the one worth noticing, and it is
+    # otherwise indistinguishable from a fast one.
+    ms = e.get("ms")
+    dur = ""
+    if isinstance(ms, int) and ms >= 0:
+        slow = ms >= _SLOW_CALL_MS
+        dur = f"  {'SLOW ' if slow else ''}{ms:,} ms"
+    out = [f"  {when}  {host:16s} {sk:30s} {ok}  {tok:>7,} tok{dur}"]
+    # `detail` names what actually moved (e.g. the skills a resolve handed out) —
+    # the difference between "resolve_skills ran" and "it distributed
+    # xiewen-shipin and duanju-juben".
+    detail = e.get("detail")
+    if detail:
+        out.append(f"      ↳ {detail}")
+    # `err` says why a line is red — the difference between "it failed" and
+    # "it failed because the server returned METHOD_NOT_FOUND".
+    err = e.get("err")
+    if err and not e.get("ok"):
+        out.append(f"      ✗ {err}")
+    return "\n".join(out)
+
+
+def _activity_follow(host_filter=None, interval: float = 1.0) -> None:
+    """Stream new ledger lines as they arrive, like `tail -f`. Ctrl-C to stop.
+
+    Polls the ledger file for new lines rather than watching it (portable, and the
+    ledger is appended by many short-lived processes that a file-watch would miss).
+    Starts from the CURRENT end so it shows what happens next, not history — pair
+    with a plain `mcptoon activity` to see the past. Only the fields already in the
+    ledger are shown; nothing is inferred.
+    """
+    path = usage_mod._activity_file()
+    try:
+        start = path.stat().st_size if path.exists() else 0
+    except OSError:
+        start = 0
+    print(f"Following {path} — new routed calls appear below (Ctrl-C to stop).")
+    print("─" * 66)
+    try:
+        while True:
+            try:
+                if not path.exists():
+                    time.sleep(interval)
+                    continue
+                size = path.stat().st_size
+                if size < start:
+                    start = 0  # file was trimmed/cleared underneath us
+                if size > start:
+                    with path.open("r", encoding="utf-8", errors="replace") as fh:
+                        fh.seek(start)
+                        chunk = fh.read()
+                        start = fh.tell()
+                    for raw in chunk.splitlines():
+                        raw = raw.strip()
+                        if not raw:
+                            continue
+                        try:
+                            e = json.loads(raw)
+                        except (json.JSONDecodeError, ValueError):
+                            continue
+                        if not isinstance(e, dict):
+                            continue
+                        if host_filter is not None and e.get("host") != host_filter:
+                            continue
+                        print(_activity_line(e))
+                time.sleep(interval)
+            except KeyboardInterrupt:
+                raise
+            except OSError:
+                time.sleep(interval)
+    except KeyboardInterrupt:
+        print("")
+        print("  stopped.")
 
 
 def _cmd_retrieve(rest, fmt, max_chars=0):
@@ -3159,7 +3266,7 @@ def _cmd_status(_rest, fmt):
         act = usage_mod.activity_summary()
     except Exception:
         act = {"entries": 0, "last_host": None, "last_ts": None,
-               "today_calls": 0, "hosts": {}}
+               "today_calls": 0, "hosts": {}, "last_fail": None}
 
     if fmt == "json":
         print(json.dumps(output.stamp_schema({
@@ -3190,6 +3297,7 @@ def _cmd_status(_rest, fmt):
             "activity_today": act.get("today_calls", 0),
             "last_host": act.get("last_host"),
             "last_used_ts": act.get("last_ts"),
+            "last_fail": act.get("last_fail"),
         }), indent=2, ensure_ascii=False))
         return
 
@@ -3237,6 +3345,19 @@ def _cmd_status(_rest, fmt):
         who = act.get("last_host") or "CLI"
         print(f"  Last used          : {who} at {when}"
               f"  ·  {act.get('today_calls', 0)} today  ·  see `mcptoon activity`")
+        # "Did it break recently?" — a separate question from "is it being used".
+        # Only shown when a call actually failed; names the agent, the tool, when,
+        # and the short reason so the user is not sent digging.
+        lf = act.get("last_fail")
+        if lf:
+            fts = lf.get("ts")
+            fwhen = (time.strftime("%Y-%m-%d %H:%M", time.localtime(fts))
+                     if isinstance(fts, (int, float)) else "—")
+            fwho = lf.get("host") or "CLI"
+            ftool = f"{lf.get('server', '')}:{lf.get('tool', '')}".strip(":")
+            freason = (lf.get("err") or "").strip()
+            tail = f"  ({freason})" if freason else ""
+            print(f"  Last failure       : {fwho} {ftool} at {fwhen}{tail}")
         if _installed_but_silent(act):
             print("  ⚠ Nothing routed in over a day. If your agent stopped using "
                   "mcptoon, run `mcptoon doctor`.")

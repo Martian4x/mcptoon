@@ -20,6 +20,7 @@ Supports custom handlers via decorator pattern.
 Includes tool poisoning detection, credential leak detection, and fuzzy match suggestions.
 """
 import re
+import time
 import unicodedata
 from typing import Any
 from collections.abc import Callable
@@ -392,6 +393,7 @@ def call_tool(
             )
 
     # 1. Custom handler
+    _t0 = time.monotonic()
     handler = _HANDLERS.get(server)
     handler_error = None
     if handler:
@@ -414,7 +416,8 @@ def call_tool(
                             f"Tool result may contain exposed credentials: {leak}",
                             "router", retry=False, server=server, tool=tool,
                         )
-                usage.track_call(server, tool, ok=not is_error(result), payload=result)
+                usage.track_call(server, tool, ok=not is_error(result), payload=result,
+                                 ms=int((time.monotonic() - _t0) * 1000))
                 return result
         except Exception as exc:
             # Remember the real failure and fall through to MCP below. If the
@@ -475,10 +478,12 @@ def call_tool(
                     "router", retry=False, server=server, tool=tool,
                 )
 
-        usage.track_call(server, tool, ok=not is_error(result), payload=result)
+        usage.track_call(server, tool, ok=not is_error(result), payload=result,
+                         ms=int((time.monotonic() - _t0) * 1000))
         return result
     except MCPError as e:
-        usage.track_call(server, tool, ok=False, err=f"{e.code}: {str(e.message)[:160]}")
+        usage.track_call(server, tool, ok=False, err=f"{e.code}: {str(e.message)[:160]}",
+                         ms=int((time.monotonic() - _t0) * 1000))
         # Provide suggestions for unknown tools
         suggestions = []
         if e.code in ("METHOD_NOT_FOUND", "UNKNOWN_TOOL", "TOOL_NOT_FOUND"):
@@ -499,7 +504,8 @@ def call_tool(
         return err
     except Exception as e:
         usage.track_call(server, tool, ok=False,
-                         err=f"{type(e).__name__}: {str(e)[:160]}")
+                         err=f"{type(e).__name__}: {str(e)[:160]}",
+                         ms=int((time.monotonic() - _t0) * 1000))
         return make_error("CALL_ERROR", str(e)[:200], "router", retry=False, server=server, tool=tool)
 
 

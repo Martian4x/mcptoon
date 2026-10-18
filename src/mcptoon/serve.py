@@ -865,6 +865,7 @@ class MCPServerBridge:
             )
 
         # Route to underlying server (with timeout)
+        _t0 = time.monotonic()
         try:
             if not self._pool:
                 self._pool = MCPClientPool(self._servers)
@@ -879,7 +880,8 @@ class MCPServerBridge:
             # Usage accounting and --format compression still run on the payload
             # view, exactly as before — no reported number changes.
             payload = _unwrap_envelope(envelope)
-            usage.track_call(server, tool, ok=True, payload=payload)
+            usage.track_call(server, tool, ok=True, payload=payload,
+                             ms=int((time.monotonic() - _t0) * 1000))
 
             if isinstance(envelope, dict) and envelope.get("structuredContent") is not None:
                 # Build the response from the envelope explicitly. Passing the
@@ -904,15 +906,18 @@ class MCPServerBridge:
 
         except MCPError as e:
             usage.track_call(server, tool, ok=False,
-                             err=f"{e.code}: {str(e.message)[:160]}")
+                             err=f"{e.code}: {str(e.message)[:160]}",
+                             ms=int((time.monotonic() - _t0) * 1000))
             return _make_tool_error(f"[{e.code}] {e.message}")
         except concurrent.futures.TimeoutError:
             usage.track_call(server, tool, ok=False,
-                             err=f"timeout after {_get_call_timeout()}s")
+                             err=f"timeout after {_get_call_timeout()}s",
+                             ms=int((time.monotonic() - _t0) * 1000))
             return _make_tool_error(f"Call timed out after {_get_call_timeout()}s")
         except Exception as e:
             usage.track_call(server, tool, ok=False,
-                             err=f"{type(e).__name__}: {str(e)[:160]}")
+                             err=f"{type(e).__name__}: {str(e)[:160]}",
+                             ms=int((time.monotonic() - _t0) * 1000))
             return _make_tool_error(f"Call failed: {str(e)[:200]}")
 
     def _call_with_timeout(

@@ -161,7 +161,8 @@ def _save_usage(data: dict):
 
 
 def track_call(server: str, tool: str, ok: bool = True, tokens_est: int | None = None,
-               payload=None, detail: "str | None" = None, err: "str | None" = None):
+               payload=None, detail: "str | None" = None, err: "str | None" = None,
+               ms: "int | None" = None):
     """Record a tool call.
 
     Crash-safe by contract: usage tracking must never break the actual
@@ -185,6 +186,11 @@ def track_call(server: str, tool: str, ok: bool = True, tokens_est: int | None =
     ``Type: message``), carried into the ledger so `activity` can say *why* a line
     is red instead of just that it is. Capped, never a full traceback — the ledger
     must stay one line per call.
+
+    ``ms`` is the wall-clock duration of the call in milliseconds, carried into the
+    ledger so `activity` can flag a slow call. It measures the whole call as the
+    caller experienced it (queue + transport + server), not pure server time — the
+    number a person waiting on a hung agent actually cares about.
     """
     if tokens_est is None:
         tokens_est = count_tokens(payload)
@@ -221,12 +227,12 @@ def track_call(server: str, tool: str, ok: bool = True, tokens_est: int | None =
     # one failing must not stop the other, and neither may ever reach the caller.
     note_session_call()
     _append_activity(server, tool, ok=ok, tokens=int(tokens_est or 0), detail=detail,
-                     err=err)
+                     err=err, ms=ms)
 
 
 def _append_activity(server: str, tool: str, ok: bool = True, tokens: int = 0,
                      host: "str | None" = None, detail: "str | None" = None,
-                     err: "str | None" = None) -> None:
+                     err: "str | None" = None, ms: "int | None" = None) -> None:
     """Append one line to the activity ledger. Never raises.
 
     One JSON object per line: ``{ts, host, server, tool, ok, tokens}`` plus
@@ -250,6 +256,11 @@ def _append_activity(server: str, tool: str, ok: bool = True, tokens: int = 0,
             entry["detail"] = str(detail)[:400]
         if err and not ok:
             entry["err"] = str(err)[:200]
+        if ms is not None:
+            try:
+                entry["ms"] = int(ms)
+            except (TypeError, ValueError):
+                pass
         line = json.dumps(entry, ensure_ascii=False)
         path = _activity_file()
         with _usage_lock:
@@ -320,18 +331,19 @@ def activity_summary() -> dict:
     path = _activity_file()
     if not path.exists():
         return {"entries": 0, "last_host": None, "last_ts": None,
-                "today_calls": 0, "hosts": {}}
+                "today_calls": 0, "hosts": {}, "last_fail": None}
     try:
         with path.open("r", encoding="utf-8", errors="replace") as fh:
             lines = fh.readlines()
     except OSError:
         return {"entries": 0, "last_host": None, "last_ts": None,
-                "today_calls": 0, "hosts": {}}
+                "today_calls": 0, "hosts": {}, "last_fail": None}
     hosts: dict[str, int] = {}
     entries = 0
     last_host = None
     last_ts = None
     today_calls = 0
+    last_fail = None
     today = time.strftime("%Y-%m-%d")
     for raw in lines:
         raw = raw.strip()
@@ -355,12 +367,24 @@ def activity_summary() -> dict:
             except (OSError, ValueError, OverflowError):
                 pass
         last_host = h
+        # The most recent failed call, for `status`'s "did it break recently?"
+        # line. Kept as a compact record; a later ok line does not clear it — the
+        # question is "when did it last fail", not "is it failing right now".
+        if not e.get("ok"):
+            last_fail = {
+                "host": h,
+                "server": e.get("server", ""),
+                "tool": e.get("tool", ""),
+                "ts": ts if isinstance(ts, (int, float)) else None,
+                "err": e.get("err", ""),
+            }
     return {
         "entries": entries,
         "last_host": last_host,
         "last_ts": last_ts,
         "today_calls": today_calls,
         "hosts": dict(sorted(hosts.items(), key=lambda x: -x[1])),
+        "last_fail": last_fail,
     }
 
 
