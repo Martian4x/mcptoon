@@ -344,6 +344,11 @@ def activity_summary() -> dict:
     last_ts = None
     today_calls = 0
     last_fail = None
+    ok_count = 0
+    fail_count = 0
+    slow_count = 0
+    ms_total = 0
+    ms_count = 0
     today = time.strftime("%Y-%m-%d")
     for raw in lines:
         raw = raw.strip()
@@ -358,6 +363,16 @@ def activity_summary() -> dict:
         entries += 1
         h = e.get("host") or "CLI"
         hosts[h] = hosts.get(h, 0) + 1
+        if e.get("ok"):
+            ok_count += 1
+        else:
+            fail_count += 1
+        ms = e.get("ms")
+        if isinstance(ms, int) and ms >= 0:
+            ms_total += ms
+            ms_count += 1
+            if ms >= 3000:
+                slow_count += 1
         ts = e.get("ts")
         if isinstance(ts, (int, float)):
             last_ts = ts
@@ -385,6 +400,14 @@ def activity_summary() -> dict:
         "today_calls": today_calls,
         "hosts": dict(sorted(hosts.items(), key=lambda x: -x[1])),
         "last_fail": last_fail,
+        # Reliability, read off the same window: how many succeeded vs failed, and
+        # how slow the timed calls were. "Was it reliable?" was unanswerable from
+        # the tail view alone. Success rate is over THIS window (capped at
+        # _ACTIVITY_KEEP), not lifetime — honest about what it measures.
+        "ok_count": ok_count,
+        "fail_count": fail_count,
+        "slow_count": slow_count,
+        "avg_ms": int(ms_total / ms_count) if ms_count else None,
     }
 
 

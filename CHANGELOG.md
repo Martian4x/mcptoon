@@ -148,6 +148,19 @@ version per the one-release-per-topic rule.
   "is it being used": when a call has failed, `status` shows the agent, the tool,
   when, and the short reason ("Last failure: Cursor fetch:boom at … (CALL_ERROR: …)").
   `status --json` carries the same as `last_fail`.
+- **`mcptoon activity --since <today|1h|24h|7d|YYYY-MM-DD>` and `--failures`.**
+  `--since` narrows the view (and `--export`) to a time window, applied before the
+  `--head` cap so `--failures --head 20` means "the last 20 failures"; `--failures`
+  shows only calls that failed. Both compose with `--host` and `--export`.
+- **`mcptoon demo` now records a line in the activity ledger.** The demo drives a
+  raw MCP client and bypassed the router, so it left the ledger empty — the one
+  moment a brand-new user wants proof "it really is recording" was the one that
+  recorded nothing. `mcptoon demo && mcptoon activity` now shows the demo's echo
+  call (server name `demo`, clearly not a real upstream call).
+- **`activity --summary` reports success rate and latency.** It now shows
+  "Success: N/M (P%)" and "Latency: avg X ms · K slow (>3000 ms)", read off the
+  same window (using the `ms` field added last round) — "was it reliable?" is no
+  longer unanswerable from the tail view.
 
 ### Fixed
 

@@ -161,12 +161,27 @@ def _demo_call(server_name: str, server_cmd: list[str], message: str,
             print(f"  ✓ Server '{server_name}' ready ({len(tools)} tools)")
 
         # Call the echo tool
+        _t0 = time.monotonic()
         result = client.call_tool("echo", {"message": message})
 
         # Extract text from MCP content array
         result_text = _extract_text(result)
         if not result_text:
             result_text = json.dumps(result, ensure_ascii=False)
+
+        # Record it in the activity ledger, so the very first thing a new user does
+        # — `mcptoon demo` — leaves a line `mcptoon activity` can show. The demo
+        # otherwise bypasses the router entirely (it drives a raw MCPClient), so it
+        # would be invisible: the one moment "see, it really is recording" matters
+        # most is exactly the one that recorded nothing. Server name `demo` marks it
+        # as the demo, never a real upstream call. Best-effort: a ledger write must
+        # never fail the demo.
+        try:
+            from . import usage as _usage
+            _usage.track_call("demo", "echo", ok=True, payload=result,
+                              ms=int((time.monotonic() - _t0) * 1000))
+        except Exception:
+            pass
 
         if not quick:
             print(f"  ✓ Called echo: {result_text[:60]}")

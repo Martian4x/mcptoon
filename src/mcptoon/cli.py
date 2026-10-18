@@ -61,7 +61,8 @@ KNOWN_FLAGS = frozenset(
         "--no-configs",
         "--no-env", "--no-local", "--no-network", "--no-self", "--no-sync", "--npm", "--pip",
         "--quiet", "--quick", "--query", "--raw", "--remove", "--request-state", "--roots", "--search",
-        "--summary", "--clear", "--host", "--export", "--follow",
+        "--summary", "--clear", "--host", "--export", "--follow", "--since",
+        "--failures",
         "--self", "--pack", "--packs",
         "--slim", "--smart",
         "--stdin", "--stdio", "--takeover", "--timeout", "--tombstone", "--toon", "--tools-k", "--top",
@@ -2615,16 +2616,56 @@ def _cmd_usage(_rest, fmt, head_n=0, max_chars=0, full=False):
                 print(f"  {t:30s} {c}")
 
 
-def _activity_export(export_fmt: str, host_filter=None) -> None:
+def _parse_since(arg: str):
+    """Turn a `--since` argument into a cutoff timestamp (epoch seconds), or None.
+
+    Accepts a relative span (``1h``, ``30m``, ``7d``, ``24h``), the words ``today``
+    (local midnight) and ``all`` (no cutoff, i.e. everything), or an explicit date
+    ``YYYY-MM-DD`` (local midnight of that day). Returns None when the argument is
+    not understood, so the caller can say so rather than silently ignoring it.
+    """
+    if not arg:
+        return None
+    s = arg.strip().lower()
+    if s in ("all", "any", "forever"):
+        return 0
+    if s == "today":
+        lt = time.localtime()
+        return time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, 0, 0, 0, 0, 0, -1))
+    # Relative: <number><unit>, unit in m(inute)/h(our)/d(ay)/w(eek).
+    m = re.match(r"^(\d+)\s*([mhdw])$", s)
+    if m:
+        n = int(m.group(1))
+        unit = m.group(2)
+        secs = {"m": 60, "h": 3600, "d": 86400, "w": 7 * 86400}[unit]
+        return time.time() - n * secs
+    # Explicit date YYYY-MM-DD (local midnight).
+    m = re.match(r"^(\d{4})-(\d{2})-(\d{2})$", s)
+    if m:
+        try:
+            return time.mktime((int(m.group(1)), int(m.group(2)), int(m.group(3)),
+                                0, 0, 0, 0, 0, -1))
+        except (ValueError, OverflowError):
+            return None
+    return None
+
+
+def _activity_export(export_fmt: str, host_filter=None, since_ts=None,
+                     failures_only=False) -> None:
     """Dump the whole activity ledger as json or csv on stdout. Never raises.
 
     The on-screen `activity` view is a tail; an audit or a pasted bug report wants
     every line in a form `jq` or a spreadsheet can read. ``read_activity(limit=0)``
     returns the full file (newest first); export reverses to oldest-first so a csv
-    reads chronologically. The ledger is a local file — this prints it, uploads
-    nothing.
+    reads chronologically. Honours ``--since`` and ``--failures``. The ledger is a
+    local file — this prints it, uploads nothing.
     """
     entries = usage_mod.read_activity(limit=0, host=host_filter)
+    if since_ts is not None:
+        entries = [e for e in entries
+                   if isinstance(e.get("ts"), (int, float)) and e["ts"] >= since_ts]
+    if failures_only:
+        entries = [e for e in entries if not e.get("ok")]
     entries = list(reversed(entries))  # chronological for humans and spreadsheets
     if export_fmt == "csv":
         import csv as _csv
@@ -2676,18 +2717,23 @@ def _cmd_activity(rest, fmt, head_n=0, max_chars=0, full=False):
         mcptoon activity --json          # machine-readable
         mcptoon activity --summary       # totals: today, last host, by host
         mcptoon activity --host Cursor   # only one agent's calls
+        mcptoon activity --since today   # only calls since a point in time
+        mcptoon activity --failures      # only calls that failed
         mcptoon activity --export csv    # dump the whole ledger as csv/json
         mcptoon activity --clear         # wipe the ledger (usage counters stay)
     """
     rest = rest or []
     if rest and rest[0] in ("-h", "--help"):
-        print("Usage: mcptoon activity [--head N] [--json] [--summary] [--host H] [--export json|csv] [--follow] [--clear]")
+        print("Usage: mcptoon activity [--head N] [--json] [--summary] [--host H] [--since WHEN] [--failures] [--export json|csv] [--follow] [--clear]")
         print("")
         print("  One line per tool call mcptoon routed: time, host, tool, tokens.")
         print("  Answers \"is mcptoon being used, and by which agent?\"")
         print("      mcptoon activity              last 20 routed calls")
         print("      mcptoon activity --summary    totals: today, last host, by host")
         print("      mcptoon activity --host H     only calls from agent H (e.g. Cursor)")
+        print("      mcptoon activity --since W    only calls since W: today, 1h, 24h,")
+        print("                                    or a date like 2026-10-18")
+        print("      mcptoon activity --failures   only calls that failed")
         print("      mcptoon activity --export csv dump the WHOLE ledger as csv (or json)")
         print("      mcptoon activity --follow     stream new calls live (Ctrl-C to stop)")
         print("      mcptoon activity --clear      wipe the ledger (usage stays)")
@@ -2707,6 +2753,30 @@ def _cmd_activity(rest, fmt, head_n=0, max_chars=0, full=False):
             host_filter = a.split("=", 1)[1]
             break
 
+    # `--since <when>`: "today / 1h / 24h / 7d / 2026-10-18". A cutoff timestamp;
+    # entries older than it are dropped. Parsed here so the list, export, and
+    # failures views all honour it the same way.
+    since_arg = None
+    for i, a in enumerate(rest):
+        if a == "--since" and i + 1 < len(rest):
+            since_arg = rest[i + 1]
+            break
+        if a.startswith("--since="):
+            since_arg = a.split("=", 1)[1]
+            break
+    since_ts = None
+    if since_arg is not None:
+        since_ts = _parse_since(since_arg)
+        if since_ts is None:
+            print(f"mcptoon activity: could not understand --since {since_arg!r}",
+                  file=sys.stderr)
+            print("  Try: --since today | 1h | 24h | 7d | 2026-10-18", file=sys.stderr)
+            sys.exit(2)
+
+    # `--failures`: only the red lines. Debugging does not want to scroll past
+    # hundreds of ok calls to find the ones that broke.
+    failures_only = "--failures" in rest
+
     # `--export json|csv`: the whole ledger, not the on-screen tail. The default
     # view shows the last 20; an audit or a bug report wants all of it in a form a
     # spreadsheet or `jq` can take. Bare `--export` defaults to json.
@@ -2722,12 +2792,13 @@ def _cmd_activity(rest, fmt, head_n=0, max_chars=0, full=False):
             break
 
     if export_fmt:
-        return _activity_export(export_fmt, host_filter)
+        return _activity_export(export_fmt, host_filter, since_ts=since_ts,
+                                failures_only=failures_only)
 
     # `--follow`: block and stream new calls (tail -f). Handled before the
     # snapshot views so it never falls through to a one-shot print.
     if "--follow" in rest:
-        return _activity_follow(host_filter)
+        return _activity_follow(host_filter, failures_only=failures_only)
 
     if "--clear" in rest:
         path = usage_mod._activity_file()
@@ -2761,6 +2832,19 @@ def _cmd_activity(rest, fmt, head_n=0, max_chars=0, full=False):
         print("mcptoon activity — summary")
         print(f"  Calls recorded  : {n}")
         print(f"  Today           : {summary['today_calls']}")
+        # Reliability: success vs failure over this window, plus how slow the timed
+        # calls were. "Was it reliable?" used to be unanswerable from the tail.
+        ok_c = summary.get("ok_count", 0)
+        fail_c = summary.get("fail_count", 0)
+        if n:
+            rate = ok_c / n * 100
+            print(f"  Success         : {ok_c}/{n} ({rate:.1f}%)"
+                  + (f"  ·  {fail_c} failed" if fail_c else ""))
+        slow_c = summary.get("slow_count", 0)
+        avg_ms = summary.get("avg_ms")
+        if avg_ms is not None:
+            slow_tail = f"  ·  {slow_c} slow (>{_SLOW_CALL_MS} ms)" if slow_c else ""
+            print(f"  Latency         : avg {avg_ms:,} ms{slow_tail}")
         last_ts = summary.get("last_ts")
         when = (time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(last_ts))
                 if isinstance(last_ts, (int, float)) else "—")
@@ -2785,7 +2869,17 @@ def _cmd_activity(rest, fmt, head_n=0, max_chars=0, full=False):
         return
 
     limit = head_n if head_n and head_n > 0 else 20
-    entries = usage_mod.read_activity(limit=limit, host=host_filter)
+    entries = usage_mod.read_activity(limit=0, host=host_filter)
+    # `--since` / `--failures` narrow the set before the head cap is applied, so
+    # `--failures --head 20` means "the last 20 failures", not "failures among the
+    # last 20 calls".
+    if since_ts is not None:
+        entries = [e for e in entries
+                   if isinstance(e.get("ts"), (int, float)) and e["ts"] >= since_ts]
+    if failures_only:
+        entries = [e for e in entries if not e.get("ok")]
+    if limit:
+        entries = entries[:limit]
     total = usage_mod.activity_summary()["entries"]
 
     if fmt in ("toon", "mcptoon", "compact", "json"):
@@ -2793,15 +2887,23 @@ def _cmd_activity(rest, fmt, head_n=0, max_chars=0, full=False):
                    "path": str(usage_mod._activity_file())}
         if host_filter:
             payload["host"] = host_filter
+        if since_arg is not None:
+            payload["since"] = since_arg
+        if failures_only:
+            payload["failures_only"] = True
         print(output.render(output.stamp_schema(payload), fmt=fmt, head_n=head_n,
                             max_chars=max_chars, full=full))
         return
 
     if not entries:
-        if host_filter:
+        if failures_only:
+            print("No failed calls recorded in this window — good news.")
+        elif host_filter:
             print(f"No routed calls recorded from host {host_filter!r}.")
             print("  Drop --host to see every agent, or `mcptoon activity --summary`"
                   " for the by-host totals.")
+        elif since_arg is not None:
+            print(f"No routed calls recorded since {since_arg!r}.")
         else:
             print("No routed calls recorded yet.")
             print("  Use a tool through mcptoon (or let your agent use one), then check"
@@ -2809,8 +2911,15 @@ def _cmd_activity(rest, fmt, head_n=0, max_chars=0, full=False):
         print(f"  Ledger: {usage_mod._activity_file()}")
         return
 
-    scope = f" from {host_filter}" if host_filter else ""
-    print(f"mcptoon activity — last {len(entries)} routed call"
+    scope = ""
+    if host_filter:
+        scope += f" from {host_filter}"
+    if since_arg is not None:
+        scope += f" since {since_arg}"
+    if failures_only:
+        scope += " (failures only)"
+    label = "failed call" if failures_only else "routed call"
+    print(f"mcptoon activity — last {len(entries)} {label}"
           f"{'' if len(entries) == 1 else 's'}{scope}")
     line = "─" * 66
     print(line)
@@ -2854,14 +2963,16 @@ def _activity_line(e: dict) -> str:
     return "\n".join(out)
 
 
-def _activity_follow(host_filter=None, interval: float = 1.0) -> None:
+def _activity_follow(host_filter=None, interval: float = 1.0,
+                     failures_only: bool = False) -> None:
     """Stream new ledger lines as they arrive, like `tail -f`. Ctrl-C to stop.
 
     Polls the ledger file for new lines rather than watching it (portable, and the
     ledger is appended by many short-lived processes that a file-watch would miss).
     Starts from the CURRENT end so it shows what happens next, not history — pair
-    with a plain `mcptoon activity` to see the past. Only the fields already in the
-    ledger are shown; nothing is inferred.
+    with a plain `mcptoon activity` to see the past. Honours ``--host`` and
+    ``--failures``. Only the fields already in the ledger are shown; nothing is
+    inferred.
     """
     path = usage_mod._activity_file()
     try:
@@ -2895,6 +3006,8 @@ def _activity_follow(host_filter=None, interval: float = 1.0) -> None:
                         if not isinstance(e, dict):
                             continue
                         if host_filter is not None and e.get("host") != host_filter:
+                            continue
+                        if failures_only and e.get("ok"):
                             continue
                         print(_activity_line(e))
                 time.sleep(interval)
