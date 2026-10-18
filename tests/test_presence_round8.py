@@ -80,18 +80,20 @@ def test_since_bad_value_exits_2(ledger, capsys):
     assert exc.value.code == 2
 
 
-def test_since_applies_before_the_head_cap(ledger, capsys):
-    # 3 old + 2 recent; --since 1h --head 1 must show the newest RECENT one, not
-    # a slice of the unfiltered set.
-    for i in range(3):
-        usage.track_call("fetch", f"old{i}", ok=True, tokens_est=1)
-        _age_last_line(ledger, 3 * 86400)
-    usage.track_call("fetch", "new1", ok=True, tokens_est=1)
-    usage.track_call("fetch", "new2", ok=True, tokens_est=1)
-    cli._cmd_activity(["--since", "1h", "--head", "1"], "auto")
+def test_failures_applied_before_the_head_cap(ledger, capsys):
+    # The head cap must apply AFTER the --failures filter, so `--failures --head 2`
+    # means "the last 2 failures", not "failures among the last 2 calls". Interleave
+    # successes so the two readings actually differ: newest-first is
+    # f3, ok, ok, f2, ok, ok, f1, ok. Cap-first would keep f3, ok -> 1 failure;
+    # filter-first keeps f3, f2, f1 -> head 2 -> f3, f2.
+    for name in ("f1", "ok", "ok", "f2", "ok", "ok", "f3", "ok"):
+        ok = name == "ok"
+        usage.track_call("fetch", name, ok=ok, tokens_est=1,
+                         err=None if ok else "e")
+    cli._cmd_activity(["--failures"], "auto", head_n=2)
     out = capsys.readouterr().out
-    assert "new2" in out
-    assert "old" not in out
+    assert "fetch:f3" in out and "fetch:f2" in out
+    assert "fetch:f1" not in out
 
 
 # ─── 2. --failures ──────────────────────────────────────────────────────────
