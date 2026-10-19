@@ -180,6 +180,17 @@ version per the one-release-per-topic rule.
   "did it give me a capability today?", distinct from a generic routed call.
   `status --json` carries `activity_today_skills`; summary carries `first_ts`
   ("how far back does this history go?").
+- **`activity --tool <server:tool|tool>` and `--search <keyword>` filter the view.**
+  `--tool` narrows to one tool (server:tool or a bare tool name); `--search` is a
+  case-insensitive substring match over host/server/tool/detail/err — "when did
+  that METHOD_NOT_FOUND happen?" no longer needs reading every line. Both compose
+  with `--since` / `--host` / `--failures` / `--export` / `--top`.
+- **`activity --export csv` now includes the `ms` column.** It was in the json
+  export but missing from csv, so a spreadsheet dropped every call's duration.
+- **`activity --summary` reports p50/p90 latency, not just the mean.** One 8s call
+  among ninety 20ms calls barely moves the average yet is the one the user
+  remembers; p50 says what a typical call costs, p90 what a bad one costs
+  (nearest-rank, no interpolation — the honest reading for a small sample).
 
 ### Fixed
 

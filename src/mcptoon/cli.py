@@ -62,7 +62,7 @@ KNOWN_FLAGS = frozenset(
         "--no-env", "--no-local", "--no-network", "--no-self", "--no-sync", "--npm", "--pip",
         "--quiet", "--quick", "--query", "--raw", "--remove", "--request-state", "--roots", "--search",
         "--summary", "--clear", "--host", "--export", "--follow", "--since",
-        "--failures", "--before",
+        "--failures", "--before", "--tool", "--search",
         "--self", "--pack", "--packs",
         "--slim", "--smart",
         "--stdin", "--stdio", "--takeover", "--timeout", "--tombstone", "--toon", "--tools-k", "--top",
@@ -2650,8 +2650,40 @@ def _parse_since(arg: str):
     return None
 
 
+def _activity_filter(entries, since_ts=None, failures_only=False,
+                     tool_filter=None, search_arg=None):
+    """Apply the shared narrowing filters to a list of ledger entries.
+
+    One place for --since / --failures / --tool / --search so the list view,
+    export, top, and follow can never disagree about what "matching" means.
+    Order-independent; each filter is a pure predicate.
+    """
+    out = entries
+    if since_ts is not None:
+        out = [e for e in out
+               if isinstance(e.get("ts"), (int, float)) and e["ts"] >= since_ts]
+    if failures_only:
+        out = [e for e in out if not e.get("ok")]
+    if tool_filter:
+        want = tool_filter.strip()
+        if ":" in want:
+            srv, tl = want.split(":", 1)
+            out = [e for e in out
+                   if e.get("server") == srv and e.get("tool") == tl]
+        else:
+            out = [e for e in out if e.get("tool") == want]
+    if search_arg:
+        needle = search_arg.lower()
+        def _hit(e):
+            hay = " ".join(str(e.get(k, "")) for k in
+                           ("host", "server", "tool", "detail", "err"))
+            return needle in hay.lower()
+        out = [e for e in out if _hit(e)]
+    return out
+
+
 def _activity_export(export_fmt: str, host_filter=None, since_ts=None,
-                     failures_only=False) -> None:
+                     failures_only=False, tool_filter=None, search_arg=None) -> None:
     """Dump the whole activity ledger as json or csv on stdout. Never raises.
 
     The on-screen `activity` view is a tail; an audit or a pasted bug report wants
@@ -2661,15 +2693,13 @@ def _activity_export(export_fmt: str, host_filter=None, since_ts=None,
     local file — this prints it, uploads nothing.
     """
     entries = usage_mod.read_activity(limit=0, host=host_filter)
-    if since_ts is not None:
-        entries = [e for e in entries
-                   if isinstance(e.get("ts"), (int, float)) and e["ts"] >= since_ts]
-    if failures_only:
-        entries = [e for e in entries if not e.get("ok")]
+    entries = _activity_filter(entries, since_ts=since_ts, failures_only=failures_only,
+                               tool_filter=tool_filter, search_arg=search_arg)
     entries = list(reversed(entries))  # chronological for humans and spreadsheets
     if export_fmt == "csv":
         import csv as _csv
-        cols = ["ts", "iso", "host", "server", "tool", "ok", "tokens", "detail", "err"]
+        cols = ["ts", "iso", "host", "server", "tool", "ok", "tokens", "ms",
+                "detail", "err"]
         writer = _csv.writer(sys.stdout)
         writer.writerow(cols)
         for e in entries:
@@ -2684,6 +2714,10 @@ def _activity_export(export_fmt: str, host_filter=None, since_ts=None,
                 e.get("tool", ""),
                 "ok" if e.get("ok") else "error",
                 e.get("tokens") or 0,
+                # `ms` was in json but missing from csv, so an export to a
+                # spreadsheet silently dropped every call's duration. Empty when
+                # the call was not timed, never a fake 0.
+                e.get("ms") if isinstance(e.get("ms"), int) else "",
                 e.get("detail", ""),
                 e.get("err", ""),
             ])
@@ -2734,6 +2768,8 @@ def _cmd_activity(rest, fmt, head_n=0, max_chars=0, full=False):
         print("      mcptoon activity --since W    only calls since W: today, 1h, 24h,")
         print("                                    or a date like 2026-10-18")
         print("      mcptoon activity --failures   only calls that failed")
+        print("      mcptoon activity --tool T     only calls to tool T (server:tool or tool)")
+        print("      mcptoon activity --search K   only calls mentioning keyword K")
         print("      mcptoon activity --top [N]    rank by host and by tool (default 10)")
         print("      mcptoon activity --export csv dump the WHOLE ledger as csv (or json)")
         print("      mcptoon activity --follow     stream new calls live (Ctrl-C to stop)")
@@ -2779,6 +2815,30 @@ def _cmd_activity(rest, fmt, head_n=0, max_chars=0, full=False):
     # hundreds of ok calls to find the ones that broke.
     failures_only = "--failures" in rest
 
+    # `--tool <name>`: only calls to one tool. Accepts `server:tool` or a bare
+    # `tool` (matches on the tool half). Debugging one integration should not mean
+    # eyeballing every other server's lines.
+    tool_filter = None
+    for i, a in enumerate(rest):
+        if a == "--tool" and i + 1 < len(rest):
+            tool_filter = rest[i + 1]
+            break
+        if a.startswith("--tool="):
+            tool_filter = a.split("=", 1)[1]
+            break
+
+    # `--search <keyword>`: a free-text filter over host/server/tool/detail/err.
+    # "when did that METHOD_NOT_FOUND happen?" is a substring question the per-line
+    # view answers only by eye. Case-insensitive.
+    search_arg = None
+    for i, a in enumerate(rest):
+        if a == "--search" and i + 1 < len(rest):
+            search_arg = rest[i + 1]
+            break
+        if a.startswith("--search="):
+            search_arg = a.split("=", 1)[1]
+            break
+
     # `--top [N]`: rank by host and by tool instead of listing lines. "Which agent
     # leans on me most, and which capability?" is a counting question the per-line
     # tail cannot answer. Bare `--top` defaults to 10; honours --since/--host.
@@ -2809,7 +2869,8 @@ def _cmd_activity(rest, fmt, head_n=0, max_chars=0, full=False):
 
     if export_fmt:
         return _activity_export(export_fmt, host_filter, since_ts=since_ts,
-                                failures_only=failures_only)
+                                failures_only=failures_only, tool_filter=tool_filter,
+                                search_arg=search_arg)
 
     # `--follow`: block and stream new calls (tail -f). Handled before the
     # snapshot views so it never falls through to a one-shot print.
@@ -2867,7 +2928,8 @@ def _cmd_activity(rest, fmt, head_n=0, max_chars=0, full=False):
 
     if top_n is not None:
         return _activity_top(top_n, fmt, host_filter=host_filter, since_ts=since_ts,
-                             failures_only=failures_only, head_n=head_n,
+                             failures_only=failures_only, tool_filter=tool_filter,
+                             search_arg=search_arg, head_n=head_n,
                              max_chars=max_chars, full=full)
 
     if "--summary" in rest:
@@ -2896,6 +2958,12 @@ def _cmd_activity(rest, fmt, head_n=0, max_chars=0, full=False):
         if avg_ms is not None:
             slow_tail = f"  ·  {slow_c} slow (>{_SLOW_CALL_MS} ms)" if slow_c else ""
             print(f"  Latency         : avg {avg_ms:,} ms{slow_tail}")
+            # p50/p90: the mean hides a long tail; these say what a typical and a
+            # bad call cost. Only shown when there are timed calls to measure.
+            p50 = summary.get("p50_ms")
+            p90 = summary.get("p90_ms")
+            if p50 is not None and p90 is not None:
+                print(f"                    p50 {p50:,} ms  ·  p90 {p90:,} ms")
         last_ts = summary.get("last_ts")
         when = (time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(last_ts))
                 if isinstance(last_ts, (int, float)) else "—")
@@ -2925,14 +2993,11 @@ def _cmd_activity(rest, fmt, head_n=0, max_chars=0, full=False):
 
     limit = head_n if head_n and head_n > 0 else 20
     entries = usage_mod.read_activity(limit=0, host=host_filter)
-    # `--since` / `--failures` narrow the set before the head cap is applied, so
-    # `--failures --head 20` means "the last 20 failures", not "failures among the
-    # last 20 calls".
-    if since_ts is not None:
-        entries = [e for e in entries
-                   if isinstance(e.get("ts"), (int, float)) and e["ts"] >= since_ts]
-    if failures_only:
-        entries = [e for e in entries if not e.get("ok")]
+    # `--since` / `--failures` / `--tool` / `--search` narrow the set before the
+    # head cap is applied, so `--failures --head 20` means "the last 20 failures",
+    # not "failures among the last 20 calls".
+    entries = _activity_filter(entries, since_ts=since_ts, failures_only=failures_only,
+                               tool_filter=tool_filter, search_arg=search_arg)
     if limit:
         entries = entries[:limit]
     total = usage_mod.activity_summary()["entries"]
@@ -2946,6 +3011,10 @@ def _cmd_activity(rest, fmt, head_n=0, max_chars=0, full=False):
             payload["since"] = since_arg
         if failures_only:
             payload["failures_only"] = True
+        if tool_filter:
+            payload["tool"] = tool_filter
+        if search_arg:
+            payload["search"] = search_arg
         print(output.render(output.stamp_schema(payload), fmt=fmt, head_n=head_n,
                             max_chars=max_chars, full=full))
         return
@@ -2953,6 +3022,10 @@ def _cmd_activity(rest, fmt, head_n=0, max_chars=0, full=False):
     if not entries:
         if failures_only:
             print("No failed calls recorded in this window — good news.")
+        elif tool_filter:
+            print(f"No routed calls recorded for tool {tool_filter!r} in this window.")
+        elif search_arg:
+            print(f"No routed calls matching {search_arg!r} in this window.")
         elif host_filter:
             print(f"No routed calls recorded from host {host_filter!r}.")
             print("  Drop --host to see every agent, or `mcptoon activity --summary`"
@@ -2969,6 +3042,10 @@ def _cmd_activity(rest, fmt, head_n=0, max_chars=0, full=False):
     scope = ""
     if host_filter:
         scope += f" from {host_filter}"
+    if tool_filter:
+        scope += f" on {tool_filter}"
+    if search_arg:
+        scope += f" matching {search_arg!r}"
     if since_arg is not None:
         scope += f" since {since_arg}"
     if failures_only:
@@ -3072,7 +3149,8 @@ def _activity_prune_before(path, cutoff: float):
 
 
 def _activity_top(top_n: int, fmt: str, host_filter=None, since_ts=None,
-                  failures_only=False, head_n=0, max_chars=0, full=False) -> None:
+                  failures_only=False, tool_filter=None, search_arg=None,
+                  head_n=0, max_chars=0, full=False) -> None:
     """Rank the ledger by host and by tool — "who uses me most, on what?".
 
     The per-line tail shows what happened; this aggregates it. Two tables: by host
@@ -3082,11 +3160,8 @@ def _activity_top(top_n: int, fmt: str, host_filter=None, since_ts=None,
     window (capped at activity_keep), not lifetime — labelled as such in the footer.
     """
     entries = usage_mod.read_activity(limit=0, host=host_filter)
-    if since_ts is not None:
-        entries = [e for e in entries
-                   if isinstance(e.get("ts"), (int, float)) and e["ts"] >= since_ts]
-    if failures_only:
-        entries = [e for e in entries if not e.get("ok")]
+    entries = _activity_filter(entries, since_ts=since_ts, failures_only=failures_only,
+                               tool_filter=tool_filter, search_arg=search_arg)
 
     by_host: dict[str, int] = {}
     by_tool: dict[str, int] = {}

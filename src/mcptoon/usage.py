@@ -371,6 +371,7 @@ def activity_summary() -> dict:
     slow_count = 0
     ms_total = 0
     ms_count = 0
+    ms_values: list[int] = []
     today_skill_dist = 0
     today = time.strftime("%Y-%m-%d")
     for raw in lines:
@@ -394,6 +395,7 @@ def activity_summary() -> dict:
         if isinstance(ms, int) and ms >= 0:
             ms_total += ms
             ms_count += 1
+            ms_values.append(ms)
             if ms >= 3000:
                 slow_count += 1
         ts = e.get("ts")
@@ -445,7 +447,27 @@ def activity_summary() -> dict:
         "fail_count": fail_count,
         "slow_count": slow_count,
         "avg_ms": int(ms_total / ms_count) if ms_count else None,
+        # Percentiles: the mean hides a long tail — one 8s call among ninety 20ms
+        # calls barely moves it, yet it is the call the user remembers. p50 says
+        # "what a typical call costs", p90 says "what a bad one costs". Nearest-rank,
+        # pure stdlib, no interpolation (the honest reading for a small sample).
+        "p50_ms": _percentile(ms_values, 50),
+        "p90_ms": _percentile(ms_values, 90),
     }
+
+
+def _percentile(values: "list[int]", pct: int) -> "int | None":
+    """Nearest-rank percentile of a list of ints. None when empty.
+
+    Nearest-rank (not interpolated): for a small sample the interpolated value is a
+    number no call actually took, which is misleading. Index = ceil(pct/100 * n)-1.
+    """
+    if not values:
+        return None
+    s = sorted(values)
+    n = len(s)
+    rank = max(1, (pct * n + 99) // 100)  # ceil(pct/100 * n), at least 1
+    return s[min(rank, n) - 1]
 
 
 def _lifetime_calls(data: dict) -> int:
