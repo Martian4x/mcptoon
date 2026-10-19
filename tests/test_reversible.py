@@ -656,6 +656,60 @@ class TestDestructiveCommandsCannotEscapeTheSandbox(_IsolatedHome):
         self.assertTrue(outside.exists())
         self.assertIn("Refused to delete", out)
 
+    # ── The plan must say what the user LOSES, not only what files vanish ──────
+    def _seed_history(self, calls=42, days_ago=30):
+        """Write a usage.json with a known tally into the sandboxed cache."""
+        import time
+        ts = time.time() - days_ago * 86400
+        payload = {
+            "calls": [{"server": "s", "tool": "t", "ok": True, "tokens": 100, "ts": ts}],
+            "total": calls,
+            "result_tokens": 100,
+        }
+        (self.cache / "usage.json").write_text(json.dumps(payload), encoding="utf-8")
+
+    def test_uninstall_plan_names_the_savings_history_it_would_destroy(self):
+        """The whole point: a user who watched a number climb is told it dies."""
+        self._seed_history(calls=1234, days_ago=30)
+        out = _run_main(["uninstall", "--dry"])
+        self.assertIn("You will lose", out)
+        self.assertIn("1,234", out, "the routed-call count must be shown, not just 'the cache'")
+        self.assertIn("savings history", out)
+
+    def test_uninstall_keep_history_clears_cache_but_keeps_the_tally(self):
+        """--keep-history empties the cache (rebuildable) yet keeps usage.json."""
+        self._seed_history(calls=99)
+        (self.cache / "schema_cache.json").write_text("{}", encoding="utf-8")
+        (self.cache / "schema_cache").mkdir()
+        _run_main(["uninstall", "--yes", "--keep-history"])
+        self.assertTrue((self.cache / "usage.json").exists(),
+                        "--keep-history deleted the savings tally it promised to keep")
+        self.assertFalse((self.cache / "schema_cache.json").exists(),
+                         "the rebuildable schema cache should have been cleared")
+        self.assertFalse((self.cache / "schema_cache").exists())
+
+    def test_uninstall_keep_history_says_so_in_the_plan(self):
+        self._seed_history()
+        out = _run_main(["uninstall", "--dry", "--keep-history"])
+        self.assertIn("KEEPING usage.json", out)
+        self.assertNotIn("You will lose", out)
+
+    def test_uninstall_without_keep_history_deletes_the_cache(self):
+        """The default still removes the whole cache dir — that behaviour is pinned."""
+        self._seed_history()
+        _run_main(["uninstall", "--yes"])
+        self.assertFalse(self.cache.exists(), "default uninstall should remove the cache dir")
+
+    def test_history_summary_reads_the_env_override_not_the_import_constant(self):
+        """The import-time-constant bug: summary must follow MCPTOON_CACHE_DIR."""
+        self._seed_history(calls=7)
+        paths = cfg.state_paths()
+        summary = cli._uninstall_history_summary(paths["cache"])
+        self.assertIsNotNone(summary)
+        self.assertEqual(summary["calls"], 7)
+        # And a cache dir with no usage.json yields None, not a crash.
+        self.assertIsNone(cli._uninstall_history_summary([self.home / "empty"]))
+
 
 class TestSafeRmtree(unittest.TestCase):
     """`uninstall` refuses to recursively delete a directory it does not own.

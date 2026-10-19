@@ -265,6 +265,13 @@ def _rows_and_tail(facts: dict, skills: int | None, lng: str, stream) -> tuple[l
             ("下一步" if zh else "Next", "mcptoon status",
              "一屏看全部" if zh else "everything in one screen"),
             ("", "mcptoon skills list", "你的技能包" if zh else "the skills you own"),
+            # "Found / In context" tells the user it saves; this tells them where
+            # to WATCH it save. Without it the card explains a saving the user has
+            # no way to see on their own — the exact gap that gets a tool deleted
+            # once the novelty wears off (2026-10-19).
+            ("看得见" if zh else "See it", "mcptoon statusline",
+             "状态栏徽章（Claude Code 用 --install）" if zh
+             else "the badge (Claude Code: --install)"),
         ]
     else:
         rows += [("下一步" if zh else "Next", "mcptoon quickstart",

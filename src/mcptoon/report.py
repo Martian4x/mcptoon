@@ -136,6 +136,7 @@ def build(query: str = "make a PDF", k: int = 5) -> dict:
             "window": usage["window_calls"],
             "success_rate": usage["success_rate"],
             "result_tokens_lifetime": usage["lifetime_result_tokens"],
+            "first_call_ts": usage.get("first_call_ts"),
         },
     }
 
@@ -147,6 +148,36 @@ def _fmt(n) -> str:
 def _row(label: str, tokens, suffix: str = "", width: int = 22) -> str:
     """One `label   tokens   suffix` line — never an f-string with nested quotes."""
     return f"     {label:<{width}}{_fmt(tokens):>12}{suffix}"
+
+
+def _history_span(first_ts, total, lng: str = "en") -> str:
+    """A one-line "since <date> · N days · ~M calls/day" from the first-call stamp.
+
+    Returns "" when there is nothing to date (no timestamp, or a nonsensical one).
+    The per-day rate is floored to a whole number and never shown for a span under
+    a day — dividing by zero days would invent a rate, and a same-day install has
+    no meaningful "per day" yet.
+    """
+    if not isinstance(first_ts, (int, float)) or first_ts <= 0:
+        return ""
+    from datetime import datetime
+
+    zh = lng == "zh"
+    try:
+        first = datetime.fromtimestamp(first_ts)
+    except (OSError, OverflowError, ValueError):
+        return ""
+    days = max(0, (datetime.now() - first).days)
+    date_str = first.strftime("%Y-%m-%d")
+    if zh:
+        base = f"自 {date_str} 起 · 已 {days} 天"
+        if days >= 1 and total:
+            base += f" · 平均每天约 {int(total // days):,} 次"
+    else:
+        base = f"since {date_str} · {days} day(s)"
+        if days >= 1 and total:
+            base += f" · ~{int(total // days):,} calls/day"
+    return base
 
 
 def render(data: dict, lng: str = "en") -> str:
@@ -226,6 +257,12 @@ def render(data: dict, lng: str = "en") -> str:
     a(_row(L_("calls routed", "累计转发调用"), c["total"],
            f"   ({c['success_rate']} ok)" if c["total"] else ""))
     a(_row(L_("result tokens through", "累计处理结果 token"), c["result_tokens_lifetime"]))
+    # The span, so a lifetime total becomes something the user can feel. A raw
+    # count of 2,920 says nothing about how long they have trusted the tool; "over
+    # 14 days, ~209 calls/day" does. Only shown when there is history to date.
+    span = _history_span(c.get("first_call_ts"), c.get("total"), lng)
+    if span:
+        a("     " + span)
     a("     " + L_("note: turns are not counted, so no cumulative-turn figure is invented",
                    "注：不统计『轮数』，故不编造累计轮次节省"))
     a("")

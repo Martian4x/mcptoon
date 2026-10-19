@@ -328,7 +328,7 @@ def _write_skill_pointer(path: Path) -> dict:
             sep = "\n"
         else:
             sep = "\n\n"
-        path.write_text(existing_content + sep + _SKILL_POINTER_BLOCK,
+        path.write_text(existing_content + sep + _skill_pointer_block(),
                         encoding="utf-8")
         return {"path": str(path), "written": True, "error": None}
     except OSError as e:
@@ -554,9 +554,14 @@ def _is_gateway_entry(cfg: object) -> bool:
 # them; a line in the file they already read on every session is the only way the
 # catalog becomes discoverable. Kept to one heading + a few lines so it is cheap
 # to carry on every turn, and heading-anchored so the write is idempotent.
+#
+# The heading stays English on purpose: it is the anchor `_strip_skill_pointer`
+# and the idempotency check key on, and changing it per language would make a
+# machine that switched language leave an un-strippable block behind. Only the
+# *body* follows `resolve_lang`, so the prose a model reads matches the rest of
+# the user's surface while the machine-readable anchor stays stable.
 _SKILL_POINTER_HEADING = "## Skill catalog (mcptoon)"
-_SKILL_POINTER_BLOCK = f"""{_SKILL_POINTER_HEADING}
-
+_SKILL_POINTER_BODY_EN = """
 This machine has a skill catalog managed by mcptoon. Before acting on a task,
 find the right skill first — do not guess, and do not read the whole catalog:
 
@@ -565,11 +570,44 @@ find the right skill first — do not guess, and do not read the whole catalog:
 Read only the SKILL.md files it returns. If it finds nothing, rephrase and try
 again, or run `mcptoon skills list` to pick a name by eye. Tools live behind the
 same gateway: `mcptoon manifest` lists them.
+
+mcptoon also keeps this machine's tool schemas out of your context — that is where
+the token saving comes from (definition-side: the schemas never load). To see the
+live one-line receipt — tools exposed, tokens saved, calls routed — run:
+
+    mcptoon statusline
+
+and quote that line when the user asks what mcptoon is doing for them.
+"""
+_SKILL_POINTER_BODY_ZH = """
+这台机器的技能目录由 mcptoon 管理。动手前先找对技能——不要猜，也不要整本读：
+
+    mcptoon skills resolve "<用户的需求>" --k 5
+
+只读它返回的那几个 SKILL.md。找不到就换个说法再试，或用 `mcptoon skills list`
+按名字挑。工具在同一个网关后面：`mcptoon manifest` 列出它们。
+
+mcptoon 还把这台机器的工具说明书挡在你的上下文之外——省 token 就省在这里
+（定义侧：那些 schema 从不加载）。想看实时的一行回执（暴露了几个工具、省了多少
+token、转发了几次），运行：
+
+    mcptoon statusline
+
+用户问「mcptoon 到底在为我做什么」时，把这一行念给他。
 """
 
 
+def _skill_pointer_block(lng: str | None = None) -> str:
+    """The pointer block in the resolved language (heading always English)."""
+    if lng is None:
+        from . import config as _cfg
+        lng = _cfg.resolve_lang()
+    body = _SKILL_POINTER_BODY_ZH if lng == "zh" else _SKILL_POINTER_BODY_EN
+    return _SKILL_POINTER_HEADING + "\n" + body
+
+
 def _strip_skill_pointer(text: str) -> str:
-    """Remove exactly the block `_SKILL_POINTER_BLOCK` inserted, nothing else.
+    """Remove exactly the block `_write_skill_pointer` inserted, nothing else.
 
     Two cases:
 
@@ -577,7 +615,9 @@ def _strip_skill_pointer(text: str) -> str:
        that span plus the one blank-line separator before it. Anything the user
        wrote *after* the block survives, because only the block itself is cut.
        This is what makes `off`/`restore` safe when the user appends their own
-       content below the pointer.
+       content below the pointer. Both the English and the Chinese body are tried:
+       the block may have been written under either language setting, and a
+       language switch between write and strip must not leave the block behind.
     2. The heading is present but the body has drifted (an older block format):
        fall back to cutting from the heading to the next ``## `` heading (or EOF) —
        never mid-line. Case 1 already covers the real, current block, so this only
@@ -588,16 +628,18 @@ def _strip_skill_pointer(text: str) -> str:
     pointer after install, and a next-heading scan would swallow it. Byte-
     reversible for `_write_skill_pointer`; used by the undo path (`off`/`restore`).
     """
-    if _SKILL_POINTER_BLOCK in text:
-        idx = text.find(_SKILL_POINTER_BLOCK)
-        before = text[:idx]
-        after = text[idx + len(_SKILL_POINTER_BLOCK):]
-        # Drop the one blank-line separator the writer inserted before the heading.
-        # `after` is kept verbatim: anything the user wrote below the block comes
-        # back exactly.
-        if before.endswith("\n\n"):
-            before = before[:-1]
-        return before + after
+    for block in (_SKILL_POINTER_HEADING + "\n" + _SKILL_POINTER_BODY_EN,
+                  _SKILL_POINTER_HEADING + "\n" + _SKILL_POINTER_BODY_ZH):
+        if block in text:
+            idx = text.find(block)
+            before = text[:idx]
+            after = text[idx + len(block):]
+            # Drop the one blank-line separator the writer inserted before the heading.
+            # `after` is kept verbatim: anything the user wrote below the block comes
+            # back exactly.
+            if before.endswith("\n\n"):
+                before = before[:-1]
+            return before + after
 
     lines = text.splitlines(keepends=True)
     out: list[str] = []
@@ -1123,6 +1165,38 @@ def detect_installed_agents() -> list[dict]:
     return agents
 
 
+def scan_known_hosts() -> dict:
+    """Every host mcptoon KNOWS how to wire, and whether it was found here.
+
+    `detect_installed_agents` deliberately hides the `only_when_present` hosts that
+    are absent — that is right for writing, but it made `sync --self --dry` a black
+    box: a user could not tell whether mcptoon "scanned 12 hosts and found 3" or
+    "only knows about 3". This reports the full roster, so the preview can say
+    "checked N hosts, found M" and name the ones that were not here.
+
+    Returns ``{"known": [...], "found": [...], "absent": [...]}`` where each entry
+    is ``{"id", "name", "path", "exists"}``. A host with several config paths is
+    counted once (the first path decides presence), matching how sync dedupes.
+    """
+    known = []
+    found = []
+    absent = []
+    for spec in _AGENT_SPECS:
+        paths = _paths_for(spec.id)
+        # Presence is decided by the first path, the same evidence sync uses.
+        exists = bool(paths) and _detect_exists(paths[0], spec.detected_by)
+        entry = {
+            "id": spec.id,
+            "name": spec.name,
+            "path": str(paths[0]) if paths else "",
+            "exists": exists,
+            "shape": spec.shape,
+        }
+        known.append(entry)
+        (found if exists else absent).append(entry)
+    return {"known": known, "found": found, "absent": absent}
+
+
 # ─── Sync functions ───
 
 def _read_text_safe(path: Path) -> str | None:
@@ -1596,6 +1670,24 @@ def format_sync_report(results: list[dict], dry_run: bool = False) -> str:
     suffix = f", {pointer_count} skill pointer(s)" if pointer_count else ""
     if dry_run:
         lines.append(f"  Preview: {written_count + sum(1 for r in results if r.get('servers_synced', 0) > 0)} agents would be updated, {total_servers} servers total{suffix}")
+        # Name the roster so the preview is not a black box: "scanned 12, found 3"
+        # answers "does mcptoon even know my host exists?". The absent ones are
+        # listed by name because "not found" for a host the user DOES use is the
+        # one signal that tells them to look at a path.
+        try:
+            scan = scan_known_hosts()
+        except Exception:
+            scan = None
+        if scan and scan.get("known"):
+            lines.append("")
+            n_known = len(scan["known"])
+            n_found = len(scan["found"])
+            lines.append(f"  Scanned {n_known} known host(s) — {n_found} found on this machine:")
+            for e in scan["found"]:
+                lines.append(f"    ✓ {e['name']}")
+            if scan["absent"]:
+                names = ", ".join(e["name"] for e in scan["absent"])
+                lines.append(f"    · not found: {names}")
     else:
         lines.append(f"  Done: {written_count} agents updated, {total_servers} servers synced, {error_count} errors{suffix}")
 

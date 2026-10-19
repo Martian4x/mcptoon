@@ -244,6 +244,136 @@ def gateway_savings(full_tokens: int) -> tuple[int | None, float | None]:
     return gw, round((full_tokens - gw) / full_tokens * 100, 1)
 
 
+def _catalog_fingerprint(servers: list[str]) -> str:
+    """A stat-only fingerprint of every cached schema file: `path:size:mtime`.
+
+    Reads no file contents, so it costs ~0.1 ms for the whole catalog. Any change
+    to a cache file (a refresh, a new server, a deletion) changes the fingerprint
+    and invalidates the memoised token totals.
+
+    Includes the legacy single-file cache (`schema_cache.json`), not just the
+    per-server files: `cache._entry_for` falls back to it, so a server served from
+    the legacy file must still bust the memo when that file changes (measured
+    2026-10-19: omitting it made `footer-facts` return stale totals in tests).
+    """
+    import os
+
+    from . import cache as cache_mod
+
+    parts = []
+    for name in servers:
+        try:
+            st = os.stat(cache_mod._server_file(name))
+            parts.append(f"{name}:{st.st_size}:{st.st_mtime_ns}")
+        except OSError:
+            parts.append(f"{name}:-")
+    try:
+        st = os.stat(cache_mod._legacy_file())
+        parts.append(f"legacy:{st.st_size}:{st.st_mtime_ns}")
+    except OSError:
+        parts.append("legacy:-")
+    return "|".join(parts)
+
+
+def _catalog_token_totals(servers: list[str], encode, caliber: str):
+    """`(tools, full_tokens, slim_tokens)` for the whole cached catalog, memoised.
+
+    Tokenizing every schema is the slow part of `facts()` and it was redone on
+    every prompt. The result is cached in `_TOKEN_TOTALS_CACHE` keyed by a stat
+    fingerprint plus the token caliber, so a turn that changes nothing pays a
+    stat walk instead of a re-tokenize. Falls back to a full recompute on any
+    error — a wrong figure is never cached, and a cache write failure only costs
+    the next caller a recompute.
+    """
+    import json
+
+    from . import cache as cache_mod
+    from . import schema_simplifier
+
+    fp = _catalog_fingerprint(servers)
+    key = f"{caliber}\x00{fp}"
+    cached = _TOKEN_TOTALS_CACHE.get(key)
+    if cached is not None:
+        return cached
+    persisted = _load_token_totals(key)
+    if persisted is not None:
+        _TOKEN_TOTALS_CACHE[key] = persisted
+        return persisted
+
+    total_tools = 0
+    full_tokens = 0
+    slim_tokens = 0
+    for name in servers:
+        tools, _age = cache_mod.get_cached_tools_any_age(name)
+        if tools is None:
+            continue
+        for t in tools:
+            if not isinstance(t, dict) or "error" in t:
+                continue
+            total_tools += 1
+            full_tokens += max(1, int(encode(json.dumps(t, ensure_ascii=False))))
+            slim_tokens += max(1, int(encode(json.dumps(
+                schema_simplifier.simplify_tool_def(t), ensure_ascii=False))))
+
+    result = (total_tools, full_tokens, slim_tokens)
+    # Keep the memo small: one entry per caliber/fingerprint is plenty, and a
+    # bounded dict never grows with the number of turns a long session runs.
+    if len(_TOKEN_TOTALS_CACHE) > 8:
+        _TOKEN_TOTALS_CACHE.clear()
+    _TOKEN_TOTALS_CACHE[key] = result
+    # Best-effort: also persist so a *new process* (the usual case — every prompt
+    # is a fresh `mcptoon statusline`) skips the recompute too.
+    _save_token_totals(key, result)
+    return result
+
+
+# Process-local memo. Persisted across processes in a small JSON file beside the
+# schema cache; both are keyed by the same stat fingerprint.
+_TOKEN_TOTALS_CACHE: dict[str, tuple[int, int, int]] = {}
+_TOKEN_TOTALS_FILE = "footer-token-totals.json"
+
+
+def _token_totals_path():
+    from . import cache as cache_mod
+
+    return cache_mod._cache_dir() / _TOKEN_TOTALS_FILE
+
+
+def _load_token_totals(key: str):
+    import json
+
+    try:
+        with open(_token_totals_path(), encoding="utf-8") as fh:
+            data = json.load(fh)
+        if data.get("key") == key:
+            vals = data.get("totals")
+            if isinstance(vals, list) and len(vals) == 3:
+                return tuple(int(x) for x in vals)
+    except (OSError, ValueError, TypeError):
+        pass
+    return None
+
+
+def _save_token_totals(key: str, totals) -> None:
+    import json
+    import os
+
+    try:
+        path = _token_totals_path()
+        # Never create the cache directory. `mcptoon uninstall` deletes it, and the
+        # footer runs again afterwards; mkdir here would resurrect the directory and
+        # break the promise that uninstall leaves no cache behind (measured
+        # 2026-10-19: this exact file recreated it and failed the uninstall test).
+        if not path.parent.is_dir():
+            return
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps({"key": key, "totals": list(totals)}),
+                       encoding="utf-8")
+        os.replace(tmp, path)
+    except OSError:
+        pass
+
+
 def facts() -> dict:
     """The savings numbers, cache-only — never spawns a server.
 
@@ -267,16 +397,21 @@ def facts() -> dict:
     """
     from . import cache as cache_mod
     from . import config as cfg
-    from . import schema_simplifier
     from . import usage as usage_mod
     from .bench import _tokenizer
 
     servers = cfg.list_servers()
     encode, caliber, _exact = _tokenizer()
 
-    total_tools = 0
-    full_tokens = 0
-    slim_tokens = 0
+    # Tokenizing every full schema is the expensive part (~440 ms on 209 tools,
+    # measured 2026-10-19) and it was being redone on every prompt — `statusline`
+    # and `footer-facts` both call this and both run per turn. The totals are
+    # memoised on a stat-only fingerprint so an unchanged catalog costs ~0 ms.
+    total_tools, full_tokens, slim_tokens = _catalog_token_totals(
+        servers, encode, caliber)
+
+    # Age and the uncached count are cheap (loading the cache is ~24 ms) and are
+    # not cacheable — they change as the clock moves, not as the files change.
     oldest_age: float | None = None
     uncached = 0
     for name in servers:
@@ -286,13 +421,6 @@ def facts() -> dict:
             continue
         if age is not None and (oldest_age is None or age > oldest_age):
             oldest_age = age
-        for t in tools:
-            if not isinstance(t, dict) or "error" in t:
-                continue
-            total_tools += 1
-            full_tokens += max(1, int(encode(json.dumps(t, ensure_ascii=False))))
-            slim_tokens += max(1, int(encode(json.dumps(
-                schema_simplifier.simplify_tool_def(t), ensure_ascii=False))))
 
     saved = max(0, full_tokens - slim_tokens)
     pct = round(saved / full_tokens * 100, 1) if full_tokens else 0.0

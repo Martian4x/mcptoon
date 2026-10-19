@@ -201,12 +201,19 @@ def track_call(server: str, tool: str, ok: bool = True, tokens_est: int | None =
     try:
         with _usage_lock:
             data = _load_usage()
+            now = time.time()
+            # First-ever call stamp: the only way to answer "how long have I been
+            # using this, and how much has it saved in that time". Additive and
+            # backward-compatible — a legacy file without it falls back to the
+            # oldest timestamp still in the capped window (see `first_call_ts`).
+            if "first_ts" not in data:
+                data["first_ts"] = now
             data["calls"].append({
                 "server": server,
                 "tool": tool,
                 "ok": ok,
                 "tokens": int(tokens_est or 0),
-                "ts": time.time(),
+                "ts": now,
             })
             # Keep last 1000 calls
             if len(data["calls"]) > 1000:
@@ -538,7 +545,31 @@ def get_usage_stats() -> dict:
         # routed figure is the remainder.
         "native_calls": _safe_int(data.get("native_total")),
         "routed_calls": max(0, _lifetime_calls(data) - _safe_int(data.get("native_total"))),
+        # When the first call happened (unix seconds), so `report` can turn a
+        # lifetime total into a span the user can feel ("saved X over N days").
+        # None when there is no history at all.
+        "first_call_ts": first_call_ts(data),
     }
+
+
+def first_call_ts(data: dict) -> "float | None":
+    """The timestamp of the first recorded call, or None if there is no history.
+
+    Prefers the explicit ``first_ts`` stamp `track_call` writes on the first call.
+    Falls back to the oldest ``ts`` still in the capped window for a legacy file
+    written before that key existed — that fallback is a lower bound on age (the
+    window holds only the last 1000 calls, so the true first call may be older),
+    which is the honest direction to be wrong in when reporting "since when".
+    """
+    first = data.get("first_ts")
+    if isinstance(first, (int, float)) and first > 0:
+        return float(first)
+    oldest = None
+    for rec in data.get("calls") or []:
+        ts = rec.get("ts") if isinstance(rec, dict) else None
+        if isinstance(ts, (int, float)) and ts > 0:
+            oldest = ts if oldest is None else min(oldest, ts)
+    return float(oldest) if oldest is not None else None
 
 
 def _safe_int(v) -> int:

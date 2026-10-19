@@ -5,6 +5,134 @@ All notable changes to mcptoon will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.24] - 2026-10-20
+
+Wiring the badge into a host, and the defects an adversarial pass over that code
+found. Each fix was reproduced first and is pinned by a test.
+
+### Added
+
+- **`mcptoon statusline --install` / `--uninstall` / `--check` wires the badge into
+  Claude Code.** The one-line badge existed since 0.8.22 but nothing put it where a
+  user would see it, so "I installed mcptoon and cannot tell it is doing anything"
+  stayed true. `--install` points `statusLine.command` in `~/.claude/settings.json`
+  at `mcptoon statusline`; `--uninstall` removes exactly that entry; `--check`
+  reports the state and exits non-zero when not wired, so `doctor` and scripts can
+  gate on it. Idempotent, refuses to overwrite a different statusLine, and never
+  touches any other key.
+- **Every host tier now carries a "mcptoon is doing this" signal, not just the
+  savings number.** A user who sees the gateway forward a call but never sees the
+  saving has a tool they cannot justify keeping — the worry is not "I cannot see
+  it", it is "I see it forwarding and cannot see it saving, so I will delete it".
+  Three surfaces close that gap, one per host tier: (1) the **status-line badge**
+  (Claude Code's status bar) already shows calls and tokens together; (2) the
+  **pointer block** written into `AGENTS.md`-style files (Codex, Gemini CLI, Qwen
+  Code, Zed, Crush, opencode, Claude Code) now also states that the saving is
+  definition-side and tells the model to run `mcptoon statusline` for the live
+  receipt — it used to talk about skills only; (3) the serve-leg **`instructions`**
+  now asks the model for the per-turn `mcptoon statusline` presence receipt
+  (calls, tokens saved, mode) whenever the turn routed an upstream call, alongside
+  the unchanged savings report. All three follow `config.resolve_lang()`, so the
+  text is Chinese on a Chinese machine and English otherwise — the same chain
+  (explicit `lang` setting > `MCPTOON_LANG` > OS UI language > `LANG` > English)
+  every other surface already uses. The pointer block's heading stays English on
+  purpose: it is the anchor `_strip_skill_pointer` and the idempotency check key
+  on, and the strip path recognises both language bodies, so switching language
+  never leaves an un-strippable block behind (pinned byte-for-byte).
+- **`uninstall` now says what you LOSE, not only what files vanish.** It deleted the
+  whole cache directory — which holds `usage.json` and `activity.jsonl`, the running
+  tally a user watched climb for weeks — while printing only a list of paths. The
+  plan now ends with "You will lose: your savings history — N routed call(s) over D
+  day(s) since <date>", and `--keep-history` clears the rebuildable schema cache but
+  keeps the two history files, so the number survives the uninstall.
+- **`mcptoon savings` — milestones a person can feel.** `report` answers "how much";
+  this answers "was it worth keeping". It shows the token milestones crossed (1M …
+  1B …), the same figure in human terms (≈ N novels / books / copies of the Bible),
+  and the next milestone with the distance to go. Every number is derived from
+  `footer._cumulative_estimate` — the same estimate the footer and report use, never
+  a second drifting one — and labelled as the lower bound it is.
+- **`mcptoon statusline --guide` wires the badge into every host, not just Claude
+  Code.** Only Claude Code has a documented status-bar schema, so `--install` wires
+  one host; `--guide` prints the exact one-liners for tmux (`status-right`), bash/zsh
+  (`PS1`), fish, and the "run it in a side terminal" pattern for hosts with no status
+  bar at all. Bilingual, and honest that the command is identical everywhere.
+- **`doctor` now reports the status line.** It tested every server and config path
+  but never asked whether the badge was actually visible — so a healthy-but-invisible
+  install read as "all good". The new line says wired / not-wired / no-Claude-Code,
+  teaches `statusline --install` when the host is present, and is informational only
+  (never bumps the issue count or the exit code).
+- **`welcome` and `quickstart` point at the badge.** Both explained the saving and
+  pointed at `mcptoon status`; neither said how to keep it visible. The welcome card
+  gained a "See it / 看得见" row (only when servers exist — nothing to watch
+  otherwise), and the quickstart celebration gained a `statusline --install` line.
+- **`sync --self --dry` names the roster it scanned.** It used to hide every
+  `only_when_present` host that was absent, so a user could not tell "scanned 12,
+  found 3" from "only knows about 3". The preview now ends with "Scanned N known
+  host(s) — M found on this machine" and names the absent ones, so "not found" for a
+  host the user DOES use is a signal to check a path.
+- **`report` dates the lifetime total.** A count of 2,920 says nothing about how long
+  the user has trusted the tool. `track_call` now stamps a `first_ts` on the first
+  call (additive; legacy files fall back to the oldest windowed call), and the
+  cumulative section prints "since <date> · N day(s) · ~M calls/day".
+- **`scripts/cleanroom_check.sh` — prove the SHIPPED artifact works.** The existing
+  cleanroom runs the lifecycle suite against a source install on 3.12 only. This
+  script builds the real wheel, installs THAT into a clean container (no repo on
+  `sys.path`), and runs a small smoke suite across every Python in `$PY_VERSIONS`
+  (default 3.10 + 3.12) — catching wheel-packing drift and a 3.10 regression that an
+  editable install on the dev's 3.12 cannot see.
+
+### Fixed
+
+- **`sync_claims.py` now owns the line- and module-count claims, not just test
+  totals.** After a refactor added a module, the docs still said "31,410 lines … 45
+  modules" while the tree was 31,979 / 46; the module count is compared exactly, and
+  nothing auto-wrote either, so they only moved when someone hand-edited five files.
+  The script now measures `src/mcptoon/**/*.py` with the guard's own ruler and writes
+  both — numbers only, wording untouched (respects the README freeze).
+
+- **`mcptoon statusline` no longer prints the savings footer to stderr.** It is
+  machine-consumed (a host reads its stdout as the status line), so the footer was
+  both a wasted catalog walk on every prompt and a corrupting extra stream. It
+  joins `footer-facts`/`report` in the footer-silent set.
+- **The status-line badge was hard-coded English.** On a machine configured for
+  Chinese it still printed `tools / saved / calls`, the one surface a user stares
+  at all day. It now follows `resolve_lang()`, and the 80-column guard measures
+  display columns (a CJK glyph is two) rather than `len()`, so neither language
+  overflows.
+- **`mcptoon statusline` and `mcptoon footer-facts` no longer leak the first-run
+  banner into their output.** On a fresh machine the 16-line welcome card (and, on
+  the first command, the self-heal's "skill installed" lines) were printed to stdout
+  ahead of the badge. A host renders stdout as the status line, so the bar came out
+  as box-drawing; and `footer-facts` is the command `serve` tells the model to paste
+  verbatim, so the banner went into the chat too. Both commands are now exempt from
+  the welcome and self-heal, leaving `statusline` at one line and `footer-facts` at
+  three.
+- **`statusline --install` / `--uninstall` is now genuinely byte-reversible.** It
+  re-serialised the whole file with `json.dumps`, so a 4-space file came back
+  2-space, `["Bash"]` was exploded one-per-line, and a minified file was re-indented
+  — the "we only added one key" promise was silently false. Removal now cuts the
+  exact text span that was spliced in back out of the original bytes, so a round
+  trip restores the file character for character across 2-space, 4-space, tab,
+  minified, no-trailing-newline, CRLF, nested-same-key and CJK layouts. A file that
+  existed as `{}` before we filled it is restored, not deleted.
+- **A `settings.json` that is a directory is a clean error, not a traceback.**
+- **The statusline messages follow the configured language.** They were English-only
+  on a project where every other user-facing command is bilingual.
+- **`statusline` and `footer-facts` no longer re-tokenize the whole catalog on every
+  prompt.** Each call recomputed the full/slim token totals for every cached schema —
+  ~440 ms on a 209-tool catalog, paid on every prompt because `statusline` renders
+  each turn and `footer-facts` is meant to be run each turn. The totals are now
+  memoised on a stat-only fingerprint (in memory and in a sidecar), so an unchanged
+  catalog costs a stat walk. Measured: a warm `facts()` dropped from ~430 ms to
+  ~22 ms. The sidecar never recreates the cache directory that `mcptoon uninstall`
+  deletes.
+- **`skills list --usage` no longer shows yesterday's date before 08:00.** The
+  "last used" stamp was written with `datetime.now(timezone.utc)` while every other
+  surface (`usage.py`, the `activity` summary) reads the local calendar day. On a
+  UTC+8 machine that made the two disagree for the first eight hours of every day,
+  so the column read as yesterday's date in the morning. It now uses the same local
+  `datetime.now()` as the rest of the codebase.
+
 ## [0.8.23] - 2026-10-19
 
 CLI papercuts and data-safety fixes reported on 2026-10-17, plus a presence channel so

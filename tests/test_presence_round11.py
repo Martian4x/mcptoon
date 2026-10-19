@@ -98,7 +98,7 @@ def test_statusline_is_one_short_line(monkeypatch):
         "gateway_tokens": 2499, "tokens_full": 640834, "tools": 209,
         "calls_recorded": 2903})
     monkeypatch.setattr(mode, "_exposed", lambda: 9)
-    line = mode.statusline()
+    line = mode.statusline(lng="en")  # pin language: the badge now follows resolve_lang
     assert "\n" not in line
     assert len(line) <= 80, f"statusline is {len(line)} cols: {line!r}"
     assert line.startswith("🎉 mcptoon")
@@ -108,7 +108,7 @@ def test_statusline_names_the_mode(monkeypatch):
     _patch_mode(monkeypatch, servers=7, wired=True)
     monkeypatch.setattr(mode, "_figures", lambda: {})
     monkeypatch.setattr(mode, "_exposed", lambda: 9)
-    assert "serve" in mode.statusline()
+    assert "serve" in mode.statusline(lng="en")
 
 
 def test_statusline_marks_direct_loudly(monkeypatch):
@@ -116,7 +116,7 @@ def test_statusline_marks_direct_loudly(monkeypatch):
     _patch_mode(monkeypatch, servers=7, wired=False, routed=0, native=0)
     monkeypatch.setattr(mode, "_figures", lambda: {})
     monkeypatch.setattr(mode, "_exposed", lambda: 9)
-    assert "direct!" in mode.statusline()
+    assert "direct!" in mode.statusline(lng="en")
 
 
 # ─── 3. explain names CLI as cheapest and states the honest headline ─────────

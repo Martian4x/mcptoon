@@ -18,7 +18,7 @@
   <a href="https://pypi.org/project/mcptoon/"><img src="https://img.shields.io/pypi/v/mcptoon?style=flat-square&color=238636&logo=pypi&logoColor=white" alt="PyPI version"></a>
   <a href="https://github.com/activeing123/mcptoon/stargazers"><img src="https://img.shields.io/github/stars/activeing123/mcptoon?style=flat-square&logo=github&color=58a6ff" alt="GitHub Stars"></a>
   <a href="https://github.com/activeing123/mcptoon/actions"><img src="https://img.shields.io/github/actions/workflow/status/activeing123/mcptoon/ci.yml?branch=main&style=flat-square&logo=githubactions&logoColor=white" alt="CI Build"></a>
-  <a href="#contributing"><img src="https://img.shields.io/badge/tests-2436%20passed-success?style=flat-square&logo=pytest&logoColor=white" alt="Tests"></a>
+  <a href="#contributing"><img src="https://img.shields.io/badge/tests-2513%20passed-success?style=flat-square&logo=pytest&logoColor=white" alt="Tests"></a>
   <a href="https://github.com/activeing123/mcptoon"><img src="https://img.shields.io/badge/dependencies-0%20(stdlib%20only)-blue?style=flat-square" alt="Zero Dependencies"></a>
   <a href="https://github.com/activeing123/mcptoon/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-informational?style=flat-square" alt="License"></a>
 </p>
@@ -111,6 +111,10 @@ mcptoon docs resolve "how does release gating work"
 </td>
 </tr>
 </table>
+
+**Is it actually saving you anything?** After a fresh install mcptoon can sit in
+**direct** mode — installed but not wired into the agent — and save nothing. See
+[Which mode is cheapest?](#which-mode-is-cheapest), or just run `mcptoon mode`.
 
 ---
 
@@ -244,6 +248,8 @@ Full reference: [DEVELOPERS.md](https://github.com/activeing123/mcptoon/blob/mai
 - [How the token saving works](#how-the-token-saving-works)
 - [This isn't just us talking](#this-isnt-just-us-talking)
 - [Two ways in](#two-ways-in)
+- [Path 1 · I just use AI tools](#path-1--i-just-use-ai-tools)
+- [Path 2 · I build with MCP / agents](#path-2--i-build-with-mcp--agents)
 - [30 seconds up and running](#30-seconds-up-and-running)
 - [What it does](#what-it-does)
 - [Where the tools come from](#where-the-tools-come-from--search-17000-install-with-one-command)
@@ -251,6 +257,7 @@ Full reference: [DEVELOPERS.md](https://github.com/activeing123/mcptoon/blob/mai
 - [Install](#install)
 - [Works with every AI agent](#works-with-every-ai-agent) — **103 clients** (42 CLI · 61 serve)
 - [Why a CLI, not a proxy](#why-a-cli-not-a-proxy)
+- [Which mode is cheapest?](#which-mode-is-cheapest)
 - [All commands](#all-commands)
 - [Trust and safety](#trust-and-safety)
 - [Credits and references](#credits-and-references)
@@ -409,13 +416,18 @@ mcptoon manifest      # see every tool (name index, the cheapest view)
 mcptoon saves tokens in three separate places. Comparing the numbers across them is
 meaningless.
 
+The figures below come from catalogs of three different sizes — a **255-tool synthetic
+sample** (the fixed headline benchmark), a **1,109-tool** machine, and whatever your own
+machine has. Do not compare a percentage from one against a token count from another;
+each table states which catalog it measures.
+
 There are two ways to read "how much does this save?", and they answer different
 questions. **The gateway figure** — full schemas versus what the agent actually loads
 under the default `compact` exposure — is what installing mcptoon buys, and it is the
-honest headline (89% on the machine this was written on). **The slim-schema figure**
-(same tools, terser descriptions) is the smaller, secondary claim (88.5%), and it is
-what `manifest --slim` buys. `mcptoon status` prints both, side by side, from one
-measurement, so the two can never drift apart.
+honest headline (it scales with catalog size: the more tools you have, the larger it
+gets). **The slim-schema figure** (same tools, terser descriptions) is the smaller,
+secondary claim (88.5%), and it is what `manifest --slim` buys. `mcptoon status` prints
+both, side by side, from one measurement, so the two can never drift apart.
 
 ### Bill 1 · Tool discovery (`manifest`): 99.2% smaller by default
 
@@ -606,6 +618,34 @@ section is about the shape mcptoon is built around, not a switch you have to fli
 
 ---
 
+## Which mode is cheapest?
+
+There are three ways mcptoon can hand tools to an agent, and they cost very
+differently. Only one is the cheapest, and it is not the state a fresh install
+starts in. (The token figures below are from the 255-tool sample; your own catalog
+differs — `mcptoon mode` prints your numbers.)
+
+| Mode | What the agent loads | Fixed cost every turn | When to use |
+|---|---|---|---|
+| **CLI** (cheapest) | nothing until it runs a command — then a name index (**581 tokens** for 255 tools) plus the one schema it needs | **0** | any agent that can run a shell |
+| **serve** | mcptoon's own gateway tools instead of every upstream schema (the gateway figure — scales with catalog size) | small, fixed | a client that can only see MCP servers |
+| **direct** | every full schema of every tool (**71,929 tokens** on the 255-tool sample) | **largest** | never, once mcptoon is installed |
+
+**CLI is cheapest because it is idle at zero.** It costs nothing on a turn that
+uses no tool, and a few hundred tokens only on the turn it does. `serve` is a close
+second — a small fixed bill every turn. `direct` is what you pay when mcptoon is
+installed but not wired into the agent, and it is where a fresh install sits, which
+is why mcptoon can feel invisible until you run `mcptoon quickstart`.
+
+The "99%" in this README is the **definition-side** saving — from not loading every
+schema. CLI and serve both get it; direct does not. Result compression is a separate,
+much smaller bill (Bill 2 above) and is never the reason to install.
+
+Find out which mode you are in — and what each costs on *your* catalog — with
+`mcptoon mode`; print a one-line badge with `mcptoon statusline`.
+
+---
+
 ## All commands
 
 ```bash
@@ -644,6 +684,7 @@ mcptoon doctor                  # self-check: Python, config, connectivity
 mcptoon status                  # one screen: what's configured, gateway wired, tokens saved
 mcptoon stats                   # token-savings dashboard (vs raw JSON)
 mcptoon report                  # the whole savings account: tools + skills + cumulative
+mcptoon savings                 # milestones you've crossed (1B? ~12,000 novels?)
 mcptoon mode                    # which delivery mode you're in (cli/serve/direct) and what each costs
 mcptoon statusline              # one-line savings badge for a status bar or turn header
 mcptoon usage                   # local call statistics
@@ -731,7 +772,7 @@ git clone https://github.com/activeing123/mcptoon.git
 cd mcptoon
 pip install -e . --no-build-isolation
 pip install pytest pytest-cov
-python -m pytest tests/ -v   # 2436 passed, 2 skipped
+python -m pytest tests/ -v   # 2513 passed, 2 skipped
 ```
 
 Three hard rules: zero dependencies (CI-enforced), new behavior ships with tests, Windows
@@ -739,7 +780,7 @@ is a first-class target. New here? Start with
 [CONTRIBUTING.md](https://github.com/activeing123/mcptoon/blob/main/CONTRIBUTING.md) and
 [DEVELOPERS.md](https://github.com/activeing123/mcptoon/blob/main/DEVELOPERS.md).
 
-The codebase: **30,685 lines of Python across 45 modules**, zero third-party dependencies.
+The codebase: **31,982 lines of Python across 46 modules**, zero third-party dependencies.
 
 ---
 

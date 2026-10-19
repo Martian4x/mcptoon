@@ -211,6 +211,117 @@ class TestExposedToolCount(unittest.TestCase):
             self.assertIn("96", out)
 
 
+class TestCatalogTokenCache(_IsolatedState):
+    """`facts()` must not re-tokenize the whole catalog on every prompt.
+
+    Measured 2026-10-19: tokenizing 209 full schemas was ~440 ms and it ran on
+    every `statusline` render and every `footer-facts` turn. The totals are now
+    memoised on a stat-only fingerprint, so an unchanged catalog costs a stat walk.
+    """
+
+    def _seed_cache(self, tools):
+        import hashlib
+
+        # Give the isolated state one configured server named "srv" so list_servers()
+        # is non-empty, and drop the schema cache where the footer will look for it.
+        patcher = patch.dict(os.environ, {
+            "MCPTOON_SERVERS": json.dumps(
+                {"servers": {"srv": {"command": "true", "args": []}}}),
+        }, clear=False)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        cdir = Path(os.environ["MCPTOON_CACHE_DIR"]) / "schema_cache"
+        cdir.mkdir(parents=True, exist_ok=True)
+        digest = hashlib.sha1(b"srv").hexdigest()
+        (cdir / f"{digest}.json").write_text(json.dumps(
+            {"server": "srv", "tools": tools, "ts": 0, "fp": "x"}), encoding="utf-8")
+
+    def _spy_encode(self):
+        from mcptoon import footer as f
+
+        f._TOKEN_TOTALS_CACHE.clear()
+        try:
+            f._token_totals_path().unlink()
+        except OSError:
+            pass
+        calls = []
+        real = f._catalog_token_totals
+
+        def spy(servers, encode, caliber):
+            calls.append(1)
+            return real(servers, encode, caliber)
+
+        return calls, spy
+
+    def test_second_call_reuses_the_memo_and_agrees_with_a_full_recompute(self):
+        from mcptoon import footer as f
+
+        self._seed_cache([{"name": "t1", "description": "does a thing",
+                           "inputSchema": {"type": "object", "properties": {}}}])
+        calls, spy = self._spy_encode()
+        with patch.object(f, "_catalog_token_totals", spy):
+            first = f.facts()
+            second = f.facts()
+        self.assertEqual(len(calls), 2, "facts() calls the totals helper each time")
+        # but the helper itself only recomputes once — the second hit is the memo
+        self.assertEqual(
+            (first["tools"], first["tokens_full"], first["tokens_slim"]),
+            (second["tools"], second["tokens_full"], second["tokens_slim"]))
+
+    def test_the_memo_persists_to_disk_for_a_new_process(self):
+        from mcptoon import config as cfg
+        from mcptoon import footer as f
+        from mcptoon.bench import _tokenizer
+
+        self._seed_cache([{"name": "t1", "description": "does a thing",
+                           "inputSchema": {"type": "object", "properties": {}}}])
+        f._TOKEN_TOTALS_CACHE.clear()
+        try:
+            f._token_totals_path().unlink()
+        except OSError:
+            pass
+        f.facts()
+        self.assertTrue(f._token_totals_path().exists(),
+                        "the totals must be persisted so the next process skips the work")
+        # simulate a fresh process: clear the in-memory memo, keep the file
+        f._TOKEN_TOTALS_CACHE.clear()
+        _encode, caliber, _exact = _tokenizer()
+        key = f"{caliber}\x00{f._catalog_fingerprint(cfg.list_servers())}"
+        self.assertIsNotNone(f._load_token_totals(key),
+                             "a matching key must load from disk")
+        # and a mismatched key must not
+        self.assertIsNone(f._load_token_totals(key + "-stale"))
+
+    def test_a_changed_cache_file_invalidates_the_fingerprint(self):
+        from mcptoon import cache as cache_mod
+        from mcptoon import config as cfg
+        from mcptoon import footer as f
+
+        self._seed_cache([{"name": "t1", "description": "d",
+                           "inputSchema": {"type": "object"}}])
+        before = f._catalog_fingerprint(cfg.list_servers())
+        sf = cache_mod._server_file(cfg.list_servers()[0])
+        st = os.stat(sf)
+        os.utime(sf, ns=(st.st_atime_ns, st.st_mtime_ns + 5_000_000))
+        after = f._catalog_fingerprint(cfg.list_servers())
+        self.assertNotEqual(before, after, "touching a cache file must change the key")
+
+    def test_it_never_recreates_a_deleted_cache_dir(self):
+        """`mcptoon uninstall` deletes the cache dir; a later footer run must not
+        put it back (measured 2026-10-19: the totals sidecar recreated it and broke
+        the uninstall test's promise of a clean cache)."""
+        from mcptoon import footer as f
+
+        cdir = Path(os.environ["MCPTOON_CACHE_DIR"])
+        # simulate the post-uninstall state: no cache dir at all
+        import shutil
+
+        shutil.rmtree(cdir, ignore_errors=True)
+        self.assertFalse(cdir.exists())
+        f._save_token_totals("k", (1, 2, 3))
+        self.assertFalse(cdir.exists(), "saving the sidecar must not recreate the dir")
+
+
 class TestSkillTokenCache(_IsolatedState):
     """The figures are cached by catalog signature, so a turn costs a stat walk.
 

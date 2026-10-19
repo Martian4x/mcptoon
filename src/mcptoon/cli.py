@@ -56,7 +56,7 @@ KNOWN_FLAGS = frozenset(
         "--full", "--head", "--desc",
         "--header", "--health", "--help", "--http", "--input-responses", "--interval",
         "--json", "--keep", "--k", "--limit", "--list", "--listen", "--max-chars", "--mcptoon",
-        "--no-keep-config",
+        "--no-keep-config", "--keep-history", "--guide",
         "--model",
         "--no-configs",
         "--no-env", "--no-local", "--no-network", "--no-self", "--no-sync", "--npm", "--pip",
@@ -121,7 +121,7 @@ _COMPLETION_COMMANDS = (
     "activity", "add", "bench", "call", "completion", "config", "demo", "demo-server",
     "discover", "docs", "doctor", "footer-facts", "health", "help", "import",
     "init", "inspect", "install", "list", "manifest", "mode", "off", "plugin",
-    "policy", "quickstart", "remove", "report", "restore", "retrieve", "search",
+    "policy", "quickstart", "remove", "report", "savings", "restore", "retrieve", "search",
     "select", "serve", "skills", "stats", "status", "statusline", "sync", "toggle",
     "uninstall", "update", "usage",
     # aliases the dispatch chain also accepts
@@ -224,10 +224,22 @@ def format_flag_override_note(previous, current):
 # out is the same obliviousness this release is about.
 _WELCOME_EXEMPT = frozenset({"serve", "demo", "demo-server", "completion",
                              "help", "-h", "--help", "off", "restore", "uninstall",
+                             # `savings` and `report` are the savings story itself —
+                             # a first-run greeting in front of them is a card
+                             # explaining what the screen is already showing.
+                             "savings", "report",
                              # `retrieve` prints a payload on stdout, so the
                              # one-time greeting must not land in front of it —
                              # the same reason `serve` is here.
-                             "retrieve"})
+                             "retrieve",
+                             # These two are consumed by a *machine*, not a person:
+                             # `statusline` is rendered by a host's status bar and
+                             # `footer-facts` is pasted verbatim into a chat by the
+                             # model. A 16-line greeting in front of either is not
+                             # noise, it is a broken badge (measured 2026-10-19: a
+                             # fresh home printed the banner ahead of the badge, so
+                             # the status bar showed box-drawing instead of a count).
+                             "statusline", "footer-facts"})
 
 
 def _maybe_welcome(command: str, fmt: str) -> None:
@@ -320,7 +332,12 @@ def _bare_greeting() -> None:
 # (and `restore` in particular must not immediately re-add a skill right after the
 # user asked to go back to the pre-mcptoon state).
 _SELF_HEAL_EXEMPT = frozenset({"serve", "off", "restore", "uninstall", "demo",
-                               "demo-server", "completion", "help"})
+                               "demo-server", "completion", "help",
+                               # Machine-consumed output, same reason as the welcome
+                               # list: the self-heal prints install lines on stdout,
+                               # and a host's status bar would render them as the
+                               # badge. They run on every prompt, so silence matters.
+                               "statusline", "footer-facts"})
 
 
 def _first_run_self_heal() -> None:
@@ -573,6 +590,9 @@ def _run(state: dict) -> None:
     elif command == "report":
         from . import report as report_mod
         report_mod.run(rest, fmt, head_n, max_chars, full)
+    elif command == "savings":
+        from . import savings as savings_mod
+        savings_mod.run(rest, fmt, head_n, max_chars, full)
     elif command == "mode":
         from . import mode as mode_mod
         mode_mod.run(rest, fmt, head_n, max_chars, full)
@@ -703,7 +723,7 @@ def main() -> None:
 
 # Commands whose streams are a protocol, not a human terminal, plus the one
 # command that has already printed the same block.
-_FOOTER_SILENT_COMMANDS = frozenset({"serve", "demo-server", "footer-facts", "report"})
+_FOOTER_SILENT_COMMANDS = frozenset({"serve", "demo-server", "footer-facts", "report", "statusline", "savings"})
 
 
 def _emit_presence(command: str) -> None:
@@ -1995,6 +2015,13 @@ def _cmd_quickstart(rest, fmt="auto"):
                 print(f"  ✓ {shown} can now see mcptoon itself (`mcptoon serve`).")
                 print("    As it routes tools and skills for them, `mcptoon activity`"
                       " records every call.")
+                # "Installed" is only half the story; the other half is "you can
+                # SEE it working". Claude Code is the one host with a status bar
+                # mcptoon can wire automatically — name it here, at the moment the
+                # user is deciding whether this tool is real, so the badge is not
+                # a feature they only discover by reading the docs.
+                print("    Want the savings badge always visible? "
+                      "`mcptoon statusline --install` (Claude Code).")
             elif written:
                 print("")
                 print("  ✓ Your agents can now see mcptoon itself (`mcptoon serve`).")
@@ -2172,6 +2199,7 @@ def _quickstart_celebration(tool_count, server_count, unreachable=0):
     print("  mcptoon manifest --slim     # see all available tools")
     print("  mcptoon call <server> <tool> '{...}'   # call a tool")
     print("  mcptoon doctor             # check connectivity")
+    print("  mcptoon statusline --install   # keep the savings badge in Claude Code's bar")
     if server_count <= 3:
         print("")
         print("  Want more servers?")
@@ -3432,6 +3460,9 @@ def _cmd_statusline(rest, fmt, head_n=0, max_chars=0, full=False):
     Usage:
         mcptoon statusline
         mcptoon statusline --json
+        mcptoon statusline --install     Wire it into Claude Code's status bar
+        mcptoon statusline --uninstall   Remove exactly that entry again
+        mcptoon statusline --check       Is it wired? (exit 1 if not)
     """
     from . import mode as mode_mod
     mode_mod.run_statusline(rest, fmt, head_n, max_chars, full)
@@ -3909,6 +3940,43 @@ def _safe_rmtree(path) -> bool:
     return not p.exists()
 
 
+# The two files that hold the running savings tally. `--keep-history` clears
+# everything else in the cache (the schema cache is rebuildable in seconds) but
+# leaves these, so the number the user watched climb survives the uninstall.
+_HISTORY_FILES = ("usage.json", "activity.jsonl")
+
+
+def _safe_clear_keep_history(path) -> bool:
+    """Empty a cache directory but keep the savings tally — same ownership guard.
+
+    Used by `uninstall --keep-history`. Removes every entry under the directory
+    except `usage.json` and `activity.jsonl`; if anything is left over besides
+    those two (a file we could not delete), returns False so the caller reports it
+    rather than claiming a clean sweep.
+
+    Returns True when the directory is gone or now holds only the history files.
+    """
+    p = Path(path)
+    if p.name != "mcptoon":
+        return False
+    import shutil
+
+    if not p.exists():
+        return True
+    for child in list(p.iterdir()):
+        if child.name in _HISTORY_FILES:
+            continue
+        try:
+            if child.is_dir():
+                shutil.rmtree(child, ignore_errors=True)
+            else:
+                child.unlink(missing_ok=True)
+        except OSError:
+            pass
+    leftovers = [c for c in p.iterdir() if c.name not in _HISTORY_FILES]
+    return not leftovers
+
+
 def _cmd_restore(rest, fmt):
     """Put every agent config back to the state before mcptoon edited it.
 
@@ -4012,6 +4080,62 @@ def _cmd_restore(rest, fmt):
     print("")
 
 
+def _uninstall_history_summary(cache_dirs=None) -> dict | None:
+    """What the accumulated savings history holds, or None when there is none.
+
+    `uninstall` deletes the whole cache directory, and that directory is where the
+    running tally lives (`usage.json`: every routed call with its token count and
+    timestamp; `activity.jsonl`: the recent ledger). Deleting it is correct for a
+    clean exit, but the plan never SAID so — a user who has watched "≈1.9B saved"
+    tick up for weeks was told which files vanish, never that the *number they came
+    to trust* vanishes with them. This reads just enough to put that number in the
+    plan, in the same units the footer uses.
+
+    `cache_dirs` is resolved by the caller through `cfg.state_paths()`, which honours
+    the `MCPTOON_CACHE_DIR` override at CALL time. Reading `usage._USAGE_FILE` here
+    would be the import-time-constant bug the reversible-command tests exist to
+    catch: that constant is frozen at import and ignores the env, so a sandboxed
+    `uninstall` would read the developer's real tally. Cache-only, never spawns a
+    server (same contract as `footer.facts`).
+    """
+    import json
+    from datetime import datetime
+
+    if not cache_dirs:
+        return None
+    path = None
+    for d in cache_dirs:
+        candidate = Path(d) / "usage.json"
+        if candidate.exists():
+            path = candidate
+            break
+    if path is None:
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    calls = data.get("calls") or []
+    total = int(data.get("total") or len(calls) or 0)
+    if total <= 0:
+        return None
+    first_ts = None
+    for rec in calls:
+        ts = rec.get("ts") if isinstance(rec, dict) else None
+        if isinstance(ts, (int, float)):
+            first_ts = ts if first_ts is None else min(first_ts, ts)
+    days = None
+    first_date = None
+    if first_ts:
+        try:
+            first_dt = datetime.fromtimestamp(first_ts)
+            first_date = first_dt.strftime("%Y-%m-%d")
+            days = max(0, (datetime.now() - first_dt).days)
+        except (OSError, OverflowError, ValueError):
+            pass
+    return {"calls": total, "first_date": first_date, "days": days}
+
+
 def _cmd_uninstall(rest, fmt):
     """Full, reversible cleanup — print exactly what will be removed, then remove it.
 
@@ -4024,12 +4148,14 @@ def _cmd_uninstall(rest, fmt):
         mcptoon uninstall
         mcptoon uninstall --dry       preview only
         mcptoon uninstall --yes       skip the interactive confirmation
+        mcptoon uninstall --keep-history   delete the cache but keep the savings tally
     """
     from .sync import remove_gateway_from_all
 
     dry_run = "--dry" in rest or "--dry-run" in rest
     assume_yes = "--yes" in rest or "-y" in rest
     keep_config = "--no-keep-config" not in rest
+    keep_history = "--keep-history" in rest
 
     # mcptoon's own files, resolved through config.state_paths() so env overrides
     # (MCPTOON_CONFIG_FILE and friends) are honoured. Crucially this NEVER deletes
@@ -4060,7 +4186,11 @@ def _cmd_uninstall(rest, fmt):
     else:
         print("    · (no agent config currently has the gateway entry)")
     for d in dirs_present:
-        print(f"    · delete directory  {d}")
+        if keep_history:
+            print(f"    · clear directory  {d}  (KEEPING usage.json + activity.jsonl — "
+                  f"your savings history)")
+        else:
+            print(f"    · delete directory  {d}")
     for f in files_present:
         print(f"    · delete file       {f}")
     if config_kept:
@@ -4069,6 +4199,25 @@ def _cmd_uninstall(rest, fmt):
     if not dirs_present and not files_present and not agent_hits and not config_kept:
         print("    · nothing to remove — mcptoon left no trace here")
     print("")
+
+    # The half the plan never said: what the user actually loses. A number they
+    # watched climb for weeks is the whole reason they kept the tool; deleting it
+    # without a word is the surprise this command exists to avoid.
+    history = (_uninstall_history_summary(dirs_present)
+               if dirs_present and not keep_history else None)
+    if history:
+        print("  You will lose:")
+        span = ""
+        if history.get("days") is not None and history.get("first_date"):
+            span = f" over {history['days']} day(s) since {history['first_date']}"
+        print(f"    · your savings history — {history['calls']:,} routed call(s){span}")
+        print("      (the number in `mcptoon report`; gone with the cache)")
+        print("      keep it with: mcptoon uninstall --keep-history")
+        print("")
+    elif keep_history and dirs_present:
+        print("  Your savings history (usage.json + activity.jsonl) is kept.")
+        print("")
+
     print("  Your own MCP server definitions are never touched (unless you pass")
     print("  --no-keep-config).")
     print(line)
@@ -4110,7 +4259,11 @@ def _cmd_uninstall(rest, fmt):
                      if r.get("removed") and not r.get("written")]
     refused = []
     for d in dirs_present:
-        if not _safe_rmtree(d):
+        if keep_history:
+            ok = _safe_clear_keep_history(d)
+        else:
+            ok = _safe_rmtree(d)
+        if not ok:
             refused.append(d)
     # Count only files that are actually gone. The loop swallowed OSError, so a
     # file that could not be deleted was still counted in "Deleted ... N file(s)".
@@ -4130,14 +4283,20 @@ def _cmd_uninstall(rest, fmt):
         if r.get("error"):
             print(f"      {str(r['error'])[:100]}")
     n_dirs = len(dirs_present) - len(refused)
-    print(f"  ✓ Deleted {n_dirs} director{'y' if n_dirs == 1 else 'ies'} "
-          f"and {n_files} file(s).")
+    if keep_history and n_dirs:
+        print(f"  ✓ Cleared {n_dirs} cache director{'y' if n_dirs == 1 else 'ies'} "
+              f"(kept your savings history) and deleted {n_files} file(s).")
+    else:
+        print(f"  ✓ Deleted {n_dirs} director{'y' if n_dirs == 1 else 'ies'} "
+              f"and {n_files} file(s).")
     for d in refused:
         print(f"  ! Refused to delete {d} — not a directory mcptoon owns.")
     for f in undeleted:
         print(f"  ! Could not delete {f}")
     if config_kept:
         print(f"  ✓ Kept your server definitions: {', '.join(Path(f).name for f in config_kept)}")
+    if keep_history and n_dirs:
+        print("  ✓ Kept your savings history — `mcptoon report` still shows the running total.")
     print("  mcptoon the package is still installed — remove it with:")
     print("    pip uninstall mcptoon")
     print(line)
@@ -4731,6 +4890,31 @@ def _cmd_doctor(rest, fmt="auto"):
     else:
         emit("info", "env", "MCPTOON_AGENT_TYPE not set (defaulting to auto)",
              "  - MCPTOON_AGENT_TYPE not set (defaulting to auto)")
+
+    # 6. Status-line badge. `doctor` tested every server but never asked the one
+    # question a healthy-but-invisible install raises: is the badge actually on a
+    # status bar, or is the user paying for a tool they never see? Not being wired
+    # is a CHOICE, not a fault (only Claude Code auto-supports a status bar), so
+    # this is `info`/`warn` and never bumps `issues`. `mode.statusline_status()`
+    # existed for exactly this and was never called.
+    checks += 1
+    try:
+        from . import mode as mode_mod
+        sl = mode_mod.statusline_status()
+    except Exception:
+        sl = None
+    if sl is not None:
+        if sl.get("wired"):
+            emit("ok", "statusline", f"wired in {sl.get('path')}",
+                 f"  ✓ Status line: wired in Claude Code ({sl.get('path')})")
+        elif sl.get("file_exists"):
+            emit("info", "statusline", "not wired (Claude Code settings present)",
+                 "  - Status line: not wired — `mcptoon statusline --install` puts the"
+                 " savings badge in Claude Code's status bar")
+        else:
+            emit("info", "statusline", "no Claude Code settings (other hosts: see docs)",
+                 "  - Status line: Claude Code not detected. Other hosts have no status"
+                 " bar; run `mcptoon statusline` to see the badge anywhere")
 
     if json_mode:
         print(json.dumps({
@@ -5764,6 +5948,9 @@ def _lazy_handler(command: str):
         if command == "report":
             from . import report as _report
             return _report.run
+        if command == "savings":
+            from . import savings as _savings
+            return _savings.run
         if command == "update":
             from . import update as _update
             return _update.run
@@ -5826,8 +6013,10 @@ Usage:
     mcptoon status                        One-screen: what's here and what it saves
     mcptoon stats                         Token-savings dashboard (vs raw JSON)
     mcptoon report                        Whole savings account on one screen
+    mcptoon savings                       Milestones you've crossed (1B? 4,700 novels?)
     mcptoon mode                          Which delivery mode you're in (cli/serve/direct), what each costs
     mcptoon statusline                    One-line savings badge for a status bar / turn header
+    mcptoon statusline --install          Wire that badge into Claude Code's status bar (undo: --uninstall)
     mcptoon footer-facts                  One line of savings for a chat footer
     mcptoon retrieve <handle>             Get back the original behind a --smart handle
     mcptoon retrieve --list               Show what the retrieve store holds right now

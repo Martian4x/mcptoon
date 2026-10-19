@@ -158,6 +158,31 @@ class TestFirstRunWelcome(_IsolatedHome):
         for command in ("demo", "demo-server", "serve", "completion", "help", "--help"):
             self.assertIn(command, cli._WELCOME_EXEMPT)
 
+    def test_welcome_is_silent_for_machine_consumed_output(self):
+        """`statusline` and `footer-facts` are read by a machine, not a person.
+
+        Measured 2026-10-19: on a fresh home the 16-line greeting printed ahead of
+        the badge, so a host's status bar rendered box-drawing instead of a count,
+        and the model pasted the banner into the chat along with the footer. The
+        marker must also stay unburned, so the *next human* command still greets.
+        """
+        for command in ("statusline", "footer-facts"):
+            self.assertIn(command, cli._WELCOME_EXEMPT)
+            out = _run_main([command])
+            self.assertNotIn("First run on this machine", out,
+                             f"`{command}` is machine-consumed; the banner must not appear")
+        self.assertFalse(cfg.welcome_seen(),
+                         "a suppressed welcome must not burn the marker")
+
+    def test_self_heal_is_silent_for_machine_consumed_output(self):
+        """The self-heal prints install lines on stdout — same pollution, same fix."""
+        for command in ("statusline", "footer-facts"):
+            self.assertIn(command, cli._SELF_HEAL_EXEMPT)
+        with patch.dict(os.environ, {"MCPTOON_FORCE_SELF_HEAL": "1"}):
+            out = _run_main(["statusline"])
+        self.assertNotIn("skill installed for", out)
+        self.assertNotIn("no known agent skill folder", out)
+
     def test_welcome_survives_a_read_only_home(self):
         """A failed marker write must not turn a normal command into a crash."""
         with patch.object(cfg, "_welcome_file", side_effect=OSError("read-only")):

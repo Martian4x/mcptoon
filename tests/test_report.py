@@ -210,3 +210,72 @@ def test_bench_ignores_cache_entries_for_servers_no_longer_configured():
         "a server the user removed is not part of their catalog"
     )
     assert len(tools["still-here"]) == 2
+
+
+# ─── time dimension: a lifetime total becomes a span the user can feel ───────
+
+def test_history_span_is_empty_without_a_timestamp():
+    assert report._history_span(None, 100) == ""
+    assert report._history_span(0, 100) == ""
+    assert report._history_span(-5, 100) == ""
+
+
+def test_history_span_names_the_date_and_a_per_day_rate():
+    import time
+    ten_days_ago = time.time() - 10 * 86400
+    en = report._history_span(ten_days_ago, 200, "en")
+    assert "since " in en and "calls/day" in en
+    assert "~20 calls/day" in en or "~22 calls/day" in en  # 200/9 or /10
+    zh = report._history_span(ten_days_ago, 200, "zh")
+    assert "起" in zh and "平均每天" in zh
+
+
+def test_history_span_omits_rate_on_a_same_day_install():
+    """Dividing by zero days would invent a rate; a same-day span shows no rate."""
+    import time
+    out = report._history_span(time.time() - 3600, 5, "en")
+    assert "calls/day" not in out
+    assert "day(s)" in out
+
+
+def test_first_call_ts_prefers_the_explicit_stamp():
+    from mcptoon import usage
+    assert usage.first_call_ts({"first_ts": 1000.0, "calls": []}) == 1000.0
+
+
+def test_first_call_ts_falls_back_to_oldest_window_entry():
+    """A legacy file (no first_ts) still dates itself from its oldest call."""
+    from mcptoon import usage
+    assert usage.first_call_ts({"calls": [{"ts": 500.0}, {"ts": 300.0}]}) == 300.0
+    assert usage.first_call_ts({"calls": []}) is None
+
+
+def test_track_call_stamps_first_ts_once():
+    """The first call writes first_ts; later calls must not move it."""
+    import tempfile
+    from pathlib import Path
+    from unittest.mock import patch
+    from mcptoon import usage
+
+    with tempfile.TemporaryDirectory() as tmp:
+        f = Path(tmp) / "usage.json"
+        with patch.object(usage, "_USAGE_FILE", f):
+            usage.track_call("s", "t", ok=True, tokens_est=1)
+            first = json.loads(f.read_text(encoding="utf-8"))["first_ts"]
+            usage.track_call("s", "t", ok=True, tokens_est=1)
+            again = json.loads(f.read_text(encoding="utf-8"))["first_ts"]
+        assert first == again, "first_ts must be stamped once and never rewritten"
+
+
+def test_report_cumulative_section_shows_the_span_when_dated():
+    """End to end: a dated history puts a 'since … day(s)' line under the totals."""
+    from datetime import datetime
+    data = report.build(query="zzz-no-match")
+    # Inject a known first-call stamp, then render — the span must appear.
+    stamp = 1_700_000_000  # 2023-11-14 UTC (the local date depends on the timezone)
+    data["calls"]["first_call_ts"] = stamp
+    data["calls"]["total"] = 100
+    expected_date = datetime.fromtimestamp(stamp).strftime("%Y-%m-%d")
+    text = report.render(data, lng="en")
+    assert f"since {expected_date}" in text
+    assert "calls/day" in text

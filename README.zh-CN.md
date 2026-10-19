@@ -18,7 +18,7 @@
   <a href="https://pypi.org/project/mcptoon/"><img src="https://img.shields.io/pypi/v/mcptoon?style=flat-square&color=238636&logo=pypi&logoColor=white" alt="PyPI 版本"></a>
   <a href="https://github.com/activeing123/mcptoon/stargazers"><img src="https://img.shields.io/github/stars/activeing123/mcptoon?style=flat-square&logo=github&color=58a6ff" alt="GitHub Stars"></a>
   <a href="https://github.com/activeing123/mcptoon/actions"><img src="https://img.shields.io/github/actions/workflow/status/activeing123/mcptoon/ci.yml?branch=main&style=flat-square&logo=githubactions&logoColor=white" alt="CI 构建"></a>
-  <a href="#贡献指南"><img src="https://img.shields.io/badge/tests-2436%20passed-success?style=flat-square&logo=pytest&logoColor=white" alt="测试"></a>
+  <a href="#贡献指南"><img src="https://img.shields.io/badge/tests-2513%20passed-success?style=flat-square&logo=pytest&logoColor=white" alt="测试"></a>
   <a href="https://github.com/activeing123/mcptoon"><img src="https://img.shields.io/badge/dependencies-0%20(stdlib%20only)-blue?style=flat-square" alt="零第三方依赖"></a>
   <a href="https://github.com/activeing123/mcptoon/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-informational?style=flat-square" alt="许可证"></a>
 </p>
@@ -110,6 +110,8 @@ mcptoon docs resolve "版本发布门禁怎么运作"
 </td>
 </tr>
 </table>
+
+**它到底在不在帮你省？** 新装后 mcptoon 可能停在 **直连** 状态——装了但没接进 Agent，一分不省。看 [哪种模式最省？](#哪种模式最省)，或直接跑 `mcptoon mode`。
 
 ---
 
@@ -235,6 +237,8 @@ mcptoon serve                       # 把所有已配置的服务器收在同一
 - [省 token 的原理](#省-token-的原理)
 - [不只我们一家这么说](#不只我们一家这么说)
 - [两条路径](#两条路径)
+- [路径一 · 我只是 AI 工具的用户](#路径一--我只是-ai-工具的用户)
+- [路径二 · 我在做 MCP / Agent 开发](#路径二--我在做-mcp--agent-开发)
 - [30 秒上手](#30-秒上手)
 - [它做什么](#它做什么)
 - [工具从哪来](#工具从哪来搜-17000一条命令装上)
@@ -242,6 +246,7 @@ mcptoon serve                       # 把所有已配置的服务器收在同一
 - [安装方式](#安装方式)
 - [所有 AI Agent 都能用](#所有-ai-agent-都能用) — **103 个客户端**（CLI 42 · serve 61）
 - [为什么是 CLI，不是代理](#为什么是-cli不是代理)
+- [哪种模式最省？](#哪种模式最省)
 - [全部命令](#全部命令)
 - [信任与安全](#信任与安全)
 - [引用与致谢](#引用与致谢)
@@ -362,7 +367,9 @@ mcptoon manifest      # 看全部工具（名字索引，最省 token）
 
 mcptoon 省下的 token 分三处，混在一起比数字没有意义。
 
-「省了多少」有两个读法，回答的是两个不同的问题。**网关口径**——完整 schema 对比 agent 默认 `compact` 暴露下真正加载的东西——才是装上 mcptoon 买到的那个数，是诚实的头条（本机实测 89%）。**瘦身 schema 口径**（同一批工具、描述更短）是更小的次要口径（88.5%），对应 `manifest --slim`。`mcptoon status` 把两者并排打印，来自同一次测量，因此永远不会各说各话。
+下面的数字来自三种不同规模的目录——**255 个工具的合成样本**（固定头条基准）、一台 **1,109 个工具**的机器、以及你自己机器上的真实数量。别拿一张表的百分比去比另一张表的 token 数；每张表都写明了它量的是哪份目录。
+
+「省了多少」有两个读法，回答的是两个不同的问题。**网关口径**——完整 schema 对比 agent 默认 `compact` 暴露下真正加载的东西——才是装上 mcptoon 买到的那个数，是诚实的头条（它随目录规模变大：工具越多，省得越多）。**瘦身 schema 口径**（同一批工具、描述更短）是更小的次要口径（88.5%），对应 `manifest --slim`。`mcptoon status` 把两者并排打印，来自同一次测量，因此永远不会各说各话。
 
 ### 第一笔 · 工具发现（`manifest`）：默认省 99.2%
 
@@ -527,6 +534,24 @@ MCP 的前提是：每个能力都是一个*服务器*，你的 Agent 必须被�
 
 ---
 
+## 哪种模式最省？
+
+mcptoon 把工具交给 Agent 有三种方式，花的 token 差别很大。只有一种最省，而且它不是新装后的默认状态。（下表 token 数字来自 255 工具样本；你自己的目录不一样——`mcptoon mode` 会打印你的真实数字。）
+
+| 模式 | Agent 实际加载什么 | 每轮固定开销 | 什么时候用 |
+|---|---|---|---|
+| **CLI**（最省） | 不跑命令就什么都不加载；一跑就只取名字索引（255 个工具 **581 token**）加上它要的那一个 schema | **0** | 任何能跑 shell 的 Agent |
+| **serve** | 加载 mcptoon 自己的网关工具，而不是全部上游 schema（就是上文那个网关口径——随目录规模变大） | 每轮一笔小的固定开销 | 只能看见 MCP 服务器的客户端 |
+| **直连** | 每个工具的完整 schema 全塞进去（255 工具样本 **71,929 token**） | **最大** | 装了 mcptoon 之后，不该再用 |
+
+**CLI 最省，因为它闲置时是零。** 不调工具的回合一分不花，真调的那一回合也只要几百 token。`serve` 是紧挨着的第二名——每轮一笔小的固定开销。**直连**是 mcptoon 装了但没接进 Agent 时付的账，而新装后正好停在这个状态——这就是为什么你不跑一次 `mcptoon quickstart`，会觉得它像不存在。
+
+这份 README 里的"99%"，是**定义侧**的省——来自"不加载全部 schema"。CLI 和 serve 都拿得到；直连拿不到。结果压缩是另一笔、也小得多的账（见上文第二笔），从来不是安装的理由。
+
+想看你当前在哪个模式、你自己目录里每种模式各花多少：跑 `mcptoon mode`；想打一行徽标：`mcptoon statusline`。
+
+---
+
 ## 全部命令
 
 ```bash
@@ -564,6 +589,7 @@ mcptoon doctor                  # 自检：Python、配置、连通性
 mcptoon status                  # 一屏：配了什么、网关通没通、省了多少
 mcptoon stats                   # token 省量看板（对比原始 JSON）
 mcptoon report                  # 省量总账：工具 + 技能 + 累计
+mcptoon savings                 # 跨过的省钱里程碑（1B？≈1.2 万本小说？）
 mcptoon mode                    # 当前交付模式（cli/serve/direct）及各自开销
 mcptoon statusline              # 一行省量徽标，供状态栏/回合头用
 mcptoon usage                   # 本地调用统计
@@ -638,12 +664,12 @@ git clone https://github.com/activeing123/mcptoon.git
 cd mcptoon
 pip install -e . --no-build-isolation
 pip install pytest pytest-cov
-python -m pytest tests/ -v   # 2436 passed, 2 skipped
+python -m pytest tests/ -v   # 2513 passed, 2 skipped
 ```
 
 三条硬规则：零依赖（CI 强制）、新功能必须带测试、Windows 是一等目标。新手可以先看 [CONTRIBUTING.md](https://github.com/activeing123/mcptoon/blob/main/CONTRIBUTING.md) 和 [DEVELOPERS.md](https://github.com/activeing123/mcptoon/blob/main/DEVELOPERS.md)。
 
-代码规模：**45 个模块、30,685 行 Python**，零第三方依赖。
+代码规模：**46 个模块、31,982 行 Python**，零第三方依赖。
 
 ---
 

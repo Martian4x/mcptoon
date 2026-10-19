@@ -50,9 +50,12 @@ DETERMINISTIC_SKIPS = 2
 
 # Surfaces that state the suite total. Union of TEST_CLAIM_SURFACES and the prose
 # extra (docs/tiktoken-benchmarks.md) from tests/test_footprint_claims.py.
+# `docs/README-details.md` carries the line/module claim (not a test count), so it
+# is included here for the line/module sync below even though it states no total.
 SURFACES = (
     "README.md", "README.zh-CN.md", "DEVELOPERS.md", "ROADMAP.md",
     "docs/index.html", "docs/index-zh.html", "docs/tiktoken-benchmarks.md",
+    "docs/README-details.md",
 )
 
 # The spellings the guard knows. Each has its number in group 1 (except the badge,
@@ -62,6 +65,32 @@ _BADGE = re.compile(r"(?i)(Tests-)(\d+)(%20passed)")
 _LIVE = re.compile(r"(\d+) passed(\s*(?:·|\+|,)\s*\d+ skipped)")
 _PROSE = re.compile(r"(\d[\d,]{2,6})(\s*(?:tests?\b|个测试))")
 _VERSION_LINE = re.compile(r"(v\d+\.\d+\.\d+[ ·|]+)(\d+) passed")
+
+# Line-count and module-count claims — the numbers `sync_claims` used to leave to a
+# hand edit, which is exactly how they drifted (31,339 → 31,410 found stale on
+# 2026-10-19 after a refactor added a module). Both are pure numbers in a fixed
+# frame; the words around them are untouched, so this respects the README freeze
+# ("only the numbers move"). The guard (`test_footprint_claims`) judges them with a
+# 2% tolerance on lines and exact match on modules — matching that arithmetic here
+# means a written figure always lands inside the guard's window.
+#
+# `\s+` (not a literal space) between the number and the unit so the cross-line
+# "31,410\nlines of" in docs/README-details.md is caught too.
+_LINECOUNT = re.compile(r"(\d[\d,]{3,6})(\s*(?:行|lines of))")
+_MODCOUNT = re.compile(r"(\d{1,3})(\s*(?:个)?\s*模块|\s*modules\b)")
+
+
+def _module_count() -> int:
+    """Physical module count of src/mcptoon/**/*.py — the guard's own ruler."""
+    src = ROOT / "src" / "mcptoon"
+    return sum(1 for p in src.rglob("*.py") if "__pycache__" not in p.parts)
+
+
+def _line_count() -> int:
+    """Physical line count of src/mcptoon/**/*.py — the guard's own ruler."""
+    src = ROOT / "src" / "mcptoon"
+    return sum(len(p.read_text(encoding="utf-8").splitlines())
+               for p in src.rglob("*.py") if "__pycache__" not in p.parts)
 
 
 def collected_total() -> int:
@@ -144,6 +173,40 @@ def rewrite_version_line(text: str, passed: int) -> tuple[str, int]:
     return _VERSION_LINE.sub(_f, text), changes
 
 
+def _replace_linecount(text: str, lines: int) -> tuple[str, int]:
+    changes = 0
+    target = f"{lines:,}"
+
+    def _f(m):
+        nonlocal changes
+        if m.group(1).replace(",", "") != str(lines):
+            changes += 1
+        return f"{target}{m.group(2)}"
+
+    return _LINECOUNT.sub(_f, text), changes
+
+
+def _replace_modcount(text: str, modules: int) -> tuple[str, int]:
+    changes = 0
+
+    def _f(m):
+        nonlocal changes
+        if m.group(1) != str(modules):
+            changes += 1
+        return f"{modules}{m.group(2)}"
+
+    return _MODCOUNT.sub(_f, text), changes
+
+
+def rewrite_tree_claims(text: str, lines: int, modules: int) -> tuple[str, int]:
+    """Sync the line- and module-count claims (numbers only, wording untouched)."""
+    total = 0
+    for fn, arg in ((_replace_linecount, lines), (_replace_modcount, modules)):
+        text, c = fn(text, arg)
+        total += c
+    return text, total
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Sync advertised test-count claims to collection.")
     ap.add_argument("--apply", action="store_true", help="write changes, then run the guard")
@@ -154,14 +217,20 @@ def main() -> int:
     passed = collected - DETERMINISTIC_SKIPS
     print(f"collection: {collected} collected - {DETERMINISTIC_SKIPS} skipped = {passed} passed")
 
+    n_lines = _line_count()
+    n_modules = _module_count()
+    print(f"tree: {n_modules} modules, {n_lines:,} physical lines (src/mcptoon/**/*.py)")
+
     stale = 0
     for rel in SURFACES:
         path = ROOT / rel
         text = path.read_text(encoding="utf-8")
         new, n = rewrite(text, passed)
+        new, nt = rewrite_tree_claims(new, n_lines, n_modules)
+        n += nt
         if n:
             stale += n
-            print(f"  {rel}: {n} claim(s) -> {passed}")
+            print(f"  {rel}: {n} claim(s) -> passed {passed}, lines {n_lines:,}, modules {n_modules}")
             if args.apply and new != text:
                 path.write_text(new, encoding="utf-8")
 

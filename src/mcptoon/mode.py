@@ -43,7 +43,15 @@ to call from `status`, the footer, or a statusline that runs every prompt.
 
 from __future__ import annotations
 
-__all__ = ["detect", "statusline", "explain", "run", "run_statusline"]
+import json
+import os
+import sys
+import tempfile
+from pathlib import Path
+
+__all__ = ["detect", "statusline", "explain", "run", "run_statusline",
+           "statusline_command", "install_statusline", "uninstall_statusline",
+           "statusline_status"]
 
 MODES = ("cli", "serve", "direct")
 
@@ -154,6 +162,10 @@ def _human(n) -> str:
 
 _MODE_TAG = {"serve": "serve", "cli": "cli", "direct": "direct!",
              "empty": "no servers"}
+# The Chinese tags are short on purpose: a status bar counts a CJK glyph as two
+# columns, so these must stay tiny to keep the whole line within 80 columns.
+_MODE_TAG_ZH = {"serve": "serve", "cli": "CLI", "direct": "直连!",
+                "empty": "无服务器"}
 
 
 def statusline(lng: str | None = None) -> str:
@@ -161,8 +173,10 @@ def statusline(lng: str | None = None) -> str:
 
     Deliberately <=80 display columns and one line: it is meant to sit in a
     status bar or be echoed at the top of a turn, so a wrapping badge defeats the
-    purpose. Reads only cached figures — never spawns a server — so a host may
-    call it on every prompt without paying a startup cost.
+    purpose. Reads only cached figures — never spawns a server. The per-turn cost
+    is the interpreter's own start-up (~0.5 s here) plus a stat walk of the cache;
+    the catalog token totals are memoised so they are *not* recomputed per prompt
+    (measured 2026-10-19: recomputing them was ~440 ms and dominated the line).
     """
     d = detect()
     f = _figures()
@@ -187,11 +201,26 @@ def statusline(lng: str | None = None) -> str:
         except Exception:
             est = None
 
+    # Language follows the same chain every other human-facing string uses
+    # (explicit setting > MCPTOON_LANG > OS UI > LANG > en). The badge used to be
+    # hard-coded English, which meant a Chinese-configured machine showed an
+    # English status bar — the one surface a user stares at all day.
+    if lng is None:
+        from . import config as _cfg
+        lng = _cfg.resolve_lang()
+    zh = lng == "zh"
+
     head = "🎉 mcptoon"
-    tool_bit = f"{exposed} tools ({pct}% less)" if (exposed and pct) else None
-    saved_bit = f"≈{_human(est[1])} saved · {_human(est[0])} calls" if est else (
-        f"{_human(calls)} calls" if calls else None)
-    tag = _MODE_TAG.get(d["mode"], d["mode"])
+    if zh:
+        tool_bit = f"{exposed} 工具（省 {pct}%）" if (exposed and pct) else None
+        saved_bit = f"≈省{_human(est[1])} · {_human(est[0])}次" if est else (
+            f"{_human(calls)} 次" if calls else None)
+        tag = _MODE_TAG_ZH.get(d["mode"], d["mode"])
+    else:
+        tool_bit = f"{exposed} tools ({pct}% less)" if (exposed and pct) else None
+        saved_bit = f"≈{_human(est[1])} saved · {_human(est[0])} calls" if est else (
+            f"{_human(calls)} calls" if calls else None)
+        tag = _MODE_TAG.get(d["mode"], d["mode"])
 
     parts = [head]
     if tool_bit:
@@ -201,8 +230,11 @@ def statusline(lng: str | None = None) -> str:
     parts.append(tag)
     line = " · ".join(parts)
 
-    # Guard the <=80 budget: drop the cumulative clause if the line is too long.
-    if len(line) > 80 and saved_bit and tool_bit:
+    # Guard the <=80 DISPLAY-column budget (a CJK glyph counts as two columns, so
+    # len() under-counts the Chinese badge). Drop the cumulative clause first.
+    from .welcome import display_width
+
+    if display_width(line) > 80 and saved_bit and tool_bit:
         parts = [head, tool_bit, tag]
         line = " · ".join(parts)
     return line
@@ -320,13 +352,30 @@ def run(rest: list[str], fmt: str = "auto", head_n: int = 0, max_chars: int = 0,
 
 def run_statusline(rest: list[str], fmt: str = "auto", head_n: int = 0,
                    max_chars: int = 0, full: bool = False) -> None:
-    """CLI entry: `mcptoon statusline [--json]` — one badge line.
+    """CLI entry: `mcptoon statusline [--json|--install|--uninstall|--check]`.
 
     Usage:
-        mcptoon statusline          One-line badge for a status bar / turn header
-        mcptoon statusline --json   The badge plus its inputs as JSON
+        mcptoon statusline              One-line badge for a status bar / turn header
+        mcptoon statusline --json       The badge plus its inputs as JSON
+        mcptoon statusline --install    Wire it into Claude Code's status bar
+        mcptoon statusline --uninstall  Remove exactly that entry again
+        mcptoon statusline --check      Report whether it is wired (exit 1 if not)
+        mcptoon statusline --guide      How to wire it into OTHER hosts (tmux, shell, ...)
     """
     from . import output
+
+    if "--guide" in rest:
+        _emit_statusline_guide(fmt=fmt, max_chars=max_chars)
+        return
+    if "--install" in rest or "--uninstall" in rest:
+        _emit_statusline_wiring(
+            install="--install" in rest,
+            dry="--dry" in rest,
+            fmt=fmt, max_chars=max_chars)
+        return
+    if "--check" in rest:
+        _emit_statusline_check(fmt=fmt, max_chars=max_chars)
+        return
 
     line = statusline()
     if fmt == "json":
@@ -335,3 +384,580 @@ def run_statusline(rest: list[str], fmt: str = "auto", head_n: int = 0,
         }), fmt="json", max_chars=max_chars))
         return
     print(line)
+
+
+# ─── Wiring the badge into a host's status bar ───
+#
+# The badge existed since 0.8.22 but nothing put it where a user would see it:
+# `presence` writes to stderr and `statusline` had to be pasted into a config by
+# hand. The measured result is the complaint this module opens with — "I installed
+# it and cannot tell it is doing anything." This section closes that gap for the
+# one host whose status-bar schema is documented: Claude Code reads
+# `statusLine.command` from `~/.claude/settings.json`.
+#
+# Design limits, each one deliberate:
+# * **Only the command, nothing else.** We set one key in one file. No other
+#   setting is touched, so a user's model/theme/permissions survive untouched.
+# * **Byte-reversible.** `--uninstall` removes exactly the key we wrote and deletes
+#   the file only when it was ours alone, matching the promise `mcptoon off` already
+#   makes elsewhere. Removal cuts our inserted text span back out of the original
+#   bytes rather than re-serialising the whole document, so install→uninstall
+#   restores the file character for character — not merely value for value. Verified
+#   against 2-space, 4-space, tab-indented, minified, no-trailing-newline, CRLF,
+#   nested-same-key and CJK files, plus a 2000-document fuzz (2026-10-19).
+# * **`<file>.bak` once, never clobbered.** Same rule as the server config: the
+#   first snapshot is the one closest to what the user had.
+# * **Never silently overwrite a different statusLine.** If the user already points
+#   `statusLine` at their own script, installing would destroy it; we refuse and
+#   say so instead.
+
+_CLAUDE_SETTINGS_REL = (".claude", "settings.json")
+
+
+def _claude_settings_path() -> Path:
+    """Claude Code's user settings file (`~/.claude/settings.json`).
+
+    `USERPROFILE` is read at call time, not import time, so a test that redirects
+    home (or a sandbox run) never writes to the real profile — the same trap
+    `sync.py` documents for its agent table.
+    """
+    home = os.environ.get("USERPROFILE") or os.path.expanduser("~")
+    return Path(home).joinpath(*_CLAUDE_SETTINGS_REL)
+
+
+def statusline_command() -> str:
+    """The exact command string a host should run to print the badge.
+
+    `--json` is deliberately absent: Claude Code renders the command's stdout as
+    the status line, so it must be the one plain line, not a JSON envelope.
+    """
+    return "mcptoon statusline"
+
+
+def _read_settings_raw(path: Path) -> tuple[dict, str | None, str]:
+    """`(data, error, raw_text)`. A missing file is `({}, None, "")`."""
+    if not path.exists():
+        return {}, None, ""
+    try:
+        # newline="" keeps CRLF/CR as-is: a text-mode read would silently rewrite a
+        # Windows file's line endings to LF, breaking the byte-reversibility promise.
+        with open(path, encoding="utf-8", newline="") as fh:
+            raw = fh.read()
+    except OSError as e:
+        return {}, str(e), ""
+    if not raw.strip():
+        return {}, None, raw
+    try:
+        data = json.loads(raw)
+    except ValueError as e:
+        return {}, f"not valid JSON: {e}", raw
+    if not isinstance(data, dict):
+        return {}, "top level is not a JSON object", raw
+    return data, None, raw
+
+
+def _read_settings(path: Path) -> tuple[dict, str | None]:
+    """`(data, error)`. A missing file is `({}, None)`; unparseable is an error."""
+    data, err, _raw = _read_settings_raw(path)
+    return data, err
+
+
+# Byte-reversibility by text splicing, not re-serialisation.
+#
+# Measured 2026-10-19: a `json.dumps` round trip reformats the whole file — a
+# 4-space file comes back 2-space, `["Bash"]` gets exploded one-per-line, a
+# minified file is re-indented. So "we only added one key" was quietly false: the
+# user's model/theme/permissions block got reflowed. Re-serialising *cannot* be
+# byte-exact because `json.dumps` normalises arrays and spacing.
+#
+# Instead we splice our one member into the original text and, on uninstall, cut
+# exactly that span back out (the same anchor-and-cut discipline `sync.py` uses for
+# its skill-pointer block). Everything outside the splice is the user's original
+# bytes, untouched.
+
+# Values of `statusLine` that mean "empty / not set" — safe for us to own.
+def _statusline_is_ours(value) -> bool:
+    return isinstance(value, dict) and value.get("command") == statusline_command()
+
+
+def _skip_ws(text: str, i: int) -> int:
+    while i < len(text) and text[i] in " \t\r\n":
+        i += 1
+    return i
+
+
+def _string_end(text: str, i: int) -> int:
+    """Index just past the JSON string starting at `text[i] == '"'`."""
+    assert text[i] == '"'
+    i += 1
+    while i < len(text):
+        c = text[i]
+        if c == "\\":
+            i += 2
+            continue
+        if c == '"':
+            return i + 1
+        i += 1
+    raise ValueError("unterminated string")
+
+
+def _value_end(text: str, i: int) -> int:
+    """Index just past the JSON value starting at `text[i]` (objects/arrays/strings
+    are bracketed or quoted; a number/true/false/null runs to the next delimiter)."""
+    i = _skip_ws(text, i)
+    if i >= len(text):
+        raise ValueError("unexpected end of input")
+    c = text[i]
+    if c == '"':
+        return _string_end(text, i)
+    if c in "{[":
+        depth = 0
+        while i < len(text):
+            ch = text[i]
+            if ch == '"':
+                i = _string_end(text, i)
+                continue
+            if ch in "{[":
+                depth += 1
+            elif ch in "}]":
+                depth -= 1
+                if depth == 0:
+                    return i + 1
+            i += 1
+        raise ValueError("unbalanced brackets")
+    # scalar: number / true / false / null
+    while i < len(text) and text[i] not in ",}] \t\r\n":
+        i += 1
+    return i
+
+
+def _find_member(text: str, key: str) -> tuple[int, int, int] | None:
+    """Locate a top-level `"key": value` member in an object's text.
+
+    Returns `(value_start, value_end, member_start)` where `member_start` is the
+    index of the opening quote of the key (for whole-member removal). `None` when
+    the key is not present. Top-level only — a nested `"statusLine"` must not match.
+    """
+    i = _skip_ws(text, 0)
+    if i >= len(text) or text[i] != "{":
+        return None
+    i += 1
+    while True:
+        i = _skip_ws(text, i)
+        if i >= len(text) or text[i] == "}":
+            return None
+        member_start = i
+        if text[i] != '"':
+            return None
+        key_end = _string_end(text, i)
+        try:
+            found_key = json.loads(text[i:key_end])
+        except ValueError:
+            return None
+        i = _skip_ws(text, key_end)
+        if i >= len(text) or text[i] != ":":
+            return None
+        i = _skip_ws(text, i + 1)
+        v_start = i
+        v_end = _value_end(text, i)
+        if found_key == key:
+            return v_start, v_end, member_start
+        i = _skip_ws(text, v_end)
+        if i < len(text) and text[i] == ",":
+            i += 1
+            continue
+        if i < len(text) and text[i] == "}":
+            return None
+        return None
+
+
+# Our inserted member, and the exact text `_splice_member` appends. Uninstall cuts
+# precisely this span, so the two must stay in lockstep.
+def _our_member_text() -> str:
+    return '"statusLine": ' + json.dumps(
+        {"type": "command", "command": statusline_command()}, ensure_ascii=False)
+
+
+def _splice_member(raw: str, member: str) -> str:
+    """Insert `member` as the first member of the top-level object in `raw`.
+
+    If `raw` is an empty object (`{}` / blank / missing) we build a whole object.
+    Otherwise we splice right after the opening `{` plus a newline + two-space
+    indent, matching the common settings layout, and leave the rest byte-for-byte.
+    """
+    if not raw.strip():
+        return "{\n  " + member + "\n}\n"
+    i = _skip_ws(raw, 0)
+    if i >= len(raw) or raw[i] != "{":
+        raise ValueError("top level is not an object")
+    j = _skip_ws(raw, i + 1)
+    if j < len(raw) and raw[j] == "}":
+        # `{ }` — keep it on the same simple shape.
+        return "{\n  " + member + "\n}\n"
+    return raw[:i + 1] + "\n  " + member + "," + raw[i + 1:]
+
+
+def _cut_member(raw: str, member_start: int, value_end: int) -> str:
+    """Remove the `"key": value` member that begins at `member_start` and whose
+    value ends at `value_end`, plus its trailing comma and the whitespace that
+    preceded it — restoring the pre-splice text byte for byte."""
+    n = len(raw)
+    k = _skip_ws(raw, value_end)
+    if k < n and raw[k] == ",":
+        # member had a following sibling: drop member + comma, keep the rest
+        return raw[:member_start] + raw[k + 1:].lstrip(" \t")
+    # member was last: drop the preceding comma + the whitespace/newline we added
+    back = member_start
+    while back > 0 and raw[back - 1] in " \t":
+        back -= 1
+    if back > 0 and raw[back - 1] == ",":
+        back -= 1
+    if back > 0 and raw[back - 1] == "\n":
+        back -= 1
+    return raw[:back] + raw[value_end:]
+
+
+def _cut_our_inserted(raw: str) -> str | None:
+    """Reverse `_splice_member` exactly by removing the span it inserted.
+
+    `_splice_member` put `"\\n  " + member + ","` right after the opening `{`. If
+    that exact span is still there (the user did not reorder the file), cutting it
+    out restores the pre-install bytes character for character. Returns `None` when
+    the span is not where we left it, so the caller falls back to `_cut_member`.
+    """
+    i = _skip_ws(raw, 0)
+    if i >= len(raw) or raw[i] != "{":
+        return None
+    inserted = "\n  " + _our_member_text() + ","
+    if raw[i + 1:i + 1 + len(inserted)] == inserted:
+        return raw[:i + 1] + raw[i + 1 + len(inserted):]
+    return None
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
+    """Write `text` atomically (temp file + os.replace)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".tmp-statusline-",
+                              suffix=".json")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as fh:
+            fh.write(text)
+        os.replace(tmp, str(path))
+    except OSError:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def _backup_once(path: Path) -> None:
+    """Snapshot `path` to `<path>.bak` once. Never clobbers an existing `.bak`."""
+    try:
+        if not path.exists():
+            return
+        bak = path.with_suffix(path.suffix + ".bak")
+        if bak.exists():
+            return
+        # newline="" on both ends so the snapshot is byte-identical (a CRLF file
+        # must not be restored as LF).
+        with open(path, encoding="utf-8", newline="") as src:
+            content = src.read()
+        with open(bak, "w", encoding="utf-8", newline="") as dst:
+            dst.write(content)
+    except OSError:
+        pass
+
+
+def statusline_status() -> dict:
+    """Where the badge is wired, without changing anything (safe for `doctor`)."""
+    path = _claude_settings_path()
+    data, err = _read_settings(path)
+    current = data.get("statusLine") if isinstance(data.get("statusLine"), dict) else None
+    cmd = current.get("command") if current else None
+    return {
+        "host": "claude-code",
+        "path": str(path),
+        "file_exists": path.exists(),
+        "wired": cmd == statusline_command(),
+        "command": cmd,
+        "error": err,
+    }
+
+
+def install_statusline(*, dry: bool = False) -> dict:
+    """Point Claude Code's `statusLine` at `mcptoon statusline`.
+
+    Returns `{"path", "changed", "action", "error"}` where `action` is one of
+    `already`, `installed`, `would-install`, `refused`, `error`.
+    """
+    path = _claude_settings_path()
+    if path.exists() and path.is_dir():
+        return {"path": str(path), "changed": False, "action": "error",
+                "error": f"{path} is a directory, not a settings file — "
+                         "move it out of the way first"}
+    data, err, raw = _read_settings_raw(path)
+    if err:
+        return {"path": str(path), "changed": False, "action": "error",
+                "error": f"{path} {err} — fix or move it first, refusing to rewrite it"}
+    existing = data.get("statusLine")
+    if _statusline_is_ours(existing):
+        return {"path": str(path), "changed": False, "action": "already", "error": None}
+    if existing is not None and not (
+            isinstance(existing, dict) and existing.get("command") in (None, "")):
+        return {"path": str(path), "changed": False, "action": "refused",
+                "error": ("statusLine is already set to something else; "
+                          "remove it first if you want mcptoon to own the badge"),
+                "current": existing}
+    # A present-but-empty statusLine (`{}` or `{"type": ...}` with no command) is
+    # "ours to fill": strip it out of the raw text first, then splice a clean one,
+    # so we never leave two members or a dangling comma.
+    base_raw = raw
+    if isinstance(existing, dict):
+        span = _find_member(raw, "statusLine")
+        if span is not None:
+            _v_start, v_end, member_start = span
+            base_raw = _cut_member(raw, member_start, v_end)
+    if dry:
+        return {"path": str(path), "changed": False, "action": "would-install",
+                "error": None}
+    try:
+        new_text = _splice_member(base_raw, _our_member_text())
+    except ValueError as e:
+        return {"path": str(path), "changed": False, "action": "error",
+                "error": f"{path} could not be spliced: {e}"}
+    try:
+        _backup_once(path)
+        _atomic_write_text(path, new_text)
+    except OSError as e:
+        return {"path": str(path), "changed": False, "action": "error", "error": str(e)}
+    return {"path": str(path), "changed": True, "action": "installed", "error": None}
+
+
+def uninstall_statusline(*, dry: bool = False) -> dict:
+    """Remove exactly the `statusLine` entry this module wrote.
+
+    Deletes the file only when the leftover object is empty — i.e. mcptoon created
+    it solely to hold the badge. The removal cuts our member's exact text span back
+    out of the original bytes, so an install→uninstall round trip restores the file
+    character for character, not merely value for value.
+    """
+    path = _claude_settings_path()
+    if not path.exists():
+        return {"path": str(path), "changed": False, "action": "absent", "error": None}
+    if path.is_dir():
+        return {"path": str(path), "changed": False, "action": "error",
+                "error": f"{path} is a directory, not a settings file"}
+    data, err, raw = _read_settings_raw(path)
+    if err:
+        return {"path": str(path), "changed": False, "action": "error", "error": err}
+    existing = data.get("statusLine")
+    if not _statusline_is_ours(existing):
+        return {"path": str(path), "changed": False, "action": "not-ours", "error": None}
+    if dry:
+        return {"path": str(path), "changed": False, "action": "would-remove", "error": None}
+    # Remove every key so the leftover object is empty; if only ours was present the
+    # file goes away entirely (as `off` promises). For the multi-key case we cut our
+    # exact inserted span back out (byte-exact); only if the user reordered the file
+    # do we fall back to a span cut, then to a canonical write.
+    remaining = {k: v for k, v in data.items() if k != "statusLine"}
+    try:
+        if not remaining:
+            # Did *we* create this file, or was it a pre-existing `{}` we filled in?
+            # A `.bak` exists exactly when the file was here before our first install.
+            bak = path.with_suffix(path.suffix + ".bak")
+            if bak.exists():
+                # restore the original bytes verbatim rather than deleting the file
+                with open(bak, encoding="utf-8", newline="") as fh:
+                    _atomic_write_text(path, fh.read())
+                return {"path": str(path), "changed": True, "action": "removed",
+                        "error": None}
+            path.unlink()
+            return {"path": str(path), "changed": True, "action": "removed-file",
+                    "error": None}
+        new_text = _cut_our_inserted(raw)
+        if new_text is None:
+            span = _find_member(raw, "statusLine")
+            if span is None:
+                # Should not happen (data had the key), but never half-rewrite.
+                new_text = json.dumps(remaining, indent=2, ensure_ascii=False) + "\n"
+            else:
+                _v_start, v_end, member_start = span
+                new_text = _cut_member(raw, member_start, v_end)
+        _atomic_write_text(path, new_text)
+    except OSError as e:
+        return {"path": str(path), "changed": False, "action": "error", "error": str(e)}
+    return {"path": str(path), "changed": True, "action": "removed", "error": None}
+
+
+def _emit_statusline_wiring(*, install: bool, dry: bool, fmt: str,
+                            max_chars: int) -> None:
+    from . import config as cfg
+    from . import output
+
+    zh = cfg.resolve_lang() == "zh"
+    result = install_statusline(dry=dry) if install else uninstall_statusline(dry=dry)
+    if fmt == "json":
+        print(output.render(output.stamp_schema(result), fmt="json",
+                            max_chars=max_chars))
+        if result.get("action") in ("error", "refused"):
+            sys.exit(1)
+        return
+    action = result.get("action")
+    path = result.get("path")
+    if action in ("installed", "would-install"):
+        if zh:
+            head = ("将接入" if action == "would-install" else "已接入")
+            print(f"状态栏{head}：Claude Code 会显示 `{statusline_command()}`")
+            print(f"  文件：{path}")
+            print("  下一个 Claude Code 会话会在终端底部渲染它。")
+            print("  撤销：mcptoon statusline --uninstall")
+        else:
+            prefix = "would wire" if action == "would-install" else "wired"
+            print(f"statusline {prefix}: Claude Code will show `{statusline_command()}`")
+            print(f"  file: {path}")
+            print("  next Claude Code session renders it at the bottom of the terminal.")
+            print("  undo: mcptoon statusline --uninstall")
+    elif action == "already":
+        print(f"状态栏已接入 {path} —— 无需改动。" if zh
+              else f"statusline already wired in {path} — nothing to do.")
+    elif action in ("removed", "removed-file", "would-remove"):
+        if zh:
+            verb = "将移除" if action == "would-remove" else "已移除"
+            print(f"状态栏{verb}：{path}")
+            if action == "removed-file":
+                print("  文件里没有别的内容，因此已删除（与 `off` 的承诺一致）。")
+        else:
+            verb = "would remove" if action == "would-remove" else "removed"
+            print(f"statusline {verb} from {path}.")
+            if action == "removed-file":
+                print("  the file held nothing else, so it was deleted (as `off` promises).")
+    elif action == "not-ours":
+        print(f"{path} 里没有我们的状态栏 —— 无需移除。" if zh
+              else f"statusline not present in {path} — nothing to remove.")
+    elif action == "absent":
+        print(f"{path} 不存在 —— 无需移除。" if zh
+              else f"no settings file at {path} — nothing to remove.")
+    elif action == "refused":
+        if zh:
+            print(f"拒绝：{result.get('error')}", file=sys.stderr)
+            print(f"  当前 statusLine：{json.dumps(result.get('current'))}",
+                  file=sys.stderr)
+        else:
+            print(f"refused: {result.get('error')}", file=sys.stderr)
+            print(f"  current statusLine: {json.dumps(result.get('current'))}",
+                  file=sys.stderr)
+        sys.exit(1)
+    else:
+        print(f"状态栏出错：{result.get('error')}" if zh
+              else f"statusline error: {result.get('error')}", file=sys.stderr)
+        sys.exit(1)
+
+
+def _emit_statusline_check(*, fmt: str, max_chars: int) -> None:
+    from . import config as cfg
+    from . import output
+
+    zh = cfg.resolve_lang() == "zh"
+    st = statusline_status()
+    if fmt == "json":
+        print(output.render(output.stamp_schema(st), fmt="json", max_chars=max_chars))
+        sys.exit(0 if st["wired"] else 1)
+    if st["wired"]:
+        print(f"状态栏已接入：{st['path']}" if zh else f"statusline wired: {st['path']}")
+        print(f"  命令：{st['command']}" if zh else f"  command: {st['command']}")
+        sys.exit(0)
+    if st.get("error"):
+        print(f"状态栏：读不了 {st['path']}：{st['error']}" if zh
+              else f"statusline: cannot read {st['path']}: {st['error']}",
+              file=sys.stderr)
+        sys.exit(1)
+    print(f"状态栏未接入：{st['path']}" if zh
+          else f"statusline NOT wired: {st['path']}")
+    if st["command"]:
+        print(f"  它当前指向别的东西：{st['command']}" if zh
+              else f"  it currently runs something else: {st['command']}")
+    print("  修复：mcptoon statusline --install" if zh
+          else "  fix: mcptoon statusline --install")
+    sys.exit(1)
+
+
+def _emit_statusline_guide(*, fmt: str, max_chars: int) -> None:
+    """How to put the badge on a host that has no automatic wiring.
+
+    Only Claude Code has a documented status-bar schema, so `--install` wires that
+    one host. Every other host — tmux, a shell prompt, a terminal multiplexer, a
+    custom IDE — can still show the badge, but only by running the command itself.
+    This prints the exact one-liners so a user on Codex/Gemini/Cursor/DSH is not
+    told "not supported" and left to guess. The command is the same everywhere
+    (`mcptoon statusline`); only the place you paste it differs.
+    """
+    from . import config as cfg
+
+    zh = cfg.resolve_lang() == "zh"
+    cmd = statusline_command()
+    if fmt == "json":
+        from . import output
+        print(output.render({
+            "command": cmd,
+            "hosts": {
+                "claude-code": "automatic: mcptoon statusline --install",
+                "tmux": f'set -g status-right "#({cmd})"',
+                "bash-zsh": f'PS1="$( {cmd} ) $PS1"  # or PROMPT_COMMAND',
+                "fish": f'function fish_prompt; {cmd}; echo " $ "; end',
+                "no-status-bar": "run `mcptoon statusline` in a side pane, or paste it after a turn",
+            },
+        }, fmt="json", max_chars=max_chars))
+        return
+
+    L = []
+    a = L.append
+    if zh:
+        a("把徽章接到各种宿主（只有 Claude Code 能自动接）")
+        a("")
+        a("  Claude Code —— 自动：")
+        a("      mcptoon statusline --install")
+        a("")
+        a("  其他宿主没有状态栏接口，但都能自己跑这条命令。粘到对应位置即可：")
+        a("")
+        a("  tmux（右下角状态栏）：")
+        a(f'      set -g status-right "#({cmd})"')
+        a("")
+        a("  bash / zsh（提示符前）：")
+        a(f'      PS1="$( {cmd} ) $PS1"')
+        a("      或放进 PROMPT_COMMAND，每次回车刷新")
+        a("")
+        a("  fish：")
+        a(f"      function fish_prompt; {cmd}; echo ' $ '; end")
+        a("")
+        a("  没有状态栏的宿主（Codex / Gemini / Cursor / DSH 等）：")
+        a("      开个侧边终端，常驻跑 `mcptoon statusline`；")
+        a("      或在一轮结束时把 `mcptoon statusline` 的输出贴出来。")
+        a("")
+        a("  命令都一样，只是粘的地方不同。它只读缓存、不连服务器，随时跑都安全。")
+    else:
+        a("Wire the badge into any host (only Claude Code is automatic)")
+        a("")
+        a("  Claude Code — automatic:")
+        a("      mcptoon statusline --install")
+        a("")
+        a("  Other hosts have no status-bar API, but all can run this one command.")
+        a("  Paste it where your host shows status:")
+        a("")
+        a("  tmux (status-right):")
+        a(f'      set -g status-right "#({cmd})"')
+        a("")
+        a("  bash / zsh (before your prompt):")
+        a(f'      PS1="$( {cmd} ) $PS1"')
+        a("      or put it in PROMPT_COMMAND to refresh each Enter")
+        a("")
+        a("  fish:")
+        a(f"      function fish_prompt; {cmd}; echo ' $ '; end")
+        a("")
+        a("  Hosts with no status bar (Codex / Gemini / Cursor / DSH, ...):")
+        a("      run `mcptoon statusline` in a side terminal, or")
+        a("      paste its output after a turn.")
+        a("")
+        a("  Same command everywhere; only the paste location differs. It reads the")
+        a("  cache and never contacts a server, so it is safe to run any time.")
+    print("\n".join(L))
