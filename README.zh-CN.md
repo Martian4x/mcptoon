@@ -18,7 +18,7 @@
   <a href="https://pypi.org/project/mcptoon/"><img src="https://img.shields.io/pypi/v/mcptoon?style=flat-square&color=238636&logo=pypi&logoColor=white" alt="PyPI 版本"></a>
   <a href="https://github.com/activeing123/mcptoon/stargazers"><img src="https://img.shields.io/github/stars/activeing123/mcptoon?style=flat-square&logo=github&color=58a6ff" alt="GitHub Stars"></a>
   <a href="https://github.com/activeing123/mcptoon/actions"><img src="https://img.shields.io/github/actions/workflow/status/activeing123/mcptoon/ci.yml?branch=main&style=flat-square&logo=githubactions&logoColor=white" alt="CI 构建"></a>
-  <a href="#贡献指南"><img src="https://img.shields.io/badge/tests-2421%20passed-success?style=flat-square&logo=pytest&logoColor=white" alt="测试"></a>
+  <a href="#贡献指南"><img src="https://img.shields.io/badge/tests-2436%20passed-success?style=flat-square&logo=pytest&logoColor=white" alt="测试"></a>
   <a href="https://github.com/activeing123/mcptoon"><img src="https://img.shields.io/badge/dependencies-0%20(stdlib%20only)-blue?style=flat-square" alt="零第三方依赖"></a>
   <a href="https://github.com/activeing123/mcptoon/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-informational?style=flat-square" alt="许可证"></a>
 </p>
@@ -564,6 +564,8 @@ mcptoon doctor                  # 自检：Python、配置、连通性
 mcptoon status                  # 一屏：配了什么、网关通没通、省了多少
 mcptoon stats                   # token 省量看板（对比原始 JSON）
 mcptoon report                  # 省量总账：工具 + 技能 + 累计
+mcptoon mode                    # 当前交付模式（cli/serve/direct）及各自开销
+mcptoon statusline              # 一行省量徽标，供状态栏/回合头用
 mcptoon usage                   # 本地调用统计
 mcptoon activity                # 谁在用它、什么时候、调了什么（最近 20 次）
 mcptoon footer-facts            # 一行省量，供聊天页脚用（永不阻塞）
@@ -636,12 +638,12 @@ git clone https://github.com/activeing123/mcptoon.git
 cd mcptoon
 pip install -e . --no-build-isolation
 pip install pytest pytest-cov
-python -m pytest tests/ -v   # 2421 passed, 2 skipped
+python -m pytest tests/ -v   # 2436 passed, 2 skipped
 ```
 
 三条硬规则：零依赖（CI 强制）、新功能必须带测试、Windows 是一等目标。新手可以先看 [CONTRIBUTING.md](https://github.com/activeing123/mcptoon/blob/main/CONTRIBUTING.md) 和 [DEVELOPERS.md](https://github.com/activeing123/mcptoon/blob/main/DEVELOPERS.md)。
 
-代码规模：**44 个模块、29,870 行 Python**，零第三方依赖。
+代码规模：**45 个模块、30,685 行 Python**，零第三方依赖。
 
 ---
 

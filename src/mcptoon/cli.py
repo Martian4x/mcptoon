@@ -120,10 +120,10 @@ _COMMANDS_WITH_OWN_HELP = frozenset({"demo", "demo-server", "serve"})
 _COMPLETION_COMMANDS = (
     "activity", "add", "bench", "call", "completion", "config", "demo", "demo-server",
     "discover", "docs", "doctor", "footer-facts", "health", "help", "import",
-    "init", "inspect", "install", "list", "manifest", "off", "plugin", "policy",
-    "quickstart", "remove", "report", "restore", "retrieve", "search", "select",
-    "serve", "skills", "stats", "status", "sync", "toggle", "uninstall", "update",
-    "usage",
+    "init", "inspect", "install", "list", "manifest", "mode", "off", "plugin",
+    "policy", "quickstart", "remove", "report", "restore", "retrieve", "search",
+    "select", "serve", "skills", "stats", "status", "statusline", "sync", "toggle",
+    "uninstall", "update", "usage",
     # aliases the dispatch chain also accepts
     "servers", "tools", "qs", "brief",
 )
@@ -573,6 +573,12 @@ def _run(state: dict) -> None:
     elif command == "report":
         from . import report as report_mod
         report_mod.run(rest, fmt, head_n, max_chars, full)
+    elif command == "mode":
+        from . import mode as mode_mod
+        mode_mod.run(rest, fmt, head_n, max_chars, full)
+    elif command == "statusline":
+        from . import mode as mode_mod
+        mode_mod.run_statusline(rest, fmt, head_n, max_chars, full)
     elif command == "docs":
         from . import docs as docs_mod
         docs_mod.run(rest, fmt, head_n, max_chars, full)
@@ -3399,6 +3405,38 @@ def _cmd_footer_facts(_rest, fmt, max_chars=0):
         print(f"note: {n}")
 
 
+def _cmd_mode(rest, fmt, head_n=0, max_chars=0, full=False):
+    """Which delivery mode is running, what each costs, and which is cheapest.
+
+    The three modes are `cli` (shell, zero resident, cheapest), `serve`
+    (registered MCP gateway, small fixed per-turn cost) and `direct` (installed
+    but not wired — the most expensive, and the default after a fresh install).
+    The big "99%" saving is definition-side and both `cli` and `serve` deliver
+    it; result compression is a rounding error.
+
+    Usage:
+        mcptoon mode
+        mcptoon mode --json
+    """
+    from . import mode as mode_mod
+    mode_mod.run(rest, fmt, head_n, max_chars, full)
+
+
+def _cmd_statusline(rest, fmt, head_n=0, max_chars=0, full=False):
+    """One compact badge line, safe to run every prompt from any host.
+
+    Meant for a status bar or the top of a turn: `🎉 mcptoon · 9 tools (99%
+    less) · ≈1.9B saved · 2,903 calls · cli`. Reads only cached figures and never
+    spawns a server, so a host may call it on every prompt.
+
+    Usage:
+        mcptoon statusline
+        mcptoon statusline --json
+    """
+    from . import mode as mode_mod
+    mode_mod.run_statusline(rest, fmt, head_n, max_chars, full)
+
+
 def _cmd_stats(_rest, fmt, head_n=0, max_chars=0, full=False):
     """Token savings dashboard — shows how much mcptoon saves vs raw JSON.
 
@@ -3753,6 +3791,26 @@ def _cmd_status(_rest, fmt):
         print("  Gateway in agents  : yes — agents can see mcptoon itself")
     else:
         print("  Gateway in agents  : no — run `mcptoon sync --self` to register it")
+    # Which delivery mode is running, and whether a cheaper one exists. This is
+    # the direct answer to "am I saving anything?" — a fresh install sits in
+    # `direct` (installed, not wired) and saves nothing, which `status` used to
+    # never say out loud. Read-only, cache-only (mode.detect never spawns a
+    # server), so it stays cheap.
+    try:
+        from . import mode as mode_mod
+        _m = mode_mod.detect()
+        _mode_label = {
+            "cli": "CLI (shell) — cheapest, zero resident cost",
+            "serve": "serve (MCP gateway) — small fixed per-turn cost",
+            "direct": "direct (not wired) — most expensive, saves nothing yet",
+            "empty": "no servers configured yet",
+        }.get(_m["mode"], _m["mode"])
+        print(f"  Mode               : {_mode_label}")
+        if _m["mode"] == "direct":
+            print("                       → run `mcptoon sync --self`, or use "
+                  "`mcptoon call` — see `mcptoon mode`")
+    except Exception:
+        pass
     print(line)
     print("  Take it back any time:")
     print("    mcptoon off          remove the gateway from your agents")
@@ -5768,6 +5826,8 @@ Usage:
     mcptoon status                        One-screen: what's here and what it saves
     mcptoon stats                         Token-savings dashboard (vs raw JSON)
     mcptoon report                        Whole savings account on one screen
+    mcptoon mode                          Which delivery mode you're in (cli/serve/direct), what each costs
+    mcptoon statusline                    One-line savings badge for a status bar / turn header
     mcptoon footer-facts                  One line of savings for a chat footer
     mcptoon retrieve <handle>             Get back the original behind a --smart handle
     mcptoon retrieve --list               Show what the retrieve store holds right now
@@ -6060,6 +6120,7 @@ def _populate_command_handlers() -> None:
         "usage": _cmd_usage, "status": _cmd_status, "brief": _cmd_status,
         "stats": _cmd_stats, "retrieve": _cmd_retrieve, "activity": _cmd_activity,
         "footer-facts": _cmd_footer_facts, "toggle": _cmd_toggle,
+        "mode": _cmd_mode, "statusline": _cmd_statusline,
         "policy": _cmd_policy, "import": _cmd_import, "doctor": _cmd_doctor,
         "install": _cmd_install, "completion": _cmd_completion,
         "sync": _cmd_sync, "off": _cmd_off, "restore": _cmd_restore,

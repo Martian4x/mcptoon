@@ -191,6 +191,22 @@ version per the one-release-per-topic rule.
   among ninety 20ms calls barely moves the average yet is the one the user
   remembers; p50 says what a typical call costs, p90 what a bad one costs
   (nearest-rank, no interpolation — the honest reading for a small sample).
+- **`mcptoon mode` — which delivery mode you are in, and which is cheapest.** A
+  fresh install can sit in `direct` (installed, but the agent still loads every
+  upstream schema) and save nothing, while `status` and `report` happily showed
+  the definition-side "99%". `mode` names the three states side by side — `cli`
+  (shell, zero resident, cheapest), `serve` (MCP gateway, small fixed per-turn
+  cost) and `direct` (most expensive) — flags the one you are in, and states the
+  honest headline: the big saving is definition-side (not loading every schema);
+  result compression is a rounding error (0.1–0.5%). Read-only, cache-only.
+- **`mcptoon statusline` — one savings badge, safe to run every prompt.** A
+  single ≤80-column line (`🎉 mcptoon · 9 tools (99% less) · ≈1.9B saved · 2,903
+  calls · cli`) for a status bar or a turn header, so an agent that never runs a
+  mcptoon command still shows it is there. Reads only cached figures, never
+  spawns a server. `--json` for hosts that prefer structured output.
+- **`status` and `report` now name the current delivery mode.** `status` gained a
+  `Mode` row and `report` a `⑥ Delivery mode` section, so the "99%" can no longer
+  be read without seeing whether this machine is in a mode that realises it.
 
 ### Fixed
 

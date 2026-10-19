@@ -78,6 +78,23 @@ def _native_tool_count() -> int:
         return 0
 
 
+def _mode_section() -> dict:
+    """Which delivery mode is running, and which is cheapest.
+
+    A savings report that lists "99%" without saying *whether this machine is in
+    a mode that actually saves anything* is the exact confusion this answers: a
+    fresh install sits in `direct` (installed, not wired) and saves nothing. All
+    read-only and cache-only, so the report stays cheap.
+    """
+    try:
+        from . import mode as mode_mod
+        d = mode_mod.detect()
+        return {"current": d["mode"], "cheapest": "cli",
+                "gateway_registered": d["gateway_registered"]}
+    except Exception:
+        return {"current": None, "cheapest": "cli", "gateway_registered": False}
+
+
 def build(query: str = "make a PDF", k: int = 5) -> dict:
     """Assemble every savings figure, each with the caliber it is measured on."""
     from . import footer as footer_mod
@@ -107,6 +124,7 @@ def build(query: str = "make a PDF", k: int = 5) -> dict:
         "tools": tools,
         "tools_exposed": _native_tool_count(),
         "skills": skills,
+        "mode": _mode_section(),
         "per_turn": {
             "native_tokens": native_total,
             "after_tokens": slim_total,
@@ -211,6 +229,31 @@ def render(data: dict, lng: str = "en") -> str:
     a("     " + L_("note: turns are not counted, so no cumulative-turn figure is invented",
                    "注：不统计『轮数』，故不编造累计轮次节省"))
     a("")
+
+    # ⑥ delivery mode — the "is this actually saving me anything?" answer. The
+    # 99% above is definition-side and only realised in `cli`/`serve`; a fresh
+    # install sits in `direct` and saves nothing, which the numbers above cannot
+    # say on their own.
+    md = data.get("mode") or {}
+    cur = md.get("current")
+    if cur:
+        _mlabel = {
+            "cli": L_("CLI (shell) — cheapest, zero resident cost",
+                      "CLI 模式（最省 · 零常驻）"),
+            "serve": L_("serve (MCP gateway) — small fixed per-turn cost",
+                        "serve 模式（原生集成 · 每轮小固定开销）"),
+            "direct": L_("direct (not wired) — most expensive, saves nothing yet",
+                         "直连模式（最贵 · 装了没接）"),
+            "empty": L_("no servers configured yet", "未配置任何 MCP 服务器"),
+        }.get(cur, cur)
+        a(L_("⑥ Delivery mode", "⑥ 当前交付模式") + f"  —  {_mlabel}")
+        if cur == "direct":
+            a("     " + L_("→ run `mcptoon sync --self` (serve) or use `mcptoon call` (cli); see `mcptoon mode`",
+                           "→ 跑 `mcptoon sync --self`（serve）或改用 `mcptoon call`（cli）；详见 `mcptoon mode`"))
+        else:
+            a("     " + L_("cheapest mode is CLI (idle 0, pay only on use); see `mcptoon mode`",
+                           "最省的是 CLI（闲置 0、按需才花）；详见 `mcptoon mode`"))
+        a("")
 
     if data.get("note"):
         a("note: " + data["note"])
