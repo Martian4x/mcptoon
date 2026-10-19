@@ -2559,7 +2559,7 @@ def record_skill_use(slugs: list[str]) -> None:
         for slug in slugs:
             entry = data.get(slug) or {"count": 0}
             entry["count"] = int(entry.get("count", 0)) + 1
-            entry["last"] = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            entry["last"] = datetime.now().strftime("%Y-%m-%d")
             data[slug] = entry
         path = _usage_path()
         tmp = None
