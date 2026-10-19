@@ -248,7 +248,18 @@ FOOTER_STATE_FILE = Path(os.environ.get(
 SETTING_DEFAULTS = {"footer": "on", "welcome": "on", "lang": "auto",
                     "exposure": "compact", "compress": "smart",
                     "runners": "prefer-installed", "select.engine": "lexical",
-                    "select.command": "", "presence": "on"}
+                    "select.command": "", "presence": "on",
+                    "activity_keep": "2000"}
+
+# `activity_keep` is the one numeric setting: how many activity-ledger lines to
+# keep before old ones roll off. It is a plain count, not an on/off or a fixed
+# choice, so it validates by range rather than against SETTING_CHOICES. The floor
+# keeps it useful (a handful of lines is not a history); the ceiling keeps a typo
+# like "20000" from quietly pinning megabytes of ledger. Both bounds are generous
+# on purpose — this is a preference, not a policy.
+ACTIVITY_KEEP_MIN = 50
+ACTIVITY_KEEP_MAX = 100000
+ACTIVITY_KEEP_DEFAULT = 2000
 
 # How mcptoon ranks candidate tools for a query ("which tools should the agent
 # look at for this task?").
@@ -869,6 +880,35 @@ def get_setting(key: str) -> str:
     return str(load_settings().get(key, SETTING_DEFAULTS.get(key, "")))
 
 
+def _coerce_activity_keep(value) -> "int | None":
+    """Parse `activity_keep` to an int in range, or None when invalid.
+
+    Accepts an int or a numeric string; rejects bools (True is not 1 here),
+    non-numbers, and anything outside [MIN, MAX]. Used both by `set_setting` (to
+    validate a write) and `activity_keep` (to guard a hand-edited settings file).
+    """
+    if isinstance(value, bool):
+        return None
+    try:
+        n = int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    if ACTIVITY_KEEP_MIN <= n <= ACTIVITY_KEEP_MAX:
+        return n
+    return None
+
+
+def activity_keep() -> int:
+    """How many activity-ledger lines to keep (default 2000, clamped to range).
+
+    Read by `usage._activity_keep()` on every trim. A hand-edited or out-of-range
+    value falls back to the default rather than breaking the trimmer — the ledger
+    is bookkeeping and must never crash a command.
+    """
+    n = _coerce_activity_keep(load_settings().get("activity_keep"))
+    return n if n is not None else ACTIVITY_KEEP_DEFAULT
+
+
 def set_setting(key: str, value: str) -> None:
     """Persist one setting. Unknown keys raise ValueError so typos fail loudly."""
     if key not in SETTING_DEFAULTS:
@@ -878,6 +918,16 @@ def set_setting(key: str, value: str) -> None:
     if choices and value not in choices:
         raise ValueError(
             f"{key}={value!r} is not one of {', '.join(choices)}")
+    # `activity_keep` is numeric, validated by range rather than a fixed set: a
+    # non-number or an out-of-range count is a typo, and failing loudly here is
+    # better than writing a value the ledger trimmer silently ignores.
+    if key == "activity_keep":
+        n = _coerce_activity_keep(value)
+        if n is None:
+            raise ValueError(
+                f"activity_keep={value!r} must be a whole number between "
+                f"{ACTIVITY_KEEP_MIN} and {ACTIVITY_KEEP_MAX}")
+        value = str(n)
     path = _settings_file()
     current = {}
     if path.exists():

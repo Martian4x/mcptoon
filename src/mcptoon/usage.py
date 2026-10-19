@@ -43,6 +43,10 @@ _ACTIVITY_FILE = CACHE_DIR / "activity.jsonl"
 
 # How many ledger lines to keep. A tool that has routed for months must not grow
 # an unbounded file on someone's disk; the tail is what `activity` shows anyway.
+# This is the DEFAULT; a user can raise or lower it with
+# `mcptoon config set activity_keep N` (see `_activity_keep`), because 2000 lines
+# is only a few days for a heavy user and the right cap is a preference, not a
+# constant. Kept as a module constant so tests and callers can read the default.
 _ACTIVITY_KEEP = 2000
 
 # Concurrency guard: multiple agent processes/servers may record calls
@@ -230,6 +234,20 @@ def track_call(server: str, tool: str, ok: bool = True, tokens_est: int | None =
                      err=err, ms=ms)
 
 
+def _activity_keep() -> int:
+    """The effective ledger cap: the `activity_keep` setting, else the default.
+
+    Read at trim time (not import time) so `config set activity_keep N` takes
+    effect without a new process. A bad/missing setting falls back to the module
+    default; a settings read must never break the ledger write.
+    """
+    try:
+        from . import config as _cfg
+        return _cfg.activity_keep()
+    except Exception:
+        return _ACTIVITY_KEEP
+
+
 def _append_activity(server: str, tool: str, ok: bool = True, tokens: int = 0,
                      host: "str | None" = None, detail: "str | None" = None,
                      err: "str | None" = None, ms: "int | None" = None) -> None:
@@ -271,10 +289,11 @@ def _append_activity(server: str, tool: str, ok: bool = True, tokens: int = 0,
             trimmed = None
             if path.exists():
                 try:
+                    keep = _activity_keep()
                     with path.open("r", encoding="utf-8", errors="replace") as fh:
                         lines = fh.readlines()
-                    if len(lines) >= _ACTIVITY_KEEP:
-                        trimmed = lines[-(_ACTIVITY_KEEP - 1):]
+                    if len(lines) >= keep:
+                        trimmed = lines[-(keep - 1):]
                 except OSError:
                     trimmed = None
             if trimmed is not None:
@@ -331,17 +350,20 @@ def activity_summary() -> dict:
     path = _activity_file()
     if not path.exists():
         return {"entries": 0, "last_host": None, "last_ts": None,
-                "today_calls": 0, "hosts": {}, "last_fail": None}
+                "first_ts": None, "today_calls": 0, "today_skill_dist": 0, "hosts": {},
+                "last_fail": None}
     try:
         with path.open("r", encoding="utf-8", errors="replace") as fh:
             lines = fh.readlines()
     except OSError:
         return {"entries": 0, "last_host": None, "last_ts": None,
-                "today_calls": 0, "hosts": {}, "last_fail": None}
+                "first_ts": None, "today_calls": 0, "today_skill_dist": 0, "hosts": {},
+                "last_fail": None}
     hosts: dict[str, int] = {}
     entries = 0
     last_host = None
     last_ts = None
+    first_ts = None
     today_calls = 0
     last_fail = None
     ok_count = 0
@@ -349,6 +371,7 @@ def activity_summary() -> dict:
     slow_count = 0
     ms_total = 0
     ms_count = 0
+    today_skill_dist = 0
     today = time.strftime("%Y-%m-%d")
     for raw in lines:
         raw = raw.strip()
@@ -376,9 +399,18 @@ def activity_summary() -> dict:
         ts = e.get("ts")
         if isinstance(ts, (int, float)):
             last_ts = ts
+            if first_ts is None or ts < first_ts:
+                first_ts = ts
             try:
-                if time.strftime("%Y-%m-%d", time.localtime(ts)) == today:
+                is_today = time.strftime("%Y-%m-%d", time.localtime(ts)) == today
+                if is_today:
                     today_calls += 1
+                    # Skill distributions today — the "did it hand me a capability
+                    # today?" question, distinct from a generic routed call. A
+                    # resolve that actually distributed is the moment that matters.
+                    if (e.get("tool") == "mcptoon_resolve_skills"
+                            and str(e.get("detail", "")).startswith("distributed:")):
+                        today_skill_dist += 1
             except (OSError, ValueError, OverflowError):
                 pass
         last_host = h
@@ -397,7 +429,12 @@ def activity_summary() -> dict:
         "entries": entries,
         "last_host": last_host,
         "last_ts": last_ts,
+        # The oldest entry still in the window — "how far back does this go?".
+        # With the rolling cap, this is not install time; it is the start of the
+        # retained history, which is the honest answer to "is this an audit log?".
+        "first_ts": first_ts,
         "today_calls": today_calls,
+        "today_skill_dist": today_skill_dist,
         "hosts": dict(sorted(hosts.items(), key=lambda x: -x[1])),
         "last_fail": last_fail,
         # Reliability, read off the same window: how many succeeded vs failed, and

@@ -161,6 +161,25 @@ version per the one-release-per-topic rule.
   "Success: N/M (P%)" and "Latency: avg X ms · K slow (>3000 ms)", read off the
   same window (using the `ms` field added last round) — "was it reliable?" is no
   longer unanswerable from the tail view.
+- **`mcptoon activity --top [N]` ranks by host and by tool.** "Which agent leans on
+  me most, and which capability?" — a counting question the per-line tail cannot
+  answer. Two bar tables, top N (default 10), honouring `--since` / `--host` /
+  `--failures`; `--json` returns the counts.
+- **`mcptoon config set activity_keep N` tunes the ledger cap.** The 2000-line cap
+  was a fixed constant; a heavy user can now raise or lower it (validated
+  whole-number range 50–100000, bad values fail loudly). The trimmer reads it live.
+- **`mcptoon activity --clear --before <when>` prunes only old entries.** A plain
+  `--clear` wiped everything; now you can drop calls older than `7d`/`24h`/a date
+  while keeping recent history. A torn line is kept, never silently eaten.
+- **`mcptoon activity` colours failed/slow lines on a real terminal.** Red for a
+  failed call, red for a `SLOW` one — but only on a TTY; a pipe or `NO_COLOR` gets
+  plain text, so a captured transcript stays clean. The signal was already in the
+  text ("ERR"/"SLOW"); colour just makes it pop for a human watching `--follow`.
+- **`status` and `activity --summary` report today's skill distributions.** The
+  number of `mcptoon_resolve_skills` calls that actually handed over skills today —
+  "did it give me a capability today?", distinct from a generic routed call.
+  `status --json` carries `activity_today_skills`; summary carries `first_ts`
+  ("how far back does this history go?").
 
 ### Fixed
 

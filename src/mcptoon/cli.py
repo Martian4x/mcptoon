@@ -62,7 +62,7 @@ KNOWN_FLAGS = frozenset(
         "--no-env", "--no-local", "--no-network", "--no-self", "--no-sync", "--npm", "--pip",
         "--quiet", "--quick", "--query", "--raw", "--remove", "--request-state", "--roots", "--search",
         "--summary", "--clear", "--host", "--export", "--follow", "--since",
-        "--failures",
+        "--failures", "--before",
         "--self", "--pack", "--packs",
         "--slim", "--smart",
         "--stdin", "--stdio", "--takeover", "--timeout", "--tombstone", "--toon", "--tools-k", "--top",
@@ -2734,9 +2734,11 @@ def _cmd_activity(rest, fmt, head_n=0, max_chars=0, full=False):
         print("      mcptoon activity --since W    only calls since W: today, 1h, 24h,")
         print("                                    or a date like 2026-10-18")
         print("      mcptoon activity --failures   only calls that failed")
+        print("      mcptoon activity --top [N]    rank by host and by tool (default 10)")
         print("      mcptoon activity --export csv dump the WHOLE ledger as csv (or json)")
         print("      mcptoon activity --follow     stream new calls live (Ctrl-C to stop)")
         print("      mcptoon activity --clear      wipe the ledger (usage stays)")
+        print("      mcptoon activity --clear --before 7d   drop only entries older than 7d")
         print("  The ledger is a local file on this machine; nothing is uploaded anywhere.")
         return
 
@@ -2777,6 +2779,20 @@ def _cmd_activity(rest, fmt, head_n=0, max_chars=0, full=False):
     # hundreds of ok calls to find the ones that broke.
     failures_only = "--failures" in rest
 
+    # `--top [N]`: rank by host and by tool instead of listing lines. "Which agent
+    # leans on me most, and which capability?" is a counting question the per-line
+    # tail cannot answer. Bare `--top` defaults to 10; honours --since/--host.
+    top_n = None
+    for i, a in enumerate(rest):
+        if a == "--top":
+            nxt = rest[i + 1] if i + 1 < len(rest) else ""
+            top_n = max(1, int(nxt)) if nxt.isdigit() else 10
+            break
+        if a.startswith("--top="):
+            v = a.split("=", 1)[1]
+            top_n = max(1, int(v)) if v.isdigit() else 10
+            break
+
     # `--export json|csv`: the whole ledger, not the on-screen tail. The default
     # view shows the last 20; an audit or a bug report wants all of it in a form a
     # spreadsheet or `jq` can take. Bare `--export` defaults to json.
@@ -2802,6 +2818,36 @@ def _cmd_activity(rest, fmt, head_n=0, max_chars=0, full=False):
 
     if "--clear" in rest:
         path = usage_mod._activity_file()
+        # `--clear --before <when>`: prune only entries older than a cutoff,
+        # keeping recent history. A plain `--clear` wipes everything, which is the
+        # only option there used to be — someone who wants to keep the last week
+        # but drop the rest had no way to say so.
+        before_arg = None
+        for i, a in enumerate(rest):
+            if a == "--before" and i + 1 < len(rest):
+                before_arg = rest[i + 1]
+                break
+            if a.startswith("--before="):
+                before_arg = a.split("=", 1)[1]
+                break
+        if before_arg is not None:
+            cutoff = _parse_since(before_arg)
+            if cutoff is None:
+                print(f"mcptoon activity: could not understand --before {before_arg!r}",
+                      file=sys.stderr)
+                print("  Try: --before 2026-10-01 | 7d | 24h", file=sys.stderr)
+                sys.exit(2)
+            removed, kept, ok = _activity_prune_before(path, cutoff)
+            if fmt == "json":
+                print(json.dumps({"pruned": removed, "kept": kept, "ok": ok,
+                                  "path": str(path)}, ensure_ascii=False))
+                return
+            if not ok:
+                print(f"Could not prune the ledger at {path}", file=sys.stderr)
+                sys.exit(1)
+            print(f"Pruned {removed:,} old call{'' if removed == 1 else 's'} "
+                  f"before {before_arg}; kept {kept:,}.")
+            return
         try:
             path.unlink(missing_ok=True)
             removed = True
@@ -2818,6 +2864,11 @@ def _cmd_activity(rest, fmt, head_n=0, max_chars=0, full=False):
             print(f"Could not clear the ledger at {path}", file=sys.stderr)
             sys.exit(1)
         return
+
+    if top_n is not None:
+        return _activity_top(top_n, fmt, host_filter=host_filter, since_ts=since_ts,
+                             failures_only=failures_only, head_n=head_n,
+                             max_chars=max_chars, full=full)
 
     if "--summary" in rest:
         summary = usage_mod.activity_summary()
@@ -2857,7 +2908,7 @@ def _cmd_activity(rest, fmt, head_n=0, max_chars=0, full=False):
         # Retention and size were invisible: the ledger silently rolls off old
         # lines at a fixed cap, and a user deciding whether it is "an audit log"
         # deserves to know both the cap and how close the file is to it.
-        keep = getattr(usage_mod, "_ACTIVITY_KEEP", 2000)
+        keep = usage_mod._activity_keep()
         path = usage_mod._activity_file()
         try:
             size = path.stat().st_size
@@ -2866,6 +2917,10 @@ def _cmd_activity(rest, fmt, head_n=0, max_chars=0, full=False):
         print(f"  Retention       : newest {keep:,} calls kept "
               f"(older lines roll off)")
         print(f"  Ledger size     : {_human_bytes(size)} at {path}")
+        first_ts = summary.get("first_ts")
+        if isinstance(first_ts, (int, float)):
+            since = time.strftime("%Y-%m-%d %H:%M", time.localtime(first_ts))
+            print(f"  Earliest kept   : {since} (how far back this history goes)")
         return
 
     limit = head_n if head_n and head_n > 0 else 20
@@ -2933,6 +2988,7 @@ def _cmd_activity(rest, fmt, head_n=0, max_chars=0, full=False):
 def _activity_line(e: dict) -> str:
     """Render one ledger entry as a (possibly multi-line) block. Shared by the
     list view and `--follow`, so the two can never drift in shape."""
+    from . import welcome as _welcome
     ts = e.get("ts")
     when = (time.strftime("%m-%d %H:%M:%S", time.localtime(ts))
             if isinstance(ts, (int, float)) else "—")
@@ -2945,10 +3001,22 @@ def _activity_line(e: dict) -> str:
     # otherwise indistinguishable from a fast one.
     ms = e.get("ms")
     dur = ""
+    slow = False
     if isinstance(ms, int) and ms >= 0:
         slow = ms >= _SLOW_CALL_MS
         dur = f"  {'SLOW ' if slow else ''}{ms:,} ms"
-    out = [f"  {when}  {host:16s} {sk:30s} {ok}  {tok:>7,} tok{dur}"]
+    # Colour only on a real terminal (paint() returns plain text for a pipe/NO_COLOR),
+    # so a captured transcript stays clean: red for a failed line, yellow for a slow
+    # one. The signal is already in the text ("ERR"/"SLOW"); colour just makes it
+    # pop for a human watching `activity --follow`.
+    ok_field = ok
+    dur_field = dur
+    if _welcome.color_enabled():
+        if not e.get("ok"):
+            ok_field = _welcome.paint(ok, "warn")
+        elif slow:
+            dur_field = _welcome.paint(dur, "warn")
+    out = [f"  {when}  {host:16s} {sk:30s} {ok_field}  {tok:>7,} tok{dur_field}"]
     # `detail` names what actually moved (e.g. the skills a resolve handed out) —
     # the difference between "resolve_skills ran" and "it distributed
     # xiewen-shipin and duanju-juben".
@@ -2961,6 +3029,120 @@ def _activity_line(e: dict) -> str:
     if err and not e.get("ok"):
         out.append(f"      ✗ {err}")
     return "\n".join(out)
+
+
+def _activity_prune_before(path, cutoff: float):
+    """Drop ledger lines whose ts is older than `cutoff`. Returns (removed, kept, ok).
+
+    Rewrites the file only when something is actually pruned. A line that cannot be
+    parsed is KEPT — this is a targeted prune, not a repair, and silently dropping a
+    torn line here would destroy data the user did not ask to remove. Best-effort:
+    an unreadable/unwritable file returns ok=False so the caller can report it.
+    """
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as fh:
+            lines = fh.readlines()
+    except FileNotFoundError:
+        return 0, 0, True
+    except OSError:
+        return 0, 0, False
+    kept_lines = []
+    removed = 0
+    for raw in lines:
+        s = raw.strip()
+        if not s:
+            continue
+        try:
+            e = json.loads(s)
+            ts = e.get("ts") if isinstance(e, dict) else None
+        except (json.JSONDecodeError, ValueError):
+            kept_lines.append(raw)
+            continue
+        if isinstance(ts, (int, float)) and ts < cutoff:
+            removed += 1
+        else:
+            kept_lines.append(raw)
+    if removed:
+        try:
+            with path.open("w", encoding="utf-8") as fh:
+                fh.writelines(kept_lines)
+        except OSError:
+            return 0, len(kept_lines), False
+    return removed, len(kept_lines), True
+
+
+def _activity_top(top_n: int, fmt: str, host_filter=None, since_ts=None,
+                  failures_only=False, head_n=0, max_chars=0, full=False) -> None:
+    """Rank the ledger by host and by tool — "who uses me most, on what?".
+
+    The per-line tail shows what happened; this aggregates it. Two tables: by host
+    (which agent) and by server:tool (which capability), each sorted by call count,
+    top N. Honours --since / --host / --failures the same way the list view does, so
+    "top tools Cursor used today" is expressible. Counts are over the retained
+    window (capped at activity_keep), not lifetime — labelled as such in the footer.
+    """
+    entries = usage_mod.read_activity(limit=0, host=host_filter)
+    if since_ts is not None:
+        entries = [e for e in entries
+                   if isinstance(e.get("ts"), (int, float)) and e["ts"] >= since_ts]
+    if failures_only:
+        entries = [e for e in entries if not e.get("ok")]
+
+    by_host: dict[str, int] = {}
+    by_tool: dict[str, int] = {}
+    for e in entries:
+        h = e.get("host") or "CLI"
+        by_host[h] = by_host.get(h, 0) + 1
+        t = f"{e.get('server', '')}:{e.get('tool', '')}".strip(":")
+        by_tool[t] = by_tool.get(t, 0) + 1
+
+    def _rank(d: dict) -> list:
+        return sorted(d.items(), key=lambda kv: (-kv[1], kv[0]))[:top_n]
+
+    if fmt in ("toon", "mcptoon", "compact", "json"):
+        payload = {
+            "count": len(entries),
+            "by_host": dict(_rank(by_host)),
+            "by_tool": dict(_rank(by_tool)),
+            "path": str(usage_mod._activity_file()),
+        }
+        if host_filter:
+            payload["host"] = host_filter
+        if since_ts is not None:
+            payload["since"] = True
+        if failures_only:
+            payload["failures_only"] = True
+        print(output.render(output.stamp_schema(payload), fmt=fmt, head_n=head_n,
+                            max_chars=max_chars, full=full))
+        return
+
+    if not entries:
+        print("No routed calls recorded in this window.")
+        print(f"  Ledger: {usage_mod._activity_file()}")
+        return
+
+    scope = ""
+    if host_filter:
+        scope += f" from {host_filter}"
+    if since_ts is not None:
+        scope += " in this time window"
+    if failures_only:
+        scope += " (failures only)"
+    print(f"mcptoon activity — top {top_n} over {len(entries)} call"
+          f"{'' if len(entries) == 1 else 's'}{scope}")
+    line = "─" * 66
+    print(line)
+    print(f"  By host ({min(top_n, len(by_host))}):")
+    for h, c in _rank(by_host):
+        bar = "█" * min(30, max(1, round(c / len(entries) * 30)))
+        print(f"    {h:20s} {c:>6,}  {bar}")
+    print(f"  By tool ({min(top_n, len(by_tool))}):")
+    for t, c in _rank(by_tool):
+        bar = "█" * min(30, max(1, round(c / len(entries) * 30)))
+        print(f"    {t:30s} {c:>6,}  {bar}")
+    print(line)
+    print(f"  counted over the retained window · full ledger: "
+          f"{usage_mod._activity_file()}")
 
 
 def _activity_follow(host_filter=None, interval: float = 1.0,
@@ -3408,6 +3590,7 @@ def _cmd_status(_rest, fmt):
             "presence_enabled": cfg.presence_enabled(),
             "activity_entries": act.get("entries", 0),
             "activity_today": act.get("today_calls", 0),
+            "activity_today_skills": act.get("today_skill_dist", 0),
             "last_host": act.get("last_host"),
             "last_used_ts": act.get("last_ts"),
             "last_fail": act.get("last_fail"),
@@ -3458,6 +3641,13 @@ def _cmd_status(_rest, fmt):
         who = act.get("last_host") or "CLI"
         print(f"  Last used          : {who} at {when}"
               f"  ·  {act.get('today_calls', 0)} today  ·  see `mcptoon activity`")
+        # "Did it hand me a capability today?" — the skill-distribution moment,
+        # which is what a user installing mcptoon for its skills actually cares
+        # about, distinct from a generic routed call. Only shown when >0.
+        tsk = act.get("today_skill_dist", 0)
+        if tsk:
+            print(f"  Skills today       : {tsk} distribution"
+                  f"{'' if tsk == 1 else 's'}  ·  see `mcptoon activity`")
         # "Did it break recently?" — a separate question from "is it being used".
         # Only shown when a call actually failed; names the agent, the tool, when,
         # and the short reason so the user is not sent digging.
