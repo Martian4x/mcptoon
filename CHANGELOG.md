@@ -5,7 +5,7 @@ All notable changes to mcptoon will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.8.23] - 2026-10-19
 
 CLI papercuts and data-safety fixes reported on 2026-10-17, plus a presence channel so
 a user who installed mcptoon and forgot can tell it is being used, by which agent, and
@@ -358,6 +358,18 @@ version per the one-release-per-topic rule.
   `skills --help` (10,814 chars) ended up longer than `mcptoon --help` (8,234). It
   now prints the command's own usage, a compact `Options for '<cmd>':` line, and a
   one-line pointer to `mcptoon --help` — strictly shorter than the global page.
+
+### Docs
+
+- **The old GitHub Pages site now hard-redirects to the canonical site.** The
+  in-repo `docs/` pages under the retired domain became redirect stubs pointing at
+  `mcptoon.github.io`, so an old bookmark or search hit lands on the live site
+  instead of a frozen copy. Two things this touched and had to be put back: the
+  token-tax calculator pages (`docs/tools/token-tax/*.html`), which the redirect
+  commit emptied while the tests still asserted their bodies, and the homepage
+  `GitHub vX.Y.Z` badge that `scripts/bump.py` stamps on every release. Both are
+  restored and pinned by the suite — the redirect keeps old URLs reachable, and the
+  calculator pages keep working.
 
 ## [0.8.22] - 2026-10-17
 
