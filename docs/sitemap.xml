@@ -1,32 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
-        xmlns:xhtml="http://www.w3.org/1999/xhtml">
-  <url>
-    <loc>https://activeing123.github.io/mcptoon/</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://activeing123.github.io/mcptoon/"/>
-    <xhtml:link rel="alternate" hreflang="zh" href="https://activeing123.github.io/mcptoon/index-zh.html"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://activeing123.github.io/mcptoon/"/>
-    <lastmod>2026-10-03</lastmod>
-  </url>
-  <url>
-    <loc>https://activeing123.github.io/mcptoon/index-zh.html</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://activeing123.github.io/mcptoon/"/>
-    <xhtml:link rel="alternate" hreflang="zh" href="https://activeing123.github.io/mcptoon/index-zh.html"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://activeing123.github.io/mcptoon/"/>
-    <lastmod>2026-10-03</lastmod>
-  </url>
-  <url>
-    <loc>https://activeing123.github.io/mcptoon/tools/token-tax/</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://activeing123.github.io/mcptoon/tools/token-tax/"/>
-    <xhtml:link rel="alternate" hreflang="zh-Hans" href="https://activeing123.github.io/mcptoon/tools/token-tax/zh/"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://activeing123.github.io/mcptoon/tools/token-tax/"/>
-    <lastmod>2026-10-03</lastmod>
-  </url>
-  <url>
-    <loc>https://activeing123.github.io/mcptoon/tools/token-tax/zh/</loc>
-    <xhtml:link rel="alternate" hreflang="en" href="https://activeing123.github.io/mcptoon/tools/token-tax/"/>
-    <xhtml:link rel="alternate" hreflang="zh-Hans" href="https://activeing123.github.io/mcptoon/tools/token-tax/zh/"/>
-    <xhtml:link rel="alternate" hreflang="x-default" href="https://activeing123.github.io/mcptoon/tools/token-tax/"/>
-    <lastmod>2026-10-03</lastmod>
-  </url>
+<!-- 2026-10-19：旧站（activeing123.github.io/mcptoon/）已整体并入新站
+     https://mcptoon.github.io/ 。本域所有页面均为硬跳转壳（meta refresh + JS），
+     不再作为独立内容被收录，故 sitemap 不再列出任何旧 URL。
+     新站的 sitemap 见 https://mcptoon.github.io/sitemap.xml -->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
 </urlset>

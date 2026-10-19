@@ -1,4 +1,5 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://activeing123.github.io/mcptoon/sitemap.xml
+# 2026-10-19：旧站已并入新站 https://mcptoon.github.io/ ，此处页面均为硬跳转壳，
+# 不再提交本域 sitemap。新站 sitemap：https://mcptoon.github.io/sitemap.xml
