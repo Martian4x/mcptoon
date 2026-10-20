@@ -3578,6 +3578,8 @@ def _cmd_mode(rest, fmt, head_n=0, max_chars=0, full=False):
     Usage:
         mcptoon mode
         mcptoon mode --json
+        mcptoon mode recommend          Which mode this host should use, and one action
+        mcptoon mode recommend --json   The same recommendation as JSON
     """
     from . import mode as mode_mod
     mode_mod.run(rest, fmt, head_n, max_chars, full)

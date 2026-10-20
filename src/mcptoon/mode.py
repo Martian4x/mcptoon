@@ -51,7 +51,8 @@ from pathlib import Path
 
 __all__ = ["detect", "statusline", "explain", "run", "run_statusline",
            "statusline_command", "install_statusline", "uninstall_statusline",
-           "statusline_status"]
+           "statusline_status", "detect_host", "recommend", "render_recommendation",
+           "run_recommend"]
 
 MODES = ("cli", "serve", "direct")
 
@@ -351,14 +352,175 @@ def explain(lng: str | None = None) -> str:
     return "\n".join(L)
 
 
+# ─── Recommendation: which mode *should* this machine use? ───
+#
+# `detect()` answers "what mode is running now". This answers the different,
+# harder question a user actually asks: "which one should *I* use?".
+#
+# The decision hinges on ONE fact mcptoon cannot measure from config: can this
+# host reliably run a shell command every turn? A shell-capable agent (Claude
+# Code, Codex, DSH, a Cursor terminal) can use CLI; a pure-MCP GUI (Claude
+# Desktop, Windsurf GUI) cannot, and pushing CLI at it is wrong. We read the few
+# host signals that *are* observable (env vars), and when they are absent we do
+# not guess — we return ``needs_confirm=True`` so the skill asks the user. That
+# boundary is the whole point: a confident wrong recommendation is worse than an
+# honest "confirm this".
+
+# Env markers that mean "the current process is an agent that can shell out".
+# Kept as a plain, testable table so a new host is one line, not a code change.
+_SHELL_HOST_ENV = (
+    ("DSH_SHELL", "DSH"),
+    ("CLAUDECODE", "Claude Code"),
+    ("CLAUDE_CODE_ENTRYPOINT", "Claude Code"),
+    ("CODEX_HOME", "Codex"),
+    ("CURSOR_TRACE_ID", "Cursor"),
+)
+
+
+def detect_host() -> dict:
+    """Best-effort read of the *calling* host and whether it can run a shell.
+
+    Returns ``{"host": name|None, "shell": True|False|None}``. ``shell`` is
+    ``True`` only on a positive signal, ``False`` never asserted (absence is not
+    proof a host lacks a shell), and ``None`` means "unknown — confirm". The
+    distinction matters: a GUI user who is told "you can use CLI" wastes effort.
+    """
+    for env, name in _SHELL_HOST_ENV:
+        if os.environ.get(env):
+            return {"host": name, "shell": True}
+    # TERM_PROGRAM is set by terminal emulators; a present one is a weak-but-real
+    # shell signal even outside a known agent.
+    if os.environ.get("TERM_PROGRAM"):
+        return {"host": os.environ["TERM_PROGRAM"], "shell": True}
+    return {"host": None, "shell": None}
+
+
+def recommend(lng: str | None = None, host: dict | None = None) -> dict:
+    """The recommended mode for *this* machine, with a reason and one action.
+
+    Decision table (each branch justified in the module comment above):
+
+    * already ``cli``           -> keep CLI (it is the cheapest; nothing to do)
+    * ``serve`` + shell host    -> CLI is a *possible* downgrade; say so, but the
+                                   default advice is "you already save; keep it"
+    * ``serve`` + GUI / unknown -> keep serve (do not push CLI at a GUI)
+    * ``direct``                -> you save nothing; wire serve now, and if you
+                                   have a shell you may prefer CLI
+    * ``empty``                 -> configure servers first
+
+    ``needs_confirm`` is True whenever the shell capability is unknown *and* it
+    would change the answer — the skill must then ask the user, not assume.
+    """
+    if host is None:
+        host = detect_host()
+    d = detect()
+    mode = d["mode"]
+    shell = host.get("shell")
+    from . import config as _cfg
+    if lng is None:
+        lng = _cfg.resolve_lang()
+    zh = lng == "zh"
+
+    if mode == "empty":
+        recommended, needs_confirm = "serve", False
+        reason = ("还没配置任何 MCP 服务器；先 `mcptoon quickstart` 把服务器接进来"
+                  if zh else
+                  "No MCP servers configured yet; run `mcptoon quickstart` first")
+        one_action = "mcptoon quickstart" if zh else "mcptoon quickstart"
+    elif mode == "cli":
+        recommended, needs_confirm = "cli", False
+        reason = ("你已经在最省的 CLI 模式：闲置 0、按需只取 1 个 schema"
+                  if zh else
+                  "You are already on the cheapest CLI path: idle 0, fetch one schema on demand")
+        one_action = "mcptoon statusline" if zh else "mcptoon statusline"
+    elif mode == "direct":
+        # No saving yet. serve is the zero-config fix; CLI is the cheaper fix if
+        # (and only if) the host can run a shell.
+        needs_confirm = shell is None
+        recommended = "cli" if shell else "serve"
+        if shell:
+            reason = ("现在是直连（没在省）；你有 shell，可直接改用 `mcptoon call`（最省）"
+                      if zh else
+                      "You are in direct mode (saving nothing); you have a shell, so switch to `mcptoon call` (cheapest)")
+        else:
+            reason = ("现在是直连（没在省）；先 `mcptoon sync --self` 接上 serve（零配置，立刻省）"
+                      if zh else
+                      "You are in direct mode (saving nothing); run `mcptoon sync --self` to wire serve (zero-config, saves now)")
+        one_action = ("mcptoon call <server> <tool> '{...}'" if (shell and not needs_confirm)
+                      else "mcptoon sync --self")
+    else:  # serve
+        needs_confirm = False
+        recommended = "serve"
+        if shell:
+            reason = ("你已接 serve（每轮小固定开销）；你有 shell，可降级到 CLI 更省（代价：每轮要敲命令）"
+                      if zh else
+                      "You are on serve (small fixed per-turn cost); you have a shell, so CLI would save more (cost: run a command each turn)")
+        else:
+            reason = ("你已接 serve：每轮小固定开销，已省定义侧大头；保持即可"
+                      if zh else
+                      "You are on serve: small fixed per-turn cost, the big definition-side saving; keep it")
+        one_action = "mcptoon mode" if zh else "mcptoon mode"
+
+    return {
+        "current": mode,
+        "recommended": recommended,
+        "reason": reason,
+        "one_action": one_action,
+        "needs_confirm": needs_confirm,
+        "host": host.get("host"),
+        "shell": shell,
+    }
+
+
+def render_recommendation(rec: dict, lng: str = "en") -> str:
+    """Human, pasteable text for `mcptoon mode recommend`."""
+    zh = lng == "zh"
+    L = []
+    a = L.append
+    a(("模式推荐" if zh else "Mode recommendation") + f"  —  {rec['current']} → {rec['recommended']}")
+    a("─" * 46)
+    a(("  " if not zh else "  ") + rec["reason"])
+    a("")
+    if rec.get("needs_confirm"):
+        a("  ⚠ 我判断不了这台宿主能否每轮敲 shell —— 请确认：agent 有终端、愿意执行命令吗？"
+          if zh else
+          "  ⚠ I cannot tell whether this host can run a shell each turn — please confirm: does the agent have a terminal and will it run commands?")
+        a("     能 → 用 CLI 最省；不能 → 用 serve。"
+          if zh else
+          "     yes -> CLI is cheapest; no -> use serve.")
+        a("")
+    a(("  下一步：" if zh else "  Next: ") + rec["one_action"])
+    return "\n".join(L)
+
+
+def run_recommend(rest: list[str], fmt: str = "auto", head_n: int = 0,
+                  max_chars: int = 0, full: bool = False) -> None:
+    """CLI entry: `mcptoon mode recommend [--json]`."""
+    from . import config as cfg
+    from . import output
+
+    lng = cfg.resolve_lang()
+    rec = recommend(lng=lng)
+    if fmt == "json":
+        print(output.render(output.stamp_schema(rec), fmt="json",
+                            max_chars=max_chars))
+        return
+    print(render_recommendation(rec, lng=lng))
+
+
 def run(rest: list[str], fmt: str = "auto", head_n: int = 0, max_chars: int = 0,
         full: bool = False) -> None:
-    """CLI entry: `mcptoon mode [--json]`.
+    """CLI entry: `mcptoon mode [recommend] [--json]`.
 
     Usage:
-        mcptoon mode            Which mode you are in, what each costs, which is cheapest
-        mcptoon mode --json     The same facts as JSON
+        mcptoon mode              Which mode you are in, what each costs, which is cheapest
+        mcptoon mode --json       The same facts as JSON
+        mcptoon mode recommend    Which mode *this* host should use, and one action
+        mcptoon mode recommend --json   The same recommendation as JSON
     """
+    if "recommend" in rest:
+        run_recommend(rest, fmt, head_n, max_chars, full)
+        return
     from . import config as cfg
     from . import output
 
