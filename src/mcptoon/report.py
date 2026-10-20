@@ -89,8 +89,17 @@ def _mode_section() -> dict:
     try:
         from . import mode as mode_mod
         d = mode_mod.detect()
-        return {"current": d["mode"], "cheapest": "cli",
-                "gateway_registered": d["gateway_registered"]}
+        sec = {"current": d["mode"], "cheapest": "cli",
+               "gateway_registered": d["gateway_registered"]}
+        # Expose the fix, not just the diagnosis, so a script reading report --json
+        # can act (which mode + the one command) instead of parsing prose.
+        try:
+            rec = mode_mod.recommend()
+            sec["recommended"] = rec.get("recommended")
+            sec["one_action"] = rec.get("one_action")
+        except Exception:
+            pass
+        return sec
     except Exception:
         return {"current": None, "cheapest": "cli", "gateway_registered": False}
 
@@ -202,6 +211,14 @@ def render(data: dict, lng: str = "en") -> str:
     a(L_("mcptoon savings report", "mcptoon 省 token 全账")
       + f"  ·  {data['caliber']}")
     a("")
+    # A direct machine (installed, not wired) saves nothing yet. Section ⑥ at the
+    # bottom says so, but a reader who stops at the big numbers never reaches it —
+    # put the caveat up top too, so the report is not read as a live tally.
+    if (data.get("mode") or {}).get("current") == "direct":
+        a(L_("⚠ direct mode (installed, not wired): you save 0 right now — the "
+             "figures below are what you WOULD save once wired.",
+             "⚠ 直连模式（装了没接）：此刻一分没省 —— 下面的数字是接上后能省的量。"))
+        a("")
 
     # ① tools
     gw = t["gateway_tokens"]

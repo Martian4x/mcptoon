@@ -478,3 +478,90 @@ def test_status_shows_recommended_line(isolated):
                 "top_tools": {}, "routed_calls": 0, "native_calls": 0}):
         out, _e, _c = _run(["status"])
     assert "Recommended" in out and "serve" in out
+
+
+# ── Phase 5 ─────────────────────────────────────────────────────────────────
+
+# 16. mode --json + statusline --json carry cli_credit + recommended.
+
+def test_mode_json_has_cli_credit_and_recommended(isolated):
+    with patch.object(mode_mod, "detect",
+                      return_value={"mode": "cli", "gateway_registered": False,
+                                    "servers": 1, "calls": 0, "routed": 0, "native": 0,
+                                    "by_host": {}}), \
+            patch.object(mode_mod, "_figures", return_value=_FACTS), \
+            patch.object(mode_mod, "recommend",
+                         return_value={"recommended": "cli", "one_action": "x"}):
+        out, _e, _c = _run(["mode", "--json"])
+    data = json.loads(out)
+    assert data["cli_credit"]["resident_avoided"] == 640606
+    assert data["recommended"] == "cli"
+
+
+def test_statusline_json_has_cli_credit(isolated):
+    with patch.object(mode_mod, "detect",
+                      return_value={"mode": "cli", "gateway_registered": False,
+                                    "servers": 1, "calls": 0, "routed": 0, "native": 0,
+                                    "by_host": {}}), \
+            patch.object(mode_mod, "_figures", return_value=_FACTS), \
+            patch.object(mode_mod, "_exposed", return_value=9):
+        out, _e, _c = _run(["statusline", "--json"])
+    data = json.loads(out)
+    assert data["delivery_mode"] == "cli"
+    assert data["cli_credit"]["resident_avoided"] == 640606
+
+
+def test_mode_json_cli_credit_none_off_cli(isolated):
+    with patch.object(mode_mod, "detect",
+                      return_value={"mode": "serve", "gateway_registered": True,
+                                    "servers": 1, "calls": 0, "routed": 0, "native": 0,
+                                    "by_host": {}}), \
+            patch.object(mode_mod, "_figures", return_value=_FACTS), \
+            patch.object(mode_mod, "recommend",
+                         return_value={"recommended": "serve", "one_action": "x"}):
+        out, _e, _c = _run(["mode", "--json"])
+    data = json.loads(out)
+    assert data["cli_credit"] is None
+
+
+# 17. report: direct gets a top-of-report warning + --json exposes the fix.
+
+def test_report_direct_warns_at_top():
+    from mcptoon import report
+    data = {"caliber": "tiktoken", "mode": {"current": "direct", "cheapest": "cli",
+                                            "gateway_registered": False},
+            "tools": {"count": 1, "servers": 1, "full_tokens": 100, "slim_tokens": 50,
+                      "gateway_tokens": 0}, "tools_exposed": 0,
+            "skills": {"count": 0, "full_tokens": 0, "pointer_tokens": 0,
+                       "resolve_tokens": 0, "resolve_note": ""},
+            "cli_credit": None, "cumulative": {"calls": 0, "gateway_equiv": 0},
+            "per_turn": {"native_tokens": 100, "after_tokens": 50,
+                         "saved_tokens": 50, "saved_pct": 50.0},
+            "calls": {"total": 0, "window": 0, "success_rate": "",
+                      "result_tokens_lifetime": 0, "first_call_ts": None}}
+    out = report.render(data, lng="en")
+    assert "you save 0 right now" in out
+    # And the warning is above section ①.
+    assert out.index("save 0") < out.index("① MCP tools")
+
+
+def test_report_json_mode_section_has_recommended():
+    from mcptoon import report
+    with patch.object(mode_mod, "detect",
+                      return_value={"mode": "direct", "gateway_registered": False}), \
+            patch.object(mode_mod, "recommend",
+                         return_value={"recommended": "serve",
+                                       "one_action": "run `mcptoon sync --self`"}):
+        sec = report._mode_section()
+    assert sec["recommended"] == "serve"
+    assert "sync --self" in sec["one_action"]
+
+
+# 18. SKILL.md documents `credit` and the "direct saves 0" fact.
+
+def test_skill_documents_credit_and_direct_zero():
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1]
+    md = (root / "src/mcptoon/skill/SKILL.md").read_text(encoding="utf-8")
+    assert "mcptoon credit" in md
+    assert "direct` mode saves nothing" in md or "saves nothing" in md

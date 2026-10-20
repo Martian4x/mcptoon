@@ -140,6 +140,32 @@ def _figures() -> dict:
         return {}
 
 
+def _cli_credit_json(d: dict | None = None) -> dict | None:
+    """The unified cli_credit dict for mode/statusline `--json`, or None.
+
+    Same shape as `footer.cli_credit` (mode/resident_avoided/per_call/caliber) so
+    every JSON surface — mode, statusline, status, footer-facts, credit — speaks
+    one contract. Built here from the already-read figures/mode so these JSON
+    views do not each re-derive it (and cannot disagree). None off the CLI path.
+    """
+    try:
+        _d = detect() if d is None else d
+        if _d.get("mode") != "cli":
+            return None
+        f = _figures()
+        full = int(f.get("tokens_full") or 0)
+        if not full:
+            return None
+        return {
+            "mode": "cli",
+            "resident_avoided": full,
+            "per_call": int(f.get("name_index_tokens") or 0),
+            "caliber": f.get("token_caliber") or "",
+        }
+    except Exception:
+        return None
+
+
 def _exposed() -> int | None:
     """How many gateway tools the agent sees under compact exposure, or None."""
     try:
@@ -560,6 +586,12 @@ def run(rest: list[str], fmt: str = "auto", head_n: int = 0, max_chars: int = 0,
     if fmt == "json":
         d = detect()
         f = _figures()
+        try:
+            _rec = recommend()
+            _rec_now = _rec.get("recommended")
+            _rec_act = _rec.get("one_action")
+        except Exception:
+            _rec_now, _rec_act = None, None
         print(output.render(output.stamp_schema({
             **d,
             "tools": f.get("tools"),
@@ -567,6 +599,10 @@ def run(rest: list[str], fmt: str = "auto", head_n: int = 0, max_chars: int = 0,
             "gateway_tokens": f.get("gateway_tokens"),
             "gateway_pct": f.get("gateway_pct"),
             "statusline": statusline(),
+            "delivery_mode": d.get("mode"),
+            "cli_credit": _cli_credit_json(d),
+            "recommended": _rec_now,
+            "one_action": _rec_act,
         }), fmt="json", max_chars=max_chars))
         return
     print(explain(lng=cfg.resolve_lang()))
@@ -601,8 +637,11 @@ def run_statusline(rest: list[str], fmt: str = "auto", head_n: int = 0,
 
     line = statusline()
     if fmt == "json":
+        _d = detect()
         print(output.render(output.stamp_schema({
-            "statusline": line, **detect(),
+            "statusline": line, **_d,
+            "delivery_mode": _d.get("mode"),
+            "cli_credit": _cli_credit_json(_d),
         }), fmt="json", max_chars=max_chars))
         return
     print(line)
