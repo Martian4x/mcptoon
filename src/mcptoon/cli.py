@@ -1145,23 +1145,25 @@ def _cmd_inspect(rest, fmt, max_chars, full, head_n=0):
     # machine format (json/toon/slim/compact) stay pure data.
     if fmt in ("auto", "human"):
         _err(_call_example_from_schema(server, tool, info))
-        # This is the schema a CLI call pulls *on demand* — the whole point of the
-        # CLI caliber is that it fetches exactly this one, not the catalog. Say how
-        # big "this one" is, so the abstract "one schema at a time" has a number.
+        # On a CLI machine this is the schema a call pulls *on demand* — the whole
+        # point of the CLI caliber is that it fetches exactly this one, not the
+        # catalog. Say how big "this one" is so the abstract "one schema at a time"
+        # has a number. Gated to CLI so a serve user's output is byte-unchanged
+        # (serve does not fetch individual schemas this way).
         try:
             from .bench import _tokenizer
             from . import footer as footer_mod
-            encode, _cal, _exact = _tokenizer()
-            tok = max(1, int(encode(json.dumps(info, ensure_ascii=False))))
             credit = footer_mod.cli_credit(footer_mod.facts())
-            if credit and cfg.resolve_lang() == "zh":
-                _err(f"这一个 schema ≈ {tok:,} token —— CLI 按需只取这一份，"
-                     f"全量 {credit['resident_avoided']:,} token 不进上下文")
-            elif credit:
-                _err(f"this one schema ≈ {tok:,} tokens — a CLI call fetches just "
-                     f"this, keeping the full {credit['resident_avoided']:,} out of context")
-            else:
-                _err(f"this one schema ≈ {tok:,} tokens")
+            if credit:
+                encode, _cal, _exact = _tokenizer()
+                tok = max(1, int(encode(json.dumps(info, ensure_ascii=False))))
+                if cfg.resolve_lang() == "zh":
+                    _err(f"这一个 schema ≈ {tok:,} token —— CLI 按需只取这一份，"
+                         f"全量 {credit['resident_avoided']:,} token 不进上下文")
+                else:
+                    _err(f"this one schema ≈ {tok:,} tokens — a CLI call fetches "
+                         f"just this, keeping the full "
+                         f"{credit['resident_avoided']:,} out of context")
         except Exception:
             pass
 

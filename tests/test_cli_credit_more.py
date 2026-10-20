@@ -146,15 +146,16 @@ def test_inspect_reports_one_schema_tokens_on_cli(isolated):
     assert "this one schema" not in out
 
 
-def test_inspect_without_cli_credit_still_names_one_schema(isolated):
+def test_inspect_off_cli_adds_no_token_line(isolated):
+    """A serve user's inspect output must be byte-unchanged: no CLI token note."""
     info = {"name": "fetch", "description": "d",
             "inputSchema": {"type": "object", "properties": {}}}
     with patch.object(cli.manifest_mod, "inspect_tool", return_value=info), \
             patch.object(footer_mod, "current_mode", return_value="serve"), \
             patch.object(footer_mod, "facts", return_value=_FACTS):
         out, err, _code = _run(["inspect", "srv", "fetch"])
-    assert "this one schema" in err
-    assert "640,606" not in err  # no CLI catalog claim off the CLI path
+    assert "this one schema" not in err
+    assert "640,606" not in err
 
 
 # ── 5. call --toon: machine receipt on stderr, stdout pure ──────────────────
