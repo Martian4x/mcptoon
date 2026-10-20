@@ -335,6 +335,22 @@ def _render(tokname, exact, tool_rows, n_tools,
         lines.append(f"  query: {query!r}   (the resolve row depends on it)")
         lines.append("  caliber: recursive (nested sub-catalogs counted), `_index` "
                      "excluded, roots de-duplicated by real path")
+    # CLI caliber. `status` tells users to run `bench` to prove the numbers, yet
+    # this table only ever showed the gateway/native rows — so a CLI user's own
+    # proof surface never named the saving they actually get. On a CLI machine the
+    # saving is "the catalog never loads": a call pulls the name index plus one
+    # schema on demand, nothing resident. Only on the CLI path (never relabel a
+    # gateway figure as a CLI one).
+    try:
+        from . import footer as _footer
+        if tool_rows and _footer.current_mode() == "cli":
+            _native = tool_rows[0][1]
+            _idx = tool_rows[1][1] if len(tool_rows) > 1 else 0
+            lines.append(f"  CLI: 0 resident — the full {_native:,} tokens never "
+                         f"load; a call pulls the name index ({_idx:,}) + one "
+                         f"schema on demand")
+    except Exception:
+        pass
     lines.append("")
     if skill_rows and skill_rows[0][1]:
         lines.append(f"  {skill_rows[0][1]:,} tokens of skill text is "

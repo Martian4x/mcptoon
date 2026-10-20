@@ -218,21 +218,38 @@ def statusline(lng: str | None = None) -> str:
     # Put that on the badge so the status bar stops crediting CLI for a gateway
     # saving. Serve/direct keep the gateway tool-count figure unchanged.
     cli_credit = (d["mode"] == "cli" and full)
+    # direct = installed but not wired: the agent loads the full catalog native and
+    # saves NOTHING. The old badge fell through to the gateway "9 tools (99% less)"
+    # story, which is exactly the serve figure a direct user is not living — and it
+    # reads as "you're saving 99%" when the truth is the opposite. Say it plainly.
+    is_direct = d["mode"] == "direct"
     if zh:
         if cli_credit:
             tool_bit = f"0 常驻·全量{_human(full)}没进上下文"
+        elif is_direct:
+            tool_bit = (f"未接线·全量{_human(full)}常驻·未省" if full
+                        else "未接线·未省")
         else:
             tool_bit = f"{exposed} 工具（省 {pct}%）" if (exposed and pct) else None
-        saved_bit = f"≈省{_human(est[1])} · {_human(est[0])}次" if est else (
-            f"{_human(calls)} 次" if calls else None)
+        if is_direct:
+            saved_bit = f"{_human(calls)} 次·未省" if calls else None
+        else:
+            saved_bit = f"≈省{_human(est[1])} · {_human(est[0])}次" if est else (
+                f"{_human(calls)} 次" if calls else None)
         tag = _MODE_TAG_ZH.get(d["mode"], d["mode"])
     else:
         if cli_credit:
             tool_bit = f"0 resident·{_human(full)} kept out"
+        elif is_direct:
+            tool_bit = (f"not wired·full {_human(full)} resident·no saving" if full
+                        else "not wired·no saving")
         else:
             tool_bit = f"{exposed} tools ({pct}% less)" if (exposed and pct) else None
-        saved_bit = f"≈{_human(est[1])} saved · {_human(est[0])} calls" if est else (
-            f"{_human(calls)} calls" if calls else None)
+        if is_direct:
+            saved_bit = f"{_human(calls)} calls·no saving" if calls else None
+        else:
+            saved_bit = f"≈{_human(est[1])} saved · {_human(est[0])} calls" if est else (
+                f"{_human(calls)} calls" if calls else None)
         tag = _MODE_TAG.get(d["mode"], d["mode"])
 
     parts = [head]

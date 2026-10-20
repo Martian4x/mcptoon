@@ -3599,7 +3599,13 @@ def _cmd_footer_facts(_rest, fmt, max_chars=0):
     if fmt == "json":
         # Routed through `render` rather than `json.dumps` so `--max-chars` works
         # here too; `fmt="json"` keeps it machine-readable (no default cap).
-        print(output.render(output.stamp_schema(f), fmt="json", max_chars=max_chars))
+        # Additive: name the delivery mode and the unified cli_credit dict so a
+        # script reads the same "0 resident" truth the human line prints, in the
+        # same shape `status --json` uses. Off the CLI path cli_credit is None.
+        payload = dict(f)
+        payload["delivery_mode"] = footer_mod.current_mode()
+        payload["cli_credit"] = footer_mod.cli_credit(f)
+        print(output.render(output.stamp_schema(payload), fmt="json", max_chars=max_chars))
         return
 
     # Human line — the whole point is that this is pasteable into a turn.
@@ -3881,6 +3887,12 @@ def _cmd_status(_rest, fmt):
 
     # Is the gateway itself registered in any agent config? Read-only check.
     wired = _gateway_wired_in()
+    # The delivery mode is a stricter question than `wired`: `not wired` is true for
+    # BOTH cli and direct, but they save opposite amounts. cli = shell host, catalog
+    # never loads (real saving); direct = installed, agent loads the full catalog
+    # native (no saving). Branching the human view on `not wired` made direct claim
+    # the CLI "0 resident / never load" truth it does not live (2026-10-20).
+    mode_now = footer_mod.current_mode()
 
     # Skills are the other half of the catalog, and this screen used to report
     # only the MCP half — a manager that manages two things naming one. Read from
@@ -3945,8 +3957,9 @@ def _cmd_status(_rest, fmt):
             # caliber the numbers belong to; `resident_avoided` is the full catalog
             # a CLI call never loads. Both are additive keys — a serve machine
             # simply reads resident_avoided alongside its gateway figure.
-            "delivery_mode": footer_mod.current_mode(),
-            "resident_avoided": full_tokens if not wired else 0,
+            "delivery_mode": mode_now,
+            "resident_avoided": full_tokens if mode_now == "cli" else 0,
+            "cli_credit": footer_mod.cli_credit(footer_mod.facts()),
             "footer_enabled": cfg.footer_enabled(),
             "presence_enabled": cfg.presence_enabled(),
             "receipt_enabled": cfg.receipt_enabled(),
@@ -3975,7 +3988,16 @@ def _cmd_status(_rest, fmt):
             print(f"                       (live catalog has {skills_live} — index may be "
                   f"stale, run `mcptoon skills index`)")
     if total_tools:
-        if gw_tokens and gw_pct is not None and not wired:
+        if mode_now == "direct":
+            # Installed but not wired: the agent loads the full catalog natively and
+            # saves nothing. Name the cost and the one action that turns it on — the
+            # old view fell into the "not wired" branch and printed the CLI "0
+            # resident" line, which is a saving a direct machine does not have.
+            print(f"  Tool definitions   : full {full_tokens:,} tokens load natively "
+                  f"— nothing is saved yet  [{caliber}]")
+            print(f"                       (direct = installed, not wired; run "
+                  f"`mcptoon sync --self` to save, or use `mcptoon call`)")
+        elif gw_tokens and gw_pct is not None and not wired:
             # CLI mode: the gateway is NOT wired into an agent, so the "→ gw_tokens
             # via the gateway" story is a serve fact this machine is not living.
             # Print the CLI truth instead: the catalog never sits resident, and a
@@ -5147,6 +5169,36 @@ def _cmd_doctor(rest, fmt="auto"):
                  "  - Status line: Claude Code not detected. Other hosts have no status"
                  " bar; run `mcptoon statusline` to see the badge anywhere")
 
+    # 7. Delivery mode. `doctor` tested every server but never answered the one
+    # question a healthy-but-invisible install raises: is mcptoon actually saving
+    # anything, or is it installed and doing nothing? `direct` (installed, not
+    # wired) is the common silent case — the agent loads the full catalog native,
+    # so nothing is saved until it is wired or `call` is used. Name it with one
+    # action. Never bumps `issues`: a not-yet-wired install is a choice, not a fault.
+    checks += 1
+    try:
+        from . import footer as footer_mod
+        _dmode = footer_mod.current_mode()
+        _dfacts = footer_mod.facts()
+    except Exception:
+        _dmode, _dfacts = None, {}
+    _dfull = (_dfacts or {}).get("tokens_full") or 0
+    if _dmode == "direct":
+        emit("warn", "mode", "direct (not wired) — nothing is saved yet",
+             f"  ! Mode: direct — installed but not wired, so the agent loads the "
+             f"full {_dfull:,} tokens natively.\n"
+             f"      → run `mcptoon sync --self` to save, or use `mcptoon call`",
+             mode=_dmode)
+    elif _dmode == "cli":
+        emit("ok", "mode", "cli — 0 resident, full catalog never loads",
+             f"  ✓ Mode: cli — 0 resident, the full {_dfull:,} tokens never load",
+             mode=_dmode)
+    elif _dmode == "serve":
+        emit("ok", "mode", "serve — gateway wired", "  ✓ Mode: serve — gateway wired",
+             mode=_dmode)
+    elif _dmode == "empty":
+        emit("info", "mode", "no servers yet", "  - Mode: nothing registered yet", mode=_dmode)
+
     if json_mode:
         print(json.dumps({
             "checks": rows, "issues": issues, "ok": issues == 0,
@@ -5612,6 +5664,9 @@ _mcptoon_complete() {
                 COMPREPLY=( $(compgen -W "$(mcptoon list 2>/dev/null | sed 's/  //;s/ \[.*//')" -- $cur) )
             fi
             ;;
+        mode)
+            COMPREPLY=( $(compgen -W "recommend" -- $cur) )
+            ;;
         --format)
             COMPREPLY=( $(compgen -W "openai openapi mcp json human" -- $cur) )
             ;;
@@ -5642,6 +5697,9 @@ _mcptoon() {
                 _describe 'server' servers
             fi
             ;;
+        mode)
+            _describe 'mode' 'recommend'
+            ;;
         --format)
             _describe 'format' formats
             ;;
@@ -5653,6 +5711,7 @@ compdef _mcptoon mcptoon
 _FISH_COMPLETION = r'''
 complete -c mcptoon -n '__fish_use_subcommand' -a '__MC_TOON_COMMANDS__'
 complete -c mcptoon -n '__fish_seen_subcommand_from call inspect' -a '(mcptoon list 2>/dev/null | sed "s/  //;s/ \[.*//")'
+complete -c mcptoon -n '__fish_seen_subcommand_from mode' -a 'recommend'
 complete -c mcptoon -n '__fish_seen_subcommand_from --format' -a 'openai openapi mcp json human'
 '''
 
@@ -6246,6 +6305,7 @@ Usage:
     mcptoon report                        Whole savings account on one screen
     mcptoon savings                       Milestones you've crossed (1B? 4,700 novels?)
     mcptoon mode                          Which delivery mode you're in (cli/serve/direct), what each costs
+    mcptoon mode recommend                Which mode THIS host should use, and the one action to get there
     mcptoon statusline                    One-line savings badge for a status bar / turn header
     mcptoon statusline --install          Wire that badge into Claude Code's status bar (undo: --uninstall)
     mcptoon footer-facts                  One line of savings for a chat footer
