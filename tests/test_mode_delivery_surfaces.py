@@ -243,3 +243,92 @@ def test_status_json_cli_credit_shape_on_cli(isolated):
     assert data["resident_avoided"] > 0
     assert set(data["cli_credit"]) == {"mode", "resident_avoided", "per_call", "caliber"}
     assert data["cli_credit"]["resident_avoided"] == 640606
+
+
+# ── Phase 2 ─────────────────────────────────────────────────────────────────
+
+# 6. footer.line: direct must not broadcast the gateway rate / cumulative saving.
+
+def _footer_line(mode_name, lng):
+    with patch.object(mode_mod, "detect", return_value={"mode": mode_name, "calls": 2965}):
+        return footer_mod.line(dict(_FACTS), lng=lng)
+
+
+def test_footer_line_direct_says_no_saving():
+    en = _footer_line("direct", "en")
+    zh = _footer_line("direct", "zh")
+    assert "no saving" in en and "未接线·未省" in zh
+    assert "saves" not in en and "≈省" not in zh   # no gateway rate/cumulative
+    assert "99%" not in en and "省 99%" not in zh
+
+
+def test_footer_line_cli_keeps_gateway_headline():
+    # Off the direct path the line is unchanged (serve/cli keep the gateway story).
+    en = _footer_line("cli", "en")
+    assert "saves" in en
+
+
+# 7. mode explain names the host recommendation at the top.
+
+def test_mode_explain_shows_host_recommendation():
+    with patch.object(mode_mod, "detect", return_value={"mode": "direct", "calls": 0}), \
+            patch.object(mode_mod, "_figures", return_value=_FACTS), \
+            patch.object(mode_mod, "_exposed", return_value=9), \
+            patch.object(mode_mod, "recommend", return_value={
+                "current": "direct", "recommended": "serve",
+                "reason": "GUI host", "one_action": "run `mcptoon sync --self`"}):
+        out = mode_mod.explain(lng="en")
+    assert "For this host: serve" in out
+    assert "mcptoon sync --self" in out
+
+
+# 8. inspect <server> (list form) reports the set's token total on CLI.
+
+def test_inspect_server_list_reports_total_on_cli(isolated):
+    tools = [{"name": "a", "inputSchema": {"type": "object"}},
+             {"name": "b", "inputSchema": {"type": "object"}}]
+    with patch.object(manifest_mod, "get_server_tools", return_value=tools), \
+            patch.object(footer_mod, "current_mode", return_value="cli"), \
+            patch.object(footer_mod, "facts", return_value=_FACTS):
+        out, err, _code = _run(["inspect", "srv"])
+    assert "schemas" in err and "CLI call" in err
+    assert "schemas" not in out       # stdout stays pure data
+
+
+def test_inspect_server_list_silent_off_cli(isolated):
+    tools = [{"name": "a", "inputSchema": {"type": "object"}}]
+    with patch.object(manifest_mod, "get_server_tools", return_value=tools), \
+            patch.object(footer_mod, "current_mode", return_value="serve"), \
+            patch.object(footer_mod, "facts", return_value=_FACTS):
+        _out, err, _code = _run(["inspect", "srv"])
+    assert "schemas" not in err
+
+
+# 9. manifest names its own name-index token count on CLI.
+
+def test_manifest_reports_name_index_on_cli(isolated):
+    manifest = {"srv": [{"name": "a"}, {"name": "b"}]}
+    with patch.object(manifest_mod, "get_manifest", return_value=manifest), \
+            patch.object(footer_mod, "current_mode", return_value="cli"), \
+            patch.object(footer_mod, "facts", return_value=_FACTS):
+        out, err, _code = _run(["manifest"])
+    assert "name index" in err and "906" in err
+    assert "name index" not in out
+
+
+def test_manifest_no_index_note_off_cli(isolated):
+    manifest = {"srv": [{"name": "a"}]}
+    with patch.object(manifest_mod, "get_manifest", return_value=manifest), \
+            patch.object(footer_mod, "current_mode", return_value="serve"), \
+            patch.object(footer_mod, "facts", return_value=_FACTS):
+        _out, err, _code = _run(["manifest"])
+    assert "name index" not in err
+
+
+# 10. bench on direct says "you save 0", not a bare 99%.
+
+def test_bench_direct_warns_no_saving():
+    with patch.object(footer_mod, "current_mode", return_value="direct"):
+        out = bench._render("tiktoken", True, _TOOL_ROWS, 209, [], 0, 0, "", "q", [])
+    assert "direct:" in out and "right now you save 0" in out
+    assert "sync --self" in out

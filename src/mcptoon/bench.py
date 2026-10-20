@@ -343,12 +343,20 @@ def _render(tokname, exact, tool_rows, n_tools,
     # gateway figure as a CLI one).
     try:
         from . import footer as _footer
-        if tool_rows and _footer.current_mode() == "cli":
+        _mode = _footer.current_mode()
+        if tool_rows and _mode == "cli":
             _native = tool_rows[0][1]
             _idx = tool_rows[1][1] if len(tool_rows) > 1 else 0
             lines.append(f"  CLI: 0 resident — the full {_native:,} tokens never "
                          f"load; a call pulls the name index ({_idx:,}) + one "
                          f"schema on demand")
+        elif tool_rows and _mode == "direct":
+            # bench proves the numbers; a direct user must not read this table as
+            # "I am saving 99%". The rows are the saving you WOULD get once wired.
+            lines.append("  direct: you are installed but NOT wired — the numbers "
+                         "above are what you WOULD save; right now you save 0.")
+            lines.append("          → `mcptoon sync --self` to wire serve, or use "
+                         "`mcptoon call`")
     except Exception:
         pass
     lines.append("")

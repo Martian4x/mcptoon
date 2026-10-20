@@ -1067,6 +1067,23 @@ def _cmd_manifest(rest, fmt, head_n, max_chars, full, export_format=""):
             if max_chars > 0:
                 text = output._truncate(text, max_chars)
             print(text)
+            # The name index IS what a CLI call loads to pick a tool — name its
+            # size so "one cheap lookup" has a number. Human mode, stderr, CLI
+            # only (off the CLI path the manifest size is not a per-call cost).
+            if fmt in ("auto", "human"):
+                try:
+                    from . import footer as footer_mod
+                    _f = footer_mod.facts()
+                    _idx = _f.get("name_index_tokens") or 0
+                    if footer_mod.cli_credit(_f) and _idx:
+                        if cfg.resolve_lang() == "zh":
+                            _err(f"这份名字索引 ≈ {_idx:,} token —— "
+                                 f"一次 CLI 调用就取这么多来挑工具")
+                        else:
+                            _err(f"this name index ≈ {_idx:,} tokens — what a CLI "
+                                 f"call loads to pick a tool")
+                except Exception:
+                    pass
 
 
 def _cmd_inspect(rest, fmt, max_chars, full, head_n=0):
@@ -1103,6 +1120,25 @@ def _cmd_inspect(rest, fmt, max_chars, full, head_n=0):
             sys.exit(1)
         print(output.render(tools, fmt=fmt if fmt != "auto" else "json", head_n=head_n,
                             max_chars=max_chars, full=full))
+        # The list is the whole per-server schema set — the thing a CLI call does
+        # NOT load (it fetches one). Say how big the set is, so "one at a time" has
+        # a denominator. Human mode only, to stderr, so the data channel is pure.
+        if fmt in ("auto", "human"):
+            try:
+                from .bench import _tokenizer
+                from . import footer as footer_mod
+                encode, _cal, _exact = _tokenizer()
+                good = [t for t in tools if isinstance(t, dict) and "error" not in t]
+                total = sum(max(1, int(encode(json.dumps(t, ensure_ascii=False))))
+                            for t in good)
+                credit = footer_mod.cli_credit(footer_mod.facts())
+                if credit and cfg.resolve_lang() == "zh":
+                    _err(f"这 {len(good)} 个 schema 共 ≈ {total:,} token —— CLI 一次只取其中 1 个")
+                elif credit:
+                    _err(f"{len(good)} schemas ≈ {total:,} tokens total — a CLI call "
+                         f"fetches just one of them")
+            except Exception:
+                pass
         return
 
     tool = rest[1]

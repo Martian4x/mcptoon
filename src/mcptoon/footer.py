@@ -741,6 +741,26 @@ def line(f: dict | None = None, lng: str | None = None) -> str:
     """
     d = facts() if f is None else f
     lng = lng or lang()
+    # On a direct machine (installed, not wired) nothing is saved: the agent loads
+    # the full catalog natively. The gateway rate/cumulative below are a saving
+    # that machine does not have, so the per-turn line must say so plainly rather
+    # than broadcast "saves 88% · ≈1.9B". Same rule as the statusline fix; this is
+    # the surface that fires every single turn, so it matters most.
+    if current_mode() == "direct":
+        _dfull = d.get("tokens_full") or 0
+        _dtools = int(d.get("tools") or 0)
+        _dcalls = int(d.get("calls_recorded") or 0) if "calls_recorded" in d else 0
+        if lng == "zh":
+            body = (f"{MARK} mcptoon: 工具 {_dtools:,}"
+                    + (f"（全量 {_human_tokens(_dfull)} 常驻）" if _dfull else "")
+                    + " · 未接线·未省"
+                    + (f" · {_dcalls:,} 次" if _dcalls else ""))
+        else:
+            body = (f"{MARK} mcptoon: tools {_dtools:,}"
+                    + (f" (full {_human_tokens(_dfull)} resident)" if _dfull else "")
+                    + " · not wired·no saving"
+                    + (f" · {_dcalls:,} calls" if _dcalls else ""))
+        return f"{body} [{d.get('token_caliber') or ''}]"
     gw_pct = d.get("gateway_pct") if "gateway_pct" in d else None
     gw_tok = d.get("gateway_tokens") if "gateway_tokens" in d else None
     if gw_pct is not None and gw_tok:

@@ -301,6 +301,15 @@ def explain(lng: str | None = None) -> str:
         a("mcptoon 三种交付模式 — 当前、最省、怎么选")
         a("─" * 54)
         a(f"  当前模式：{_mode_zh(d['mode'])}")
+        # Answer the question the user actually has ("which should I use?") right
+        # at the top, instead of making them run `mode recommend` separately.
+        try:
+            _rec = recommend(lng=lng)
+            if _rec and _rec.get("recommended"):
+                _why = _rec.get("one_action") or _rec.get("reason") or ""
+                a(f"  本机建议：{_mode_zh(_rec['recommended'])} —— {_why}")
+        except Exception:
+            pass
         a("")
         a("  ① CLI 模式（最省 · 零常驻）")
         a("     agent 用 shell 跑 `mcptoon manifest` / `mcptoon call`。")
@@ -340,6 +349,13 @@ def explain(lng: str | None = None) -> str:
         a("mcptoon delivery modes — current, cheapest, how to choose")
         a("─" * 54)
         a(f"  Current mode: {d['mode']}")
+        try:
+            _rec = recommend(lng=lng)
+            if _rec and _rec.get("recommended"):
+                _why = _rec.get("one_action") or _rec.get("reason") or ""
+                a(f"  For this host: {_rec['recommended']} — {_why}")
+        except Exception:
+            pass
         a("")
         a("  1) CLI (cheapest, zero resident cost)")
         a("     agent runs `mcptoon manifest` / `mcptoon call` via a shell.")
