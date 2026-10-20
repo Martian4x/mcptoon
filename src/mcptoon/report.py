@@ -130,6 +130,7 @@ def build(query: str = "make a PDF", k: int = 5) -> dict:
         "caliber": caliber,
         "exact": exact,
         "note": footer_mod.note(facts) if hasattr(footer_mod, "note") else "",
+        "delivery_mode": footer_mod.current_mode(),
         "tools": tools,
         "tools_exposed": _native_tool_count(),
         "skills": skills,

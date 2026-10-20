@@ -2280,6 +2280,11 @@ def _cmd_quickstart(rest, fmt="auto"):
             _cmd_sync(["--takeover", "--yes"], fmt)
         else:
             _maybe_offer_takeover(rest, fmt)
+        # Onboarding ends without ever saying whether the machine is now SAVING
+        # anything. A fresh install often stops at `direct` (installed, not wired),
+        # where the big 99% is not being realised. Name the mode and the one
+        # command that shows the truth, at the moment the user is asking "is it on?".
+        _post_onboard_mode_hint(fmt)
     else:
         print("Next steps (once you write the config):")
         print("  mcptoon quickstart          # write config + celebrate")
@@ -4011,6 +4016,15 @@ def _cmd_status(_rest, fmt):
     # native (no saving). Branching the human view on `not wired` made direct claim
     # the CLI "0 resident / never load" truth it does not live (2026-10-20).
     mode_now = footer_mod.current_mode()
+    # The recommendation (which mode this host should use + one action), so the
+    # JSON view carries the same fix the human "Recommended" line shows.
+    try:
+        from . import mode as mode_mod
+        _rec = mode_mod.recommend(lng=cfg.resolve_lang())
+        _rec_now = (_rec or {}).get("recommended")
+        _rec_action = (_rec or {}).get("one_action") or (_rec or {}).get("reason")
+    except Exception:
+        _rec_now, _rec_action = None, None
 
     # Skills are the other half of the catalog, and this screen used to report
     # only the MCP half — a manager that manages two things naming one. Read from
@@ -4078,6 +4092,8 @@ def _cmd_status(_rest, fmt):
             "delivery_mode": mode_now,
             "resident_avoided": full_tokens if mode_now == "cli" else 0,
             "cli_credit": footer_mod.cli_credit(footer_mod.facts()),
+            "recommended": _rec_now,
+            "one_action": _rec_action,
             "footer_enabled": cfg.footer_enabled(),
             "presence_enabled": cfg.presence_enabled(),
             "receipt_enabled": cfg.receipt_enabled(),
@@ -4099,11 +4115,8 @@ def _cmd_status(_rest, fmt):
     # when there is a real recommendation with an action (never on a clean cli
     # machine whose recommendation is "nothing to do").
     try:
-        from . import mode as mode_mod
-        _rec = mode_mod.recommend(lng=cfg.resolve_lang())
-        _act = (_rec or {}).get("one_action") or (_rec or {}).get("reason")
-        if _rec and _rec.get("recommended") and _act:
-            print(f"  Recommended        : {_rec['recommended']} — {_act}")
+        if _rec_now and _rec_action:
+            print(f"  Recommended        : {_rec_now} — {_rec_action}")
     except Exception:
         pass
     if n_servers:
@@ -5566,6 +5579,50 @@ def _cmd_install_pack(pack_name, *, dry_run, fmt, list_only=False):
     print("  Next: mcptoon sync   (hand the new servers to your agents)")
 
 
+def _post_install_mode_hint(fmt) -> None:
+    """After `install`, name the delivery mode and the one action to start saving.
+
+    Adding a server does not wire anything: a fresh install often stays in `direct`
+    (installed, not wired), where the agent loads the full catalog natively and
+    nothing is saved. Say so at the moment the user just added a tool, with the one
+    command that fixes it. Human mode only; never on a machine that already saves.
+    """
+    if fmt not in ("auto", "human"):
+        return
+    try:
+        from . import footer as footer_mod
+        cur = footer_mod.current_mode()
+    except Exception:
+        return
+    if cur == "direct":
+        _err("  ⚠ Mode: direct (not wired) — nothing is saved yet. "
+             "`mcptoon sync --self` wires serve, or use `mcptoon call`.")
+    elif cur == "cli":
+        _err("  ✓ Mode: cli — a call loads one schema on demand; the full catalog "
+             "never loads.")
+
+
+def _post_onboard_mode_hint(fmt) -> None:
+    """After `quickstart`, say whether the machine is now saving (stdout).
+
+    Same intent as `_post_install_mode_hint` but on the onboarding summary (stdout,
+    not stderr): a fresh install commonly stops at `direct` where the big 99% is not
+    being realised. Name the mode and the one command that shows the truth.
+    """
+    if fmt not in ("auto", "human"):
+        return
+    try:
+        from . import footer as footer_mod
+        cur = footer_mod.current_mode()
+    except Exception:
+        return
+    if cur == "direct":
+        print("  ⚠ Mode: direct (not wired) — you are not saving yet. "
+              "`mcptoon sync --self` wires serve.")
+    elif cur:
+        print(f"  ✓ Mode: {cur} — saving is on. See `mcptoon credit`.")
+
+
 def _cmd_install(rest, fmt, full=False, head_n=0, max_chars=0):
     """Install/list/remove MCP servers with auto-handler generation.
 
@@ -5728,6 +5785,7 @@ def _cmd_install(rest, fmt, full=False, head_n=0, max_chars=0):
         result = install_npm(npm_pkg, server_name)
         _render_result(result, fmt, head_n, max_chars, full, True,
                        server="install", tool="npm")
+        _post_install_mode_hint(fmt)
         return
 
     if pip_pkg:
@@ -5735,6 +5793,7 @@ def _cmd_install(rest, fmt, full=False, head_n=0, max_chars=0):
         result = install_pip(pip_pkg, server_name)
         _render_result(result, fmt, head_n, max_chars, full, True,
                        server="install", tool="pip")
+        _post_install_mode_hint(fmt)
         return
 
     # mcptoon install <name>  (no --npm/--pip/--url) → auto-search & install
@@ -5769,6 +5828,7 @@ def _cmd_install(rest, fmt, full=False, head_n=0, max_chars=0):
         from .errors import is_error
         if is_error(result):
             sys.exit(1)
+        _post_install_mode_hint(fmt)
         return
 
     print("Usage:")

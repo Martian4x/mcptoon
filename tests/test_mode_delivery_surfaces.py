@@ -565,3 +565,86 @@ def test_skill_documents_credit_and_direct_zero():
     md = (root / "src/mcptoon/skill/SKILL.md").read_text(encoding="utf-8")
     assert "mcptoon credit" in md
     assert "direct` mode saves nothing" in md or "saves nothing" in md
+
+
+# ── Phase 6 ─────────────────────────────────────────────────────────────────
+
+# 19. report --json top-level delivery_mode.
+
+def test_report_json_top_level_delivery_mode():
+    from mcptoon import report
+    with patch.object(footer_mod, "current_mode", return_value="direct"), \
+            patch.object(footer_mod, "facts", return_value=_FACTS), \
+            patch.object(footer_mod, "note", return_value=""), \
+            patch.object(report, "_native_tool_count", return_value=9), \
+            patch.object(usage_mod, "get_usage_stats", return_value={
+                "total_calls": 0, "window_calls": 0, "success_rate": "",
+                "lifetime_result_tokens": 0, "first_call_ts": None}):
+        data = report.build()
+    assert data["delivery_mode"] == "direct"
+
+
+# 20. savings --json carries delivery_mode + recommended + one_action.
+
+def test_savings_build_has_mode_and_recommendation():
+    from mcptoon import savings
+    with patch.object(footer_mod, "current_mode", return_value="direct"), \
+            patch.object(footer_mod, "facts", return_value=_FACTS), \
+            patch.object(footer_mod, "cli_credit", return_value=None), \
+            patch.object(usage_mod, "get_usage_stats", return_value={
+                "total_calls": 0, "first_call_ts": None}), \
+            patch.object(mode_mod, "recommend", return_value={
+                "recommended": "serve", "one_action": "run `mcptoon sync --self`"}):
+        data = savings.build()
+    assert data["delivery_mode"] == "direct"
+    assert data["recommended"] == "serve"
+    assert "sync --self" in data["one_action"]
+
+
+# 21. status --json carries recommended + one_action.
+
+def test_status_json_has_recommended(isolated):
+    tool = {"name": "t1", "description": "d", "inputSchema": {"type": "object"}}
+    with patch.object(manifest_mod, "get_manifest", return_value={"srv": [tool]}), \
+            patch.object(footer_mod, "current_mode", return_value="direct"), \
+            patch.object(footer_mod, "facts", return_value=_FACTS), \
+            patch.object(cli, "_gateway_wired_in", return_value=False), \
+            patch.object(mode_mod, "recommend", return_value={
+                "recommended": "serve", "one_action": "run `mcptoon sync --self`"}), \
+            patch.object(usage_mod, "get_usage_stats", return_value={
+                "total_calls": 0, "success_rate": "", "by_server": {},
+                "top_tools": {}, "routed_calls": 0, "native_calls": 0}):
+        out, _e, _c = _run(["status", "--json"])
+    data = json.loads(out)
+    assert data["recommended"] == "serve"
+    assert "sync --self" in data["one_action"]
+
+
+# 22. quickstart ends by naming the mode / whether it saves.
+
+def test_quickstart_tail_reports_mode(capsys):
+    with patch.object(footer_mod, "current_mode", return_value="direct"):
+        cli._post_onboard_mode_hint("auto")
+    out = capsys.readouterr().out
+    assert "Mode: direct" in out and "not saving yet" in out
+
+
+def test_quickstart_tail_silent_for_machine(capsys):
+    with patch.object(footer_mod, "current_mode", return_value="direct"):
+        cli._post_onboard_mode_hint("json")
+    assert capsys.readouterr().out == ""
+
+
+# 23. install ends by naming the mode / one action (direct).
+
+def test_post_install_mode_hint_direct(capsys):
+    with patch.object(footer_mod, "current_mode", return_value="direct"):
+        cli._post_install_mode_hint("human")
+    err = capsys.readouterr().err
+    assert "Mode: direct" in err and "sync --self" in err
+
+
+def test_post_install_mode_hint_silent_for_machine(capsys):
+    with patch.object(footer_mod, "current_mode", return_value="direct"):
+        cli._post_install_mode_hint("json")
+    assert capsys.readouterr().err == ""

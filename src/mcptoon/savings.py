@@ -106,7 +106,7 @@ def build() -> dict:
     total_tokens = est[1] if est else 0
     calls = est[0] if est else int(facts.get("calls_recorded") or 0)
     stats = usage_mod.get_usage_stats()
-    return {
+    out = {
         "caliber": facts.get("token_caliber") or "tiktoken cl100k_base",
         "total_tokens": total_tokens,
         "calls": calls,
@@ -121,6 +121,16 @@ def build() -> dict:
         # milestone list that reads as "you saved this much" when it saves nothing.
         "delivery_mode": footer_mod.current_mode(),
     }
+    # Add the fix (which mode + one command) to the JSON so a script can act on a
+    # direct machine, not just see the milestone tally.
+    try:
+        from . import mode as mode_mod
+        _rec = mode_mod.recommend()
+        out["recommended"] = _rec.get("recommended")
+        out["one_action"] = _rec.get("one_action")
+    except Exception:
+        pass
+    return out
 
 
 def render(data: dict, lng: str = "en") -> str:
