@@ -109,7 +109,8 @@ import json
 import math
 
 __all__ = ["facts", "line", "skills_line", "compression_line", "note", "block",
-           "enabled", "lang", "changed", "remember", "MARK"]
+           "enabled", "lang", "changed", "remember", "MARK",
+           "current_mode", "cli_credit", "cli_credit_line", "tool_schema_tokens"]
 
 # The savings line is meant to be *noticed* — the entire point of this feature is
 # that an install stops being invisible. A single emoji is the cheapest way to
@@ -276,7 +277,7 @@ def _catalog_fingerprint(servers: list[str]) -> str:
 
 
 def _catalog_token_totals(servers: list[str], encode, caliber: str):
-    """`(tools, full_tokens, slim_tokens)` for the whole cached catalog, memoised.
+    """`(tools, full_tokens, slim_tokens, name_index_tokens)` for the cached catalog, memoised.
 
     Tokenizing every schema is the slow part of `facts()` and it was redone on
     every prompt. The result is cached in `_TOKEN_TOTALS_CACHE` keyed by a stat
@@ -284,11 +285,18 @@ def _catalog_token_totals(servers: list[str], encode, caliber: str):
     stat walk instead of a re-tokenize. Falls back to a full recompute on any
     error — a wrong figure is never cached, and a cache write failure only costs
     the next caller a recompute.
+
+    The fourth element is the ``manifest`` name index — the cheap list of tool
+    names a CLI call pulls to *pick* a tool. It is the per-use cost of the CLI
+    path, so `cli_credit` can name what a call actually pays instead of quoting
+    the gateway's fixed cost. Built with the exact ``compact()`` shape `bench`
+    uses for its "manifest (name index)" row, so the two surfaces agree.
     """
     import json
 
     from . import cache as cache_mod
     from . import schema_simplifier
+    from .output import compact
 
     fp = _catalog_fingerprint(servers)
     key = f"{caliber}\x00{fp}"
@@ -303,10 +311,12 @@ def _catalog_token_totals(servers: list[str], encode, caliber: str):
     total_tools = 0
     full_tokens = 0
     slim_tokens = 0
+    name_map: dict[str, list[str]] = {}
     for name in servers:
         tools, _age = cache_mod.get_cached_tools_any_age(name)
         if tools is None:
             continue
+        names = []
         for t in tools:
             if not isinstance(t, dict) or "error" in t:
                 continue
@@ -314,8 +324,15 @@ def _catalog_token_totals(servers: list[str], encode, caliber: str):
             full_tokens += max(1, int(encode(json.dumps(t, ensure_ascii=False))))
             slim_tokens += max(1, int(encode(json.dumps(
                 schema_simplifier.simplify_tool_def(t), ensure_ascii=False))))
+            names.append(t.get("name", ""))
+        if names:
+            name_map[name] = names
+    try:
+        name_index_tokens = max(1, int(encode(compact(name_map)))) if name_map else 0
+    except Exception:
+        name_index_tokens = 0
 
-    result = (total_tools, full_tokens, slim_tokens)
+    result = (total_tools, full_tokens, slim_tokens, name_index_tokens)
     # Keep the memo small: one entry per caliber/fingerprint is plenty, and a
     # bounded dict never grows with the number of turns a long session runs.
     if len(_TOKEN_TOTALS_CACHE) > 8:
@@ -329,7 +346,7 @@ def _catalog_token_totals(servers: list[str], encode, caliber: str):
 
 # Process-local memo. Persisted across processes in a small JSON file beside the
 # schema cache; both are keyed by the same stat fingerprint.
-_TOKEN_TOTALS_CACHE: dict[str, tuple[int, int, int]] = {}
+_TOKEN_TOTALS_CACHE: dict[str, tuple[int, int, int, int]] = {}
 _TOKEN_TOTALS_FILE = "footer-token-totals.json"
 
 
@@ -347,8 +364,12 @@ def _load_token_totals(key: str):
             data = json.load(fh)
         if data.get("key") == key:
             vals = data.get("totals")
-            if isinstance(vals, list) and len(vals) == 3:
-                return tuple(int(x) for x in vals)
+            if isinstance(vals, list) and len(vals) in (3, 4):
+                got = tuple(int(x) for x in vals)
+                # A file written before `name_index_tokens` existed has three
+                # elements; pad the fourth with 0 rather than discard a valid
+                # memo and re-tokenize the whole catalog on the next prompt.
+                return got if len(got) == 4 else (got[0], got[1], got[2], 0)
     except (OSError, ValueError, TypeError):
         pass
     return None
@@ -407,7 +428,7 @@ def facts() -> dict:
     # measured 2026-10-19) and it was being redone on every prompt — `statusline`
     # and `footer-facts` both call this and both run per turn. The totals are
     # memoised on a stat-only fingerprint so an unchanged catalog costs ~0 ms.
-    total_tools, full_tokens, slim_tokens = _catalog_token_totals(
+    total_tools, full_tokens, slim_tokens, name_index_tokens = _catalog_token_totals(
         servers, encode, caliber)
 
     # Age and the uncached count are cheap (loading the cache is ~24 ms) and are
@@ -458,6 +479,7 @@ def facts() -> dict:
         "tools": total_tools,
         "tokens_full": full_tokens,
         "tokens_slim": slim_tokens,
+        "name_index_tokens": name_index_tokens,
         "tokens_saved": saved,
         "savings_pct": pct,
         "gateway_tokens": gw_tokens,
@@ -561,6 +583,121 @@ def display_pct(saved: int, total: int) -> str:
     """
     pct = floor_pct(saved, total, places=0)
     return "" if pct is None else f"{pct:.0f}"
+
+
+# ── CLI-mode credit ──────────────────────────────────────────────────────────
+# Under `cli` delivery, the gateway is NOT wired into the agent: the agent runs
+# `mcptoon call` through a shell and only ever pulls the one schema it needs. So
+# the "209→9 via the gateway" story (a *serve* fact) is not what a CLI user is
+# living. What a CLI user actually banks is "zero resident": every call avoids
+# loading the whole catalog into context. These helpers give that second caliber
+# one name, so every surface can print it instead of borrowing the gateway's.
+#
+# It is deliberately a *second* figure, never a replacement: a serve user's real
+# saving is the small fixed gateway cost, and quoting "resident avoided" at them
+# would overstate it. The caller decides which caliber fits the current mode.
+
+def current_mode() -> str:
+    """The live delivery mode (`cli` / `serve` / `direct` / `empty`), or "".
+
+    A thin, import-cycle-free read of `mode.detect()` — the same classifier
+    `status`, `mode` and `report` use, so a CLI-caliber line here can never
+    disagree with the mode those screens name. Best-effort: any failure yields
+    "" and the caller falls back to the gateway headline rather than guessing.
+    """
+    try:
+        from . import mode as mode_mod
+
+        return str(mode_mod.detect().get("mode") or "")
+    except Exception:
+        return ""
+
+
+def cli_credit(f: dict | None = None) -> dict | None:
+    """The CLI-mode credit figures, or None when this is not a CLI machine.
+
+    Under CLI delivery the honest figure is what was *kept out of context*: the
+    full catalog an agent would otherwise load, never resident because the call
+    path fetches one tool at a time. Two derived numbers:
+
+    * ``resident_avoided`` — ``tokens_full`` (the whole catalog), i.e. the cost
+      the agent never pays at idle. Real, cache-only, no server touched.
+    * ``per_call`` — the ``manifest`` name index, the one cheap thing a CLI call
+      pulls to pick a tool. This is the *tiny* per-use cost that makes the saving
+      real instead of rhetorical.
+
+    Returns None when the mode is not ``cli`` (so callers keep the gateway
+    headline untouched), or when there is no catalog to measure. The dict carries
+    ``mode`` too, so a caller can phrase the line without a second detect().
+    """
+    d = facts() if f is None else f
+    if current_mode() != "cli":
+        return None
+    full = d.get("tokens_full") or 0
+    if not full:
+        return None
+    return {
+        "mode": "cli",
+        "resident_avoided": int(full),
+        "per_call": int(d.get("name_index_tokens") or 0),
+        "caliber": d.get("token_caliber") or "",
+    }
+
+
+def cli_credit_line(f: dict | None = None, lng: str | None = None) -> str | None:
+    """One pasteable line naming the CLI-mode saving, or None off the CLI path.
+
+    Shape (zh / en):
+
+        CLI 模式：0 常驻 · 全量 640,606 token 没进上下文（按需只取 1 个 schema）
+        CLI mode: 0 resident · 640,606 tokens kept out of context (fetch one schema on demand)
+
+    Kept short and free of a percentage on purpose: the honest CLI claim is an
+    absolute ("this much never loaded"), not a rate, because the rate depends on
+    how many tools the agent *would* have loaded — which is exactly the serve
+    story we are trying not to borrow. `per_call` is only shown when it was
+    actually measured, so an uncached catalog never prints a made-up "0".
+    """
+    c = cli_credit(f)
+    if c is None:
+        return None
+    lng = lng or lang()
+    resident = _human_tokens(c["resident_avoided"])
+    per = c.get("per_call") or 0
+    if lng == "zh":
+        tail = f"（按需只取 1 个 schema ≈ {per:,} token）" if per else "（按需只取 1 个 schema）"
+        return f"CLI 模式：0 常驻 · 全量 {resident} token 没进上下文{tail}"
+    tail = f" (fetch one schema on demand ≈ {per:,} tokens)" if per else " (fetch one schema on demand)"
+    return f"CLI mode: 0 resident · {resident} tokens kept out of context{tail}"
+
+
+def tool_schema_tokens(server: str, tool: str, encode=None, caliber: str | None = None) -> int:
+    """The token cost of one tool's *full* schema, from the on-disk cache, or 0.
+
+    The per-call receipt's key figure: "this call pulled one schema, ~N tokens"
+    versus the whole catalog it did not pull. Cache-only — the receipt must never
+    open a server just to count. An uncached server yields 0 (the receipt then
+    omits the number rather than inventing one), matching the rest of the footer's
+    "a figure the caller can date, never a guess" rule.
+    """
+    try:
+        from . import cache as cache_mod
+
+        cached, _age = cache_mod.get_cached_tools_any_age(server)
+        if not cached:
+            return 0
+        for t in cached:
+            if isinstance(t, dict) and t.get("name") == tool and "error" not in t:
+                if encode is None or caliber is None:
+                    from .bench import _tokenizer
+
+                    encode, _cal, _exact = _tokenizer()
+                import json
+
+                return max(1, int(encode(json.dumps(t, ensure_ascii=False))))
+    except Exception:
+        return 0
+    return 0
 
 
 def line(f: dict | None = None, lng: str | None = None) -> str:

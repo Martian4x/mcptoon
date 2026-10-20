@@ -211,13 +211,25 @@ def statusline(lng: str | None = None) -> str:
     zh = lng == "zh"
 
     head = "🎉 mcptoon"
+    # CLI mode credits a *different* fact than serve. Under CLI the gateway is not
+    # wired in, so "9 tools, 99% less" is a serve story the CLI user is not living;
+    # what they actually bank is "zero resident" — the whole catalog never loads.
+    # Put that on the badge so the status bar stops crediting CLI for a gateway
+    # saving. Serve/direct keep the gateway tool-count figure unchanged.
+    cli_credit = (d["mode"] == "cli" and full)
     if zh:
-        tool_bit = f"{exposed} 工具（省 {pct}%）" if (exposed and pct) else None
+        if cli_credit:
+            tool_bit = f"0 常驻·全量{_human(full)}没进上下文"
+        else:
+            tool_bit = f"{exposed} 工具（省 {pct}%）" if (exposed and pct) else None
         saved_bit = f"≈省{_human(est[1])} · {_human(est[0])}次" if est else (
             f"{_human(calls)} 次" if calls else None)
         tag = _MODE_TAG_ZH.get(d["mode"], d["mode"])
     else:
-        tool_bit = f"{exposed} tools ({pct}% less)" if (exposed and pct) else None
+        if cli_credit:
+            tool_bit = f"0 resident·{_human(full)} kept out"
+        else:
+            tool_bit = f"{exposed} tools ({pct}% less)" if (exposed and pct) else None
         saved_bit = f"≈{_human(est[1])} saved · {_human(est[0])} calls" if est else (
             f"{_human(calls)} calls" if calls else None)
         tag = _MODE_TAG.get(d["mode"], d["mode"])
@@ -296,6 +308,13 @@ def explain(lng: str | None = None) -> str:
         elif d["mode"] == "cli":
             a("")
             a("  ✓ 你现在是 CLI 模式：已经是最省，前提是 agent 真在敲命令。")
+            # Make the saving concrete for *this* user, not just a principle: the
+            # number of calls they have routed, each of which avoided loading the
+            # whole catalog. Only when there is history and a measured catalog.
+            _routed = int(d.get("routed") or d.get("calls") or 0)
+            if full and _routed > 0:
+                a(f"     就你本人而言：已 {_routed:,} 次调用，每次都没把全量 "
+                  f"{full:,} token 的 schema 塞进上下文。")
         elif d["mode"] == "serve":
             a("")
             a("  ✓ 你现在是 serve 模式：每轮小固定开销，已省定义侧大头。")
@@ -321,6 +340,14 @@ def explain(lng: str | None = None) -> str:
         a("  Cheapest is 1) CLI: idle 0, pay only on use.")
         a("  Steadiest is 2) serve: zero-config, small fixed cost.")
         a("  Both save the definition-side 99%; result compression is 0.1–0.5%.")
+        if d["mode"] == "cli":
+            a("")
+            a("  ✓ You are in CLI mode: already the cheapest, provided the agent")
+            a("    actually runs commands.")
+            _routed = int(d.get("routed") or d.get("calls") or 0)
+            if full and _routed > 0:
+                a(f"    Your own saving so far: {_routed:,} calls, each of which did")
+                a(f"    NOT load the full {full:,}-token schema set into context.")
     return "\n".join(L)
 
 

@@ -113,6 +113,10 @@ def build() -> dict:
         "milestones_hit": milestones(total_tokens),
         "next": next_milestone(total_tokens),
         "first_call_ts": stats.get("first_call_ts"),
+        # The CLI-caliber reality, so the milestone screen can say plainly that the
+        # headline above is a *gateway-equivalent estimate* while the CLI user's
+        # true, countable saving is "the catalog never loaded". None off the CLI path.
+        "cli_credit": footer_mod.cli_credit(facts),
     }
 
 
@@ -141,6 +145,20 @@ def render(data: dict, lng: str = "en") -> str:
          "（下界估算：转发次数 × 每轮省量；把每次转发都当作单独一轮，"))
     a(L_("  counted as its own turn, so the true figure is at least this)",
          "  所以真实值只会更高）"))
+    # The headline above is a *gateway-equivalent* estimate. On a CLI machine the
+    # number a user can actually point at is different: every call skipped the whole
+    # catalog, and that absolute is real and countable. Label it, so the milestones
+    # (and the "N books" analogies below) are not mistaken for a measured CLI saving.
+    cc = data.get("cli_credit")
+    if cc:
+        a("")
+        a(L_(f"On CLI: the real, counted saving is that the full "
+             f"{cc.get('resident_avoided', 0):,}-token catalog never loads — every "
+             f"call above skipped it.",
+             f"CLI 口径：你的真实可计数省量是「全量 {cc.get('resident_avoided', 0):,} token "
+             f"的目录从不加载」—— 上面每一次调用都跳过了它。"))
+        a(L_("The token total above is a serve-caliber estimate, not that figure.",
+             "上面的 token 总量是 serve 口径的估算，不是这个数。"))
     a("")
 
     # Milestones crossed.

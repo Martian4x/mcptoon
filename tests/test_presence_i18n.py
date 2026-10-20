@@ -59,10 +59,15 @@ class TestStatuslineLanguage(unittest.TestCase):
     def test_chinese_and_english_badges_differ(self):
         zh, en = _badge("zh"), _badge("en")
         self.assertNotEqual(zh, en, "the badge must actually change language")
-        self.assertIn("工具", zh)
+        # These badges are CLI-mode (the helper patches detect() to cli), so the
+        # leading figure is the CLI credit — "0 resident / full catalog kept out" —
+        # not the serve "N tools" story. Both languages must still speak it.
+        self.assertIn("常驻", zh)
+        self.assertIn("没进上下文", zh)
         self.assertIn("省", zh)
         self.assertIn("次", zh)
-        self.assertIn("tools", en)
+        self.assertIn("resident", en)
+        self.assertIn("kept out", en)
         self.assertIn("saved", en)
         self.assertIn("calls", en)
 

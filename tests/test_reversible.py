@@ -86,6 +86,7 @@ class _IsolatedHome(unittest.TestCase):
             "MCPTOON_WELCOME_FILE": str(self.home / ".welcome"),
             "MCPTOON_SELFHEAL_FILE": str(self.home / ".selfheal"),
             "MCPTOON_FOOTER_STATE_FILE": str(self.home / "footer-state.json"),
+            "MCPTOON_CLI_AHA_FILE": str(self.home / ".cli-aha"),
             "MCPTOON_TOGGLE_FILE": str(self.home / "toggles.json"),
             "MCPTOON_COMPRESSION_FILE": str(self.home / "compression.json"),
             "MCPTOON_INSTALLED_FILE": str(self.home / "pro_installed.json"),
@@ -1124,8 +1125,12 @@ class TestTheFooterReachesEverySurface(_IsolatedHome):
         state = self.home / "footer-state.json"
 
         # `footer-facts` always prints: it is the explicit ask, not the ambient tail.
+        # On a CLI machine it also appends the CLI-caliber credit line (see
+        # `cli._cmd_footer_facts`), so it starts with the shared block verbatim and
+        # may add that one mode-specific line after it.
         out, _ = _run_main_streams(["footer-facts"])
-        self.assertEqual(out.strip(), reference)
+        self.assertTrue(out.strip() == reference
+                        or out.strip().startswith(reference + "\n"))
 
         # The two ambient surfaces suppress a repeat, so clear the memory first —
         # this test is about the *string* they print, not the change-gate (that has

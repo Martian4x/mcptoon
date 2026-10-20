@@ -188,7 +188,7 @@ def state_paths() -> dict:
     return {
         "bookkeeping": [_settings_file(), _welcome_file(), _footer_state_file(),
                         _selfheal_file(), _toggle_file(), _policy_file(),
-                        _installed_registry_file()],
+                        _cli_aha_file(), _installed_registry_file()],
         "servers": [_config_file(), _config_file_toml()],
         "cache": [_cache_dir()],
     }
@@ -235,6 +235,15 @@ SELFHEAL_FILE = Path(os.environ.get(
 FOOTER_STATE_FILE = Path(os.environ.get(
     "MCPTOON_FOOTER_STATE_FILE", str(CONFIG_DIR / "footer-state.json")))
 
+# First-CLI-call "aha" marker. The very first `mcptoon call` on a machine gets one
+# extra line spelling out what the CLI path just avoided loading (the whole tool
+# catalog). It fires once and never again — the point is to make the saving
+# legible at the moment it happens, not to nag every call. Its own marker, not the
+# welcome's: the welcome can be off while a user still deserves the one-time
+# receipt, and vice versa. Resolved at CALL time for test isolation.
+CLI_AHA_FILE = Path(os.environ.get(
+    "MCPTOON_CLI_AHA_FILE", str(CONFIG_DIR / ".cli-aha")))
+
 # Recognized settings and their defaults. The CLI validates against this map, so
 # a typo fails loudly instead of silently writing a key nothing reads.
 #
@@ -248,7 +257,7 @@ FOOTER_STATE_FILE = Path(os.environ.get(
 SETTING_DEFAULTS = {"footer": "on", "welcome": "on", "lang": "auto",
                     "exposure": "compact", "compress": "smart",
                     "runners": "prefer-installed", "select.engine": "lexical",
-                    "select.command": "", "presence": "on",
+                    "select.command": "", "presence": "on", "receipt": "on",
                     "activity_keep": "2000"}
 
 # `activity_keep` is the one numeric setting: how many activity-ledger lines to
@@ -375,7 +384,7 @@ PRESENCE_MODES = ("on", "brief", "off")
 SETTING_CHOICES = {"exposure": EXPOSURE_MODES, "compress": COMPRESS_MODES,
                    "footer": BOOL_MODES, "welcome": BOOL_MODES,
                    "runners": RUNNER_MODES, "select.engine": SELECT_ENGINES,
-                   "presence": PRESENCE_MODES}
+                   "presence": PRESENCE_MODES, "receipt": BOOL_MODES}
 
 # Windows LANGID primary-language ids worth naming. Anything unnamed falls back
 # to the locale string and then to English, so an unlisted language degrades to
@@ -389,6 +398,10 @@ def _settings_file() -> Path:
 
 def _welcome_file() -> Path:
     return Path(os.environ.get("MCPTOON_WELCOME_FILE", str(WELCOME_FILE)))
+
+
+def _cli_aha_file() -> Path:
+    return Path(os.environ.get("MCPTOON_CLI_AHA_FILE", str(CLI_AHA_FILE)))
 
 
 def _selfheal_file() -> Path:
@@ -458,7 +471,7 @@ def apply_home(root) -> None:
     """
     global CONFIG_DIR, CACHE_DIR, STATE_DIR, LOG_DIR, TOGGLE_FILE, POLICY_FILE
     global CONFIG_FILE, CONFIG_FILE_TOML, SETTINGS_FILE, WELCOME_FILE
-    global SELFHEAL_FILE, FOOTER_STATE_FILE
+    global SELFHEAL_FILE, FOOTER_STATE_FILE, CLI_AHA_FILE
 
     os.environ["MCPTOON_HOME"] = str(root)
     CONFIG_DIR = _resolve_root("XDG_CONFIG_HOME")
@@ -477,6 +490,7 @@ def apply_home(root) -> None:
     WELCOME_FILE = CONFIG_DIR / ".welcome"
     SELFHEAL_FILE = CONFIG_DIR / ".selfheal"
     FOOTER_STATE_FILE = CONFIG_DIR / "footer-state.json"
+    CLI_AHA_FILE = CONFIG_DIR / ".cli-aha"
 
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -1065,6 +1079,18 @@ def presence_enabled() -> bool:
     return presence_mode() != "off"
 
 
+def receipt_enabled() -> bool:
+    """Whether the per-call CLI receipt (one stderr line after `mcptoon call`) may print.
+
+    On by default — the receipt is the whole point of the CLI-credit work: a call
+    that saves something should say so at the moment it happens. `config set
+    receipt off` silences it for anyone piping stderr into a log. Kept separate
+    from `footer` because the receipt is per-call and specific, while the footer is
+    a cumulative block; a user may want one and not the other.
+    """
+    return get_setting("receipt").strip().lower() not in ("off", "0", "false", "no")
+
+
 def welcome_seen() -> bool:
     """True once the first-run welcome has been shown (marker file exists)."""
     return _welcome_file().exists()
@@ -1078,6 +1104,28 @@ def mark_welcome_seen() -> None:
     """
     try:
         path = _welcome_file()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("", encoding="utf-8")
+    except OSError:
+        pass
+
+
+def cli_aha_seen() -> bool:
+    """True once the one-time first-CLI-call receipt has been shown."""
+    try:
+        return _cli_aha_file().exists()
+    except OSError:
+        return False
+
+
+def mark_cli_aha_seen() -> None:
+    """Record that the first-CLI-call receipt has been shown.
+
+    Best-effort, like every other marker: a read-only home must not fail a call,
+    and the worst case (the receipt repeats once more) is harmless.
+    """
+    try:
+        path = _cli_aha_file()
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("", encoding="utf-8")
     except OSError:

@@ -125,6 +125,13 @@ def build(query: str = "make a PDF", k: int = 5) -> dict:
         "tools_exposed": _native_tool_count(),
         "skills": skills,
         "mode": _mode_section(),
+        # The CLI-caliber saving, split out so ⑤ can name it separately from the
+        # gateway-equivalent estimate. None off the CLI path.
+        "cli_credit": footer_mod.cli_credit(facts),
+        "cumulative": (lambda est: {
+            "calls": est[0] if est else 0,
+            "gateway_equiv": est[1] if est else 0,
+        })(footer_mod._cumulative_estimate(facts)),
         "per_turn": {
             "native_tokens": native_total,
             "after_tokens": slim_total,
@@ -263,6 +270,26 @@ def render(data: dict, lng: str = "en") -> str:
     span = _history_span(c.get("first_call_ts"), c.get("total"), lng)
     if span:
         a("     " + span)
+    # Two calibers, kept apart on purpose. The "≈ gateway-equivalent" figure is a
+    # lower-bound estimate (calls × the serve per-turn saving) — a serve story. On
+    # a CLI machine the *real, countable* saving is different: every call avoided
+    # loading the whole catalog. Naming only the gateway-equivalent at a CLI user
+    # credits them for a saving they do not actually bank that way, which is the
+    # whole complaint this split answers.
+    cc = data.get("cli_credit")
+    if cc:
+        a(_row(L_("CLI: full catalog never resident", "CLI：全量目录从不常驻"),
+               cc.get("resident_avoided")))
+        a("     " + L_(
+            "real: each call skips the whole schema set; this is the CLI saving, counted",
+            "真实：每次调用都跳过整套 schema；这才是 CLI 的省，可计数"))
+    cum = data.get("cumulative") or {}
+    if cum.get("gateway_equiv"):
+        a(_row(L_("≈ gateway-equivalent (serve caliber)", "≈ 网关等效量（serve 口径）"),
+               cum["gateway_equiv"]))
+        a("     " + L_(
+            "lower-bound estimate: calls × serve per-turn saving, not the CLI figure above",
+            "下界估算：调用次数 × serve 每轮省量，不是上面那个 CLI 实数"))
     a("     " + L_("note: turns are not counted, so no cumulative-turn figure is invented",
                    "注：不统计『轮数』，故不编造累计轮次节省"))
     a("")
@@ -287,6 +314,11 @@ def render(data: dict, lng: str = "en") -> str:
         if cur == "direct":
             a("     " + L_("→ run `mcptoon sync --self` (serve) or use `mcptoon call` (cli); see `mcptoon mode`",
                            "→ 跑 `mcptoon sync --self`（serve）或改用 `mcptoon call`（cli）；详见 `mcptoon mode`"))
+        elif cur == "cli":
+            a("     " + L_("CLI: idle 0 tokens; the ⑤ 'CLI' row is your real, counted saving",
+                           "CLI：闲置 0 token；⑤ 里那行『CLI』才是你的真实可计数省量"))
+            a("     " + L_("cheapest mode is CLI (idle 0, pay only on use); see `mcptoon mode`",
+                           "最省的是 CLI（闲置 0、按需才花）；详见 `mcptoon mode`"))
         else:
             a("     " + L_("cheapest mode is CLI (idle 0, pay only on use); see `mcptoon mode`",
                            "最省的是 CLI（闲置 0、按需才花）；详见 `mcptoon mode`"))

@@ -815,9 +815,114 @@ def _emit_footer(command: str) -> None:
         return
 
 
-# ═══════════════════════════════════════════════════
-# Error fix suggestions
-# ═══════════════════════════════════════════════════
+def _cli_receipt_data(server: str, tool: str, result) -> dict | None:
+    """The machine-readable CLI credit for one call, or None when nothing applies.
+
+    One source for both the human stderr line and the `call --json` field, so the
+    two can never quote different numbers. None when: the mode is not `cli` (a
+    serve user's truth is different and smaller), the call failed (a receipt on a
+    broken call lies about what was saved), or there is no catalog to measure.
+    ``server`` may be empty on the `--auto` path — then only the catalog figure is
+    reported, never a guessed per-schema one.
+    """
+    try:
+        from . import footer as footer_mod
+
+        if _tool_result_failed(result):
+            return None
+        f = footer_mod.facts()
+        credit = footer_mod.cli_credit(f)
+        if credit is None:
+            return None
+        return {
+            "mode": "cli",
+            "resident_avoided": int(credit["resident_avoided"]),
+            "schema_tokens": footer_mod.tool_schema_tokens(server, tool) if server else 0,
+            "caliber": credit.get("caliber") or "",
+        }
+    except Exception:
+        return None
+
+
+def _cli_call_receipt(server: str, tool: str, result) -> str | None:
+    """The per-call CLI credit line, or None when this call has nothing to claim.
+
+    This is the answer to "CLI mode never shows its 功劳": the *footer* is a
+    cumulative block shown after every command, but a single `mcptoon call` had no
+    line of its own saying what it just did for the user. Under CLI delivery the
+    claim is concrete and one-shot — the call pulled one schema and never loaded
+    the catalog — so it is stated here, at the call, in the caller's language.
+
+    Never raises — a receipt is a courtesy.
+    """
+    try:
+        data = _cli_receipt_data(server, tool, result)
+        if data is None:
+            return None
+        from . import footer as footer_mod
+
+        resident = footer_mod._human_tokens(data["resident_avoided"])
+        pulled = data["schema_tokens"]
+        if footer_mod.lang() == "zh":
+            if pulled:
+                return (f"▸ 本次只拉了 1 个 schema（{pulled:,} token），"
+                        f"全量 {resident} token 没进上下文")
+            return f"▸ 本次按需只取 1 个 schema，全量 {resident} token 没进上下文"
+        if pulled:
+            return (f"▸ pulled 1 schema this call ({pulled:,} tok); "
+                    f"{resident} tokens kept out of context")
+        return (f"▸ fetched 1 schema on demand; "
+                f"{resident} tokens kept out of context")
+    except Exception:
+        return None
+
+
+def _emit_cli_receipt(server: str, tool: str, result, machine: bool = False) -> None:
+    """Print the per-call receipt to stderr, plus a one-time first-call 'aha'.
+
+    stderr, never stdout — the same rule as the footer: stdout is the tool result
+    and must stay parseable. Gated by `receipt` (default on) and only meaningful
+    on the CLI path (`_cli_call_receipt` returns None otherwise). The first CLI
+    call on a machine gets one extra explanatory line, then never again (its own
+    marker), because the point is to make the very first saving legible — not to
+    recite the explainer every call.
+
+    ``machine`` (set when the caller asked for `--json`) prints the receipt as a
+    single JSON object on stderr instead of prose, so a script can read "how much
+    did this call save" without parsing the tool result or corrupting it — the
+    result on stdout stays exactly what the server returned.
+    """
+    try:
+        from . import config as cfg
+
+        if not cfg.receipt_enabled():
+            return
+        data = _cli_receipt_data(server, tool, result)
+        if data is None:
+            return
+        if machine:
+            print(json.dumps({"_mcptoon_receipt": data}, ensure_ascii=False),
+                  file=sys.stderr)
+            return
+        line = _cli_call_receipt(server, tool, result)
+        if not line:
+            return
+        print(line, file=sys.stderr)
+        if not cfg.cli_aha_seen():
+            from . import footer as footer_mod
+
+            resident = footer_mod._human_tokens(data.get("resident_avoided", 0))
+            if footer_mod.lang() == "zh":
+                print(f"  （第一次用 CLI 调用：直连会先把全量 {resident} token 的 schema "
+                      f"塞进上下文；CLI 只取要用的那一个。以后不再提示。）",
+                      file=sys.stderr)
+            else:
+                print(f"  (First CLI call: a direct connection would load all {resident} "
+                      f"tokens of schemas into context; CLI fetched only the one it used. "
+                      f"Shown once.)", file=sys.stderr)
+            cfg.mark_cli_aha_seen()
+    except Exception:
+        return
 
 _FIX_SUGGESTIONS = {
     "SERVER_NOT_FOUND": "Try: mcptoon list    | mcptoon add <name> --stdio npx -y <package>    | mcptoon doctor",
@@ -1261,6 +1366,7 @@ def _cmd_call(rest, fmt, head_n, max_chars, full, use_stdin=False, fallback_json
 
         # Render with fallback-json if needed
         _render_result(result, fmt, head_n, max_chars, full, fallback_json)
+        _emit_cli_receipt("", tool, result, machine=(fmt == "json"))
         if _tool_result_failed(result):
             sys.exit(1)
         return
@@ -1358,6 +1464,7 @@ def _cmd_call(rest, fmt, head_n, max_chars, full, use_stdin=False, fallback_json
 
     _render_result(result, _effective_fmt(server, tool, fmt),
                    head_n, max_chars, full, fallback_json, server=server, tool=tool)
+    _emit_cli_receipt(server, tool, result, machine=(fmt == "json"))
     if _tool_result_failed(result):
         sys.exit(1)
 
@@ -3094,6 +3201,24 @@ def _cmd_activity(rest, fmt, head_n=0, max_chars=0, full=False):
     print(line)
     print(f"  showing {len(entries)} of {total} total · full ledger: "
           f"{usage_mod._activity_file()}")
+    # The CLI-credit footer: the per-line view names what each call pulled, but it
+    # never sums what the whole window *kept out of context*. On a CLI machine that
+    # is the number a user scrolling history actually wants ("what did all these
+    # calls save me?"). Only shown on the CLI path — a serve user's saving is the
+    # gateway's, already named elsewhere.
+    try:
+        from . import footer as footer_mod
+
+        credit = footer_mod.cli_credit(footer_mod.facts())
+        if credit:
+            resident = footer_mod._human_tokens(credit["resident_avoided"])
+            if footer_mod.lang() == "zh":
+                print(f"  CLI 模式：以上每次调用都没加载全量 {resident} token 的 schema")
+            else:
+                print(f"  CLI mode: each call above skipped loading the full "
+                      f"{resident}-token schema set")
+    except Exception:
+        pass
 
 
 def _activity_line(e: dict) -> str:
@@ -3431,6 +3556,14 @@ def _cmd_footer_facts(_rest, fmt, max_chars=0):
     n = footer_mod.note(f)
     if n:
         print(f"note: {n}")
+    # On a CLI machine the three lines above are all serve/gateway figures, which
+    # read as "not about me" to a CLI user — the exact complaint this addresses.
+    # Append the CLI-caliber line so the pasteable block names what *this* mode
+    # saves. It is None off the CLI path, so every other machine's output — and
+    # the byte-identity of the first lines with `footer.block()` — is unchanged.
+    credit = footer_mod.cli_credit_line(f)
+    if credit:
+        print(credit)
 
 
 def _cmd_mode(rest, fmt, head_n=0, max_chars=0, full=False):
@@ -3730,8 +3863,16 @@ def _cmd_status(_rest, fmt):
             "calls_routed": routed_calls,
             "calls_native": native_calls,
             "gateway_registered": wired,
+            # The CLI-credit figures, so a script sees the same "0 resident" truth
+            # the human view now prints in CLI mode. `delivery_mode` names which
+            # caliber the numbers belong to; `resident_avoided` is the full catalog
+            # a CLI call never loads. Both are additive keys — a serve machine
+            # simply reads resident_avoided alongside its gateway figure.
+            "delivery_mode": footer_mod.current_mode(),
+            "resident_avoided": full_tokens if not wired else 0,
             "footer_enabled": cfg.footer_enabled(),
             "presence_enabled": cfg.presence_enabled(),
+            "receipt_enabled": cfg.receipt_enabled(),
             "activity_entries": act.get("entries", 0),
             "activity_today": act.get("today_calls", 0),
             "activity_today_skills": act.get("today_skill_dist", 0),
@@ -3757,7 +3898,20 @@ def _cmd_status(_rest, fmt):
             print(f"                       (live catalog has {skills_live} — index may be "
                   f"stale, run `mcptoon skills index`)")
     if total_tools:
-        if gw_tokens and gw_pct is not None:
+        if gw_tokens and gw_pct is not None and not wired:
+            # CLI mode: the gateway is NOT wired into an agent, so the "→ gw_tokens
+            # via the gateway" story is a serve fact this machine is not living.
+            # Print the CLI truth instead: the catalog never sits resident, and a
+            # call pulls only the name index. Reporting the gateway pair here would
+            # credit CLI for a saving it delivers a different way.
+            _idx = footer_mod.facts().get("name_index_tokens") or 0
+            _per = (f"~{_idx:,} tokens of names to pick one" if _idx
+                    else "the one schema it needs")
+            print(f"  Tool definitions   : 0 resident — full {full_tokens:,} tokens "
+                  f"never load; a call pulls {_per}  [{caliber}]")
+            print(f"                       (serve mode instead loads a fixed "
+                  f"{gw_tokens:,}; you are on the cheaper CLI path)")
+        elif gw_tokens and gw_pct is not None:
             _gw_saved = footer_mod.display_pct(full_tokens - gw_tokens, full_tokens)
             _slim_saved = footer_mod.display_pct(saved, full_tokens)
             print(f"  Tool definitions   : {full_tokens:,} → {gw_tokens:,} tokens "
