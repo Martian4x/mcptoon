@@ -1145,6 +1145,25 @@ def _cmd_inspect(rest, fmt, max_chars, full, head_n=0):
     # machine format (json/toon/slim/compact) stay pure data.
     if fmt in ("auto", "human"):
         _err(_call_example_from_schema(server, tool, info))
+        # This is the schema a CLI call pulls *on demand* — the whole point of the
+        # CLI caliber is that it fetches exactly this one, not the catalog. Say how
+        # big "this one" is, so the abstract "one schema at a time" has a number.
+        try:
+            from .bench import _tokenizer
+            from . import footer as footer_mod
+            encode, _cal, _exact = _tokenizer()
+            tok = max(1, int(encode(json.dumps(info, ensure_ascii=False))))
+            credit = footer_mod.cli_credit(footer_mod.facts())
+            if credit and cfg.resolve_lang() == "zh":
+                _err(f"这一个 schema ≈ {tok:,} token —— CLI 按需只取这一份，"
+                     f"全量 {credit['resident_avoided']:,} token 不进上下文")
+            elif credit:
+                _err(f"this one schema ≈ {tok:,} tokens — a CLI call fetches just "
+                     f"this, keeping the full {credit['resident_avoided']:,} out of context")
+            else:
+                _err(f"this one schema ≈ {tok:,} tokens")
+        except Exception:
+            pass
 
 
 def _call_json_error_hint(server, tool):
@@ -1366,7 +1385,9 @@ def _cmd_call(rest, fmt, head_n, max_chars, full, use_stdin=False, fallback_json
 
         # Render with fallback-json if needed
         _render_result(result, fmt, head_n, max_chars, full, fallback_json)
-        _emit_cli_receipt("", tool, result, machine=(fmt == "json"))
+        # Machine receipt on stderr for every machine format (json AND toon), so a
+        # --toon script gets the same numbers a --json one does; stdout stays pure.
+        _emit_cli_receipt("", tool, result, machine=(fmt in ("json", "toon")))
         if _tool_result_failed(result):
             sys.exit(1)
         return
@@ -1464,7 +1485,8 @@ def _cmd_call(rest, fmt, head_n, max_chars, full, use_stdin=False, fallback_json
 
     _render_result(result, _effective_fmt(server, tool, fmt),
                    head_n, max_chars, full, fallback_json, server=server, tool=tool)
-    _emit_cli_receipt(server, tool, result, machine=(fmt == "json"))
+    # Machine receipt on stderr for json AND toon; human prose otherwise.
+    _emit_cli_receipt(server, tool, result, machine=(fmt in ("json", "toon")))
     if _tool_result_failed(result):
         sys.exit(1)
 
@@ -2740,6 +2762,23 @@ def _cmd_usage(_rest, fmt, head_n=0, max_chars=0, full=False):
         rate = stats.get("success_rate") or ""
         print(f"Success rate: {rate}" if calls else "Success rate: —")
         print(f"Tokens (est): {stats['total_tokens_est']}")
+        # `usage` only knows *result* tokens and call counts — it never named what
+        # a CLI call keeps out of context, which is the CLI user's real saving. Add
+        # that line (only on the CLI path) so this surface is not the one place a
+        # CLI user reads and sees no CLI credit.
+        try:
+            from . import footer as footer_mod
+            credit = footer_mod.cli_credit(footer_mod.facts())
+        except Exception:
+            credit = None
+        if credit:
+            if cfg.resolve_lang() == "zh":
+                print(f"CLI 模式：每次调用都跳过全量 {credit['resident_avoided']:,} "
+                      f"token 的 schema，累计 {calls:,} 次")
+            else:
+                print(f"CLI mode: each call skipped the full "
+                      f"{credit['resident_avoided']:,}-token schema set · "
+                      f"{calls:,} calls")
         # By agent, from the ledger — the counter alone never knew the host. Only
         # shown once a ledger exists, so a pre-ledger machine looks unchanged.
         by_host = stats.get("by_host") or {}
@@ -3114,6 +3153,21 @@ def _cmd_activity(rest, fmt, head_n=0, max_chars=0, full=False):
             print("  By host         :")
             for h, c in hosts.items():
                 print(f"    {h:20s} {c}")
+        # CLI credit, matching the list view's footer. The summary is the other
+        # view of the same command; leaving it without the CLI figure made the two
+        # views disagree about what the user saved (only on the CLI path).
+        try:
+            from . import footer as footer_mod
+            credit = footer_mod.cli_credit(footer_mod.facts())
+        except Exception:
+            credit = None
+        if credit:
+            if cfg.resolve_lang() == "zh":
+                print(f"  CLI 模式        : 每次调用都跳过全量 "
+                      f"{credit['resident_avoided']:,} token 的 schema")
+            else:
+                print(f"  CLI mode        : each call skipped the full "
+                      f"{credit['resident_avoided']:,}-token schema set")
         # Retention and size were invisible: the ledger silently rolls off old
         # lines at a fixed cap, and a user deciding whether it is "an audit log"
         # deserves to know both the cap and how close the file is to it.
@@ -3671,6 +3725,11 @@ def _cmd_stats(_rest, fmt, head_n=0, max_chars=0, full=False):
     # three surfaces, one number (2026-09-26 audit).
     from . import footer as footer_mod
     gw_tokens, gw_pct = footer_mod.gateway_savings(total_full_tokens)
+    # CLI mode credits a different fact: the catalog never becomes resident. Pull
+    # the shared credit (None off the CLI path) so this dashboard stops leading a
+    # CLI user with a serve number they are not living (same caliber rule as the
+    # status/statusline/footer surfaces).
+    cli_credit = footer_mod.cli_credit(footer_mod.facts())
     disabled = cfg.list_disabled_tools()
 
     if fmt == "json":
@@ -3687,6 +3746,8 @@ def _cmd_stats(_rest, fmt, head_n=0, max_chars=0, full=False):
             "gateway_saved": (total_full_tokens - gw_tokens) if gw_tokens else None,
             "gateway_pct": gw_pct,
             "token_caliber": caliber,
+            "delivery_mode": footer_mod.current_mode(),
+            "cli_credit": cli_credit,
             "total_calls": usage["total_calls"],
             "success_rate": usage["success_rate"],
             "disabled_tools": len(disabled),
@@ -3712,6 +3773,18 @@ def _cmd_stats(_rest, fmt, head_n=0, max_chars=0, full=False):
             print(f"                        {saved:,} ({pct:.1f}%) slim schemas only")
         else:
             print(f"  Tokens SAVED:         {saved:,} ({pct:.1f}%)")
+        # The "via the gateway" headline above is a serve fact. On a CLI machine it
+        # is not what the user is living — the real saving is that the whole
+        # catalog never loads. Lead with that, and demote the gateway line to
+        # "what you would load if you wired serve", so the dashboard stops
+        # crediting a CLI user with a gateway number.
+        if cli_credit:
+            print(f"  CLI: 0 resident — the full {cli_credit['resident_avoided']:,} "
+                  f"token catalog never enters context")
+            print(f"       (a call pulls ~{cli_credit['per_call']:,} tokens of names "
+                  f"to pick one schema)")
+            print(f"       the 'via the gateway' line above applies only if you "
+                  f"wire serve")
         print(f"  Disabled tools:       {len(disabled)}")
         print(f"  Caliber:              {caliber}")
         print()
