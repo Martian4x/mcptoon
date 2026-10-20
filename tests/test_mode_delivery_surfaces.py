@@ -332,3 +332,149 @@ def test_bench_direct_warns_no_saving():
         out = bench._render("tiktoken", True, _TOOL_ROWS, 209, [], 0, 0, "", "q", [])
     assert "direct:" in out and "right now you save 0" in out
     assert "sync --self" in out
+
+
+# ── Phase 4 ─────────────────────────────────────────────────────────────────
+
+# 11. savings: direct machine warns "you save 0" instead of a bare milestone list.
+
+def test_savings_direct_warns_no_saving():
+    from mcptoon import savings
+    data = {"caliber": "tiktoken", "total_tokens": 1_900_000_000, "calls": 2966,
+            "milestones_hit": [], "next": None, "cli_credit": None,
+            "delivery_mode": "direct"}
+    out = savings.render(data, lng="en")
+    assert "save 0" in out and "sync --self" in out
+
+
+def test_savings_cli_does_not_show_direct_warning():
+    from mcptoon import savings
+    data = {"caliber": "tiktoken", "total_tokens": 1_900_000_000, "calls": 2966,
+            "milestones_hit": [], "next": None,
+            "cli_credit": {"resident_avoided": 640606}, "delivery_mode": "cli"}
+    out = savings.render(data, lng="en")
+    assert "save 0" not in out
+    assert "On CLI" in out
+
+
+# 12. JSON parity: usage / bench / activity --summary all carry cli_credit.
+
+def test_usage_json_has_cli_credit(isolated):
+    with patch.object(footer_mod, "current_mode", return_value="cli"), \
+            patch.object(footer_mod, "facts", return_value=_FACTS):
+        out, _e, _c = _run(["usage", "--json"])
+    data = json.loads(out)
+    assert data["delivery_mode"] == "cli"
+    assert data["cli_credit"]["resident_avoided"] == 640606
+
+
+def test_activity_summary_json_has_cli_credit(isolated):
+    ledger = isolated / "activity.jsonl"
+    ledger.write_text(json.dumps({"ts": 1_700_000_000.0, "host": "CLI",
+                                  "server": "s", "tool": "t", "ok": True,
+                                  "tokens": 1}) + "\n", encoding="utf-8")
+    with patch.object(footer_mod, "current_mode", return_value="cli"), \
+            patch.object(footer_mod, "facts", return_value=_FACTS):
+        out, _e, _c = _run(["activity", "--summary", "--json"])
+    data = json.loads(out)
+    assert data["delivery_mode"] == "cli"
+    assert data["cli_credit"]["resident_avoided"] == 640606
+
+
+def test_bench_json_has_cli_credit(isolated):
+    with patch.object(footer_mod, "current_mode", return_value="cli"), \
+            patch.object(footer_mod, "facts", return_value=_FACTS), \
+            patch.object(bench, "_tool_rows",
+                         return_value=(_TOOL_ROWS, 209, 7)), \
+            patch.object(bench, "_skill_rows", return_value=([], 0, 0, "")):
+        out, _e, _c = _run(["bench", "--json"])
+    data = json.loads(out)
+    assert data["delivery_mode"] == "cli"
+    assert data["cli_credit"]["resident_avoided"] == 640606
+
+
+# 13. doctor --json promotes delivery_mode + recommended to the top level.
+
+def test_doctor_json_has_top_level_mode_and_recommendation(tmp_path):
+    config_file = tmp_path / "config.json"
+    config_file.write_text("{}", encoding="utf-8")
+    buf = io.StringIO()
+    with patch.object(cfg, "CONFIG_FILE", config_file), \
+            patch.object(cfg, "CACHE_DIR", tmp_path / "cache"), \
+            patch.object(cfg, "load_config", return_value={"good": {"transport": "stdio"}}), \
+            patch.object(cfg, "has_config_file", return_value=True), \
+            patch.object(manifest_mod, "get_server_tools",
+                         side_effect=lambda name, use_cache=True: [{"name": "a"}]), \
+            patch.object(mode_mod, "statusline_status",
+                         return_value={"wired": True, "path": "p", "file_exists": True}), \
+            patch.object(footer_mod, "current_mode", return_value="direct"), \
+            patch.object(footer_mod, "facts", return_value=_FACTS), \
+            patch.object(mode_mod, "recommend", return_value={
+                "current": "direct", "recommended": "serve",
+                "one_action": "run `mcptoon sync --self`"}), \
+            patch.dict(os.environ, {"MCPTOON_NO_STAR_HINT": "1", "CI": ""}), \
+            redirect_stdout(buf):
+        try:
+            cli._cmd_doctor([], fmt="json")
+        except SystemExit:
+            pass
+    data = json.loads(buf.getvalue())
+    assert data["delivery_mode"] == "direct"
+    assert data["recommended"] == "serve"
+    assert "sync --self" in data["recommended_action"]
+
+
+# 14. `mcptoon credit`: the single-screen entry, human + json.
+
+def test_credit_human_names_mode_and_action(isolated):
+    with patch.object(footer_mod, "current_mode", return_value="cli"), \
+            patch.object(footer_mod, "facts", return_value=_FACTS), \
+            patch.object(mode_mod, "recommend", return_value={
+                "recommended": "cli", "one_action": "mcptoon statusline"}):
+        out, _e, _c = _run(["credit"])
+    assert "CLI" in out and "640,606" in out
+    assert "mcptoon statusline" in out
+
+
+def test_credit_direct_says_saves_zero(isolated):
+    with patch.object(footer_mod, "current_mode", return_value="direct"), \
+            patch.object(footer_mod, "facts", return_value=_FACTS), \
+            patch.object(mode_mod, "recommend", return_value={
+                "recommended": "serve", "one_action": "run `mcptoon sync --self`"}):
+        out, _e, _c = _run(["credit"])
+    assert "saves 0" in out and "sync --self" in out
+
+
+def test_credit_json_contract(isolated):
+    with patch.object(footer_mod, "current_mode", return_value="cli"), \
+            patch.object(footer_mod, "facts", return_value=_FACTS), \
+            patch.object(mode_mod, "recommend", return_value={
+                "recommended": "cli", "one_action": "x", "reason": "cheapest"}):
+        out, _e, _c = _run(["credit", "--json"])
+    data = json.loads(out)
+    for k in ("mode", "cli_credit", "resident_avoided", "recommended", "one_action"):
+        assert k in data
+
+
+def test_credit_is_in_help_and_completion(isolated):
+    out, _e, _c = _run(["help"])
+    assert "mcptoon credit" in out
+    comp, _e2, _c2 = _run(["completion", "bash"])
+    assert "credit" in comp
+
+
+# 15. status shows a top-level recommendation line.
+
+def test_status_shows_recommended_line(isolated):
+    tool = {"name": "t1", "description": "d", "inputSchema": {"type": "object"}}
+    with patch.object(manifest_mod, "get_manifest", return_value={"srv": [tool]}), \
+            patch.object(footer_mod, "current_mode", return_value="direct"), \
+            patch.object(footer_mod, "facts", return_value=_FACTS), \
+            patch.object(cli, "_gateway_wired_in", return_value=False), \
+            patch.object(mode_mod, "recommend", return_value={
+                "recommended": "serve", "one_action": "run `mcptoon sync --self`"}), \
+            patch.object(usage_mod, "get_usage_stats", return_value={
+                "total_calls": 0, "success_rate": "", "by_server": {},
+                "top_tools": {}, "routed_calls": 0, "native_calls": 0}):
+        out, _e, _c = _run(["status"])
+    assert "Recommended" in out and "serve" in out

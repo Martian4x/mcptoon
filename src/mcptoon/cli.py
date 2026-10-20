@@ -122,7 +122,7 @@ _COMPLETION_COMMANDS = (
     "discover", "docs", "doctor", "footer-facts", "health", "help", "import",
     "init", "inspect", "install", "list", "manifest", "mode", "off", "plugin",
     "policy", "quickstart", "remove", "report", "savings", "restore", "retrieve", "search",
-    "select", "serve", "skills", "stats", "status", "statusline", "sync", "toggle",
+    "select", "serve", "skills", "stats", "status", "statusline", "sync", "toggle", "credit",
     "uninstall", "update", "usage",
     # aliases the dispatch chain also accepts
     "servers", "tools", "qs", "brief",
@@ -596,6 +596,8 @@ def _run(state: dict) -> None:
     elif command == "mode":
         from . import mode as mode_mod
         mode_mod.run(rest, fmt, head_n, max_chars, full)
+    elif command == "credit":
+        _cmd_credit(rest, fmt, head_n, max_chars, full)
     elif command == "statusline":
         from . import mode as mode_mod
         mode_mod.run_statusline(rest, fmt, head_n, max_chars, full)
@@ -2789,6 +2791,15 @@ def _cmd_usage(_rest, fmt, head_n=0, max_chars=0, full=False):
     # JSON — a real hole for the one script-facing view of usage (reported
     # 2026-10-17). Route every machine format, and stamp the schema envelope.
     if fmt in ("toon", "mcptoon", "compact", "json"):
+        # Additive delivery-mode + cli_credit so a script reading usage gets the
+        # same mode truth status/footer-facts carry (cli_credit is None off CLI).
+        try:
+            from . import footer as footer_mod
+            stats = dict(stats)
+            stats["delivery_mode"] = footer_mod.current_mode()
+            stats["cli_credit"] = footer_mod.cli_credit(footer_mod.facts())
+        except Exception:
+            pass
         print(output.render(output.stamp_schema(stats), fmt=fmt, head_n=head_n,
                             max_chars=max_chars, full=full))
     else:
@@ -3153,6 +3164,13 @@ def _cmd_activity(rest, fmt, head_n=0, max_chars=0, full=False):
     if "--summary" in rest:
         summary = usage_mod.activity_summary()
         if fmt in ("toon", "mcptoon", "compact", "json"):
+            try:
+                from . import footer as footer_mod
+                summary = dict(summary)
+                summary["delivery_mode"] = footer_mod.current_mode()
+                summary["cli_credit"] = footer_mod.cli_credit(footer_mod.facts())
+            except Exception:
+                pass
             print(output.render(output.stamp_schema(summary), fmt=fmt,
                                 head_n=head_n, max_chars=max_chars, full=full))
             return
@@ -3664,6 +3682,70 @@ def _cmd_footer_facts(_rest, fmt, max_chars=0):
         print(credit)
 
 
+def _cmd_credit(_rest, fmt, head_n=0, max_chars=0, full=False):
+    """One screen: which delivery mode, what it really saves, and the one action.
+
+    The CLI/direct credit now lives on many surfaces (status, statusline,
+    footer-facts, report, savings, stats, usage, activity, bench) but there was no
+    single command to just *ask* "what is my mode and what am I really saving?".
+    This is that one command. It never invents a number: on a direct machine it
+    says "you save 0"; on cli/serve it names the real figure; the action comes
+    from `mode.recommend`. `--json` carries the same contract fields.
+    """
+    from . import footer as footer_mod
+    from . import mode as mode_mod
+
+    lng = cfg.resolve_lang()
+    zh = lng == "zh"
+    f = footer_mod.facts()
+    cur = footer_mod.current_mode()
+    credit = footer_mod.cli_credit(f)
+    try:
+        rec = mode_mod.recommend(lng=lng)
+    except Exception:
+        rec = {}
+
+    if fmt == "json":
+        payload = {
+            "mode": cur,
+            "cli_credit": credit,
+            "resident_avoided": credit["resident_avoided"] if credit else 0,
+            "calls": int(f.get("calls_recorded") or 0),
+            "recommended": rec.get("recommended"),
+            "one_action": rec.get("one_action"),
+            "reason": rec.get("reason"),
+            "caliber": f.get("token_caliber") or "",
+        }
+        print(output.render(output.stamp_schema(payload), fmt="json",
+                            head_n=head_n, max_chars=max_chars, full=full))
+        return
+
+    calls = int(f.get("calls_recorded") or 0)
+    full = int(f.get("tokens_full") or 0)
+    if cur == "direct":
+        line = (f"直连（装了没接）— 现在省 0；全量 {full:,} token 每轮都在烧"
+                if zh else
+                f"direct (installed, not wired) — saves 0 right now; the full "
+                f"{full:,} tokens load every turn")
+    elif cur == "cli":
+        line = (f"CLI 模式 — 0 常驻；全量 {full:,} token 不进上下文；已转发 {calls:,} 次"
+                if zh else
+                f"CLI — 0 resident; the full {full:,} tokens never load; "
+                f"{calls:,} calls routed")
+    elif cur == "serve":
+        gw = int(f.get("gateway_tokens") or 0)
+        line = (f"serve 模式 — 每轮固定约 {gw:,} token（对比全量 {full:,}）"
+                if zh else
+                f"serve — ~{gw:,} tokens/turn fixed (vs {full:,} for full schemas)")
+    else:
+        line = ("未配置服务器 —— 先跑 `mcptoon quickstart`"
+                if zh else "no servers yet — run `mcptoon quickstart`")
+    print(line)
+    act = rec.get("one_action") or rec.get("reason")
+    if act:
+        print(("  下一步：" if zh else "  Next: ") + str(act))
+
+
 def _cmd_mode(rest, fmt, head_n=0, max_chars=0, full=False):
     """Which delivery mode is running, what each costs, and which is cheapest.
 
@@ -4012,6 +4094,18 @@ def _cmd_status(_rest, fmt):
     print(line)
     print("  mcptoon — status")
     print(line)
+    # Answer "which mode should this host use?" right here, so a user reading the
+    # one-screen status does not have to know `mode recommend` exists. Only shown
+    # when there is a real recommendation with an action (never on a clean cli
+    # machine whose recommendation is "nothing to do").
+    try:
+        from . import mode as mode_mod
+        _rec = mode_mod.recommend(lng=cfg.resolve_lang())
+        _act = (_rec or {}).get("one_action") or (_rec or {}).get("reason")
+        if _rec and _rec.get("recommended") and _act:
+            print(f"  Recommended        : {_rec['recommended']} — {_act}")
+    except Exception:
+        pass
     if n_servers:
         print(f"  Managing           : {n_servers} MCP servers, {total_tools} tools")
     else:
@@ -5236,9 +5330,21 @@ def _cmd_doctor(rest, fmt="auto"):
         emit("info", "mode", "no servers yet", "  - Mode: nothing registered yet", mode=_dmode)
 
     if json_mode:
+        # Promote the delivery mode to top-level fields so a script reads it
+        # directly instead of scanning checks[] for the "mode" row.
+        try:
+            from . import mode as mode_mod
+            _rec = mode_mod.recommend(lng=cfg.resolve_lang())
+            _rec_now = _rec.get("recommended") if _rec else None
+            _rec_action = _rec.get("one_action") if _rec else None
+        except Exception:
+            _rec_now, _rec_action = None, None
         print(json.dumps({
             "checks": rows, "issues": issues, "ok": issues == 0,
             "broken": [{"server": n, "reason": r} for n, r in broken],
+            "delivery_mode": _dmode,
+            "recommended": _rec_now,
+            "recommended_action": _rec_action,
         }, ensure_ascii=False, indent=2))
         if issues:
             sys.exit(1)
@@ -6340,6 +6446,7 @@ Usage:
     mcptoon stats                         Token-savings dashboard (vs raw JSON)
     mcptoon report                        Whole savings account on one screen
     mcptoon savings                       Milestones you've crossed (1B? 4,700 novels?)
+    mcptoon credit                        One screen: your mode, what it really saves, one action
     mcptoon mode                          Which delivery mode you're in (cli/serve/direct), what each costs
     mcptoon mode recommend                Which mode THIS host should use, and the one action to get there
     mcptoon statusline                    One-line savings badge for a status bar / turn header
@@ -6636,7 +6743,7 @@ def _populate_command_handlers() -> None:
         "usage": _cmd_usage, "status": _cmd_status, "brief": _cmd_status,
         "stats": _cmd_stats, "retrieve": _cmd_retrieve, "activity": _cmd_activity,
         "footer-facts": _cmd_footer_facts, "toggle": _cmd_toggle,
-        "mode": _cmd_mode, "statusline": _cmd_statusline,
+        "mode": _cmd_mode, "statusline": _cmd_statusline, "credit": _cmd_credit,
         "policy": _cmd_policy, "import": _cmd_import, "doctor": _cmd_doctor,
         "install": _cmd_install, "completion": _cmd_completion,
         "sync": _cmd_sync, "off": _cmd_off, "restore": _cmd_restore,

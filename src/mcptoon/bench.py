@@ -414,10 +414,13 @@ def run_bench(rest: list[str], fmt: str = "auto") -> None:
 
     if fmt == "json":
         from . import output as _output
+        from . import footer as _footer
         print(json.dumps(
             _output.stamp_schema({
                 "tokenizer": tokname,
                 "exact": exact,
+                "delivery_mode": _footer.current_mode(),
+                "cli_credit": _footer.cli_credit(_footer.facts()),
                 "tools": {"servers": n_servers, "count": n_tools,
                           "rows": {w: t for w, t in tool_rows}},
                 "skills": {"roots": [str(r) for r in roots], "count": n_skills,

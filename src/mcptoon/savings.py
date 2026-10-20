@@ -117,6 +117,9 @@ def build() -> dict:
         # headline above is a *gateway-equivalent estimate* while the CLI user's
         # true, countable saving is "the catalog never loaded". None off the CLI path.
         "cli_credit": footer_mod.cli_credit(facts),
+        # Delivery mode, so a direct machine (installed, not wired) is not shown a
+        # milestone list that reads as "you saved this much" when it saves nothing.
+        "delivery_mode": footer_mod.current_mode(),
     }
 
 
@@ -159,6 +162,16 @@ def render(data: dict, lng: str = "en") -> str:
              f"的目录从不加载」—— 上面每一次调用都跳过了它。"))
         a(L_("The token total above is a serve-caliber estimate, not that figure.",
              "上面的 token 总量是 serve 口径的估算，不是这个数。"))
+    elif data.get("delivery_mode") == "direct":
+        # Installed but not wired: this machine saves nothing right now. The
+        # milestones below are what it WOULD save once wired — say so, or the list
+        # reads as a live tally on a machine that is not saving at all.
+        a("")
+        a(L_("⚠ You are in direct mode (installed, not wired) — right now you save "
+             "0. The figures below are what you WOULD save once wired.",
+             "⚠ 你现在是直连模式（装了没接）—— 此刻一分没省。下面的数字是接上后能省的量。"))
+        a(L_("   → run `mcptoon sync --self` to wire serve, or use `mcptoon call`",
+             "   → 跑 `mcptoon sync --self`（serve）或改用 `mcptoon call`（cli）"))
     a("")
 
     # Milestones crossed.
