@@ -721,13 +721,22 @@ def test_doctor_direct_next_step_mentions_credit(tmp_path):
     assert "mcptoon credit" in out
 
 
-# 29. CHANGELOG has an Unreleased section documenting the delivery-mode pass.
+# 29. CHANGELOG records the delivery-mode pass + the 0.8.25 capabilities.
 
-def test_changelog_has_unreleased_delivery_mode():
+def test_changelog_records_delivery_mode_and_new_capabilities():
+    """The CHANGELOG permanently records the delivery-mode pass and 0.8.25 features.
+
+    Deliberately asserted over the whole file, NOT over a literal `## [Unreleased]`
+    heading. `bump.py` renames that heading to the released version + date, so a
+    test that pinned the literal string turned every CI matrix job (10 jobs, every
+    OS/Python) red the moment 0.8.25 shipped — reproduced 2026-10-21, run
+    39535840633. Released sections are immutable, so a whole-file check keeps
+    meaning the same thing across every future bump.
+    """
     from pathlib import Path
     root = Path(__file__).resolve().parents[1]
     md = (root / "CHANGELOG.md").read_text(encoding="utf-8")
-    assert "## [Unreleased]" in md
-    head = md[: md.index("## [0.8.24]")]
-    assert "mcptoon credit" in head
-    assert "delivery" in head.lower()
+    assert "mcptoon credit" in md
+    assert "exec <lang>" in md
+    assert "mcptoon kb" in md
+    assert "delivery" in md.lower()
