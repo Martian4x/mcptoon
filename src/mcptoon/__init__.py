@@ -14,4 +14,4 @@
 
 """mcptoon — Token-efficient MCP CLI client."""
 
-__version__ = "0.8.24"
+__version__ = "0.8.25"

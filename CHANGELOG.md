@@ -5,10 +5,32 @@ All notable changes to mcptoon will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.8.25] - 2026-10-21
 
 ### Added
 
+- **`mcptoon exec <lang> "<code>"`** — run code so only its stdout enters the
+  context. Every other command *brings data back*; this one runs a program and
+  returns just what it prints, so a script that reads a 100 KB file costs the
+  lines it outputs, not the file. It is a **context sandbox, not a security
+  sandbox** — the child process has the machine's full filesystem and network
+  access; the module docstring says so and must keep saying so.
+- **`mcptoon kb index/fetch/search/list/stats/purge`** — search *inside*
+  documents, not just which document to open. `docs` answers "which file"; `kb`
+  answers "which passage". It chunks text into SQLite FTS5 with two indexes
+  (porter for stemming, trigram for fragments) merged by Reciprocal Rank Fusion,
+  so a hit that ranks well in *either* strategy surfaces near the top. Measured
+  on a 94,980-byte README: the 3 relevant snippets, ~900 bytes, returned.
+  Standard library only (`sqlite3`, FTS5 ships with CPython).
+- **Flood guard for the gateway's search tools** — a per-agent sliding-window
+  throttle so one agent firing a dozen individual searches is nudged toward a
+  single batched call instead of a dozen round trips.
+- **`mcptoon session` / `mcptoon_session`** — an honest event log of what routed
+  through the gateway (tools run, failures, writes, git commands), handed back as
+  a "here is where you were" summary **when asked**. This is **capture +
+  on-demand recall**, not automatic restore: MCP has no pre-compact hook, so the
+  gateway cannot inject into the host's context. Every summary carries that note
+  (pinned by a test); an agent that never calls it gets no benefit.
 - **`mcptoon credit`** — one command that names your delivery mode, the real
   saving, and the single next action (human line + `--json`). Prefer it over
   assembling an answer from `status`/`stats`/`footer-facts`.
