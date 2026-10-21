@@ -458,6 +458,20 @@ pip install -e . --no-build-isolation
 
 </details>
 
+### Nix
+
+由 [numtide/llm-agents.nix](https://github.com/numtide/llm-agents.nix) 打包——机器人跟着每个 PyPI
+版本自动走，不需要人手钉版本：
+
+```bash
+# 直接从 flake 运行，不用安装
+nix run github:numtide/llm-agents.nix#mcptoon -- --help
+```
+
+插件和技能也在 [sudosubin/agents.nix](https://github.com/sudosubin/agents.nix) 里提供：
+`pkgs.agent-plugins.github.activeing123.mcptoon.<plugin-name>` 与
+`pkgs.agent-skills.github.activeing123.mcptoon.<skill-name>`。
+
 ---
 
 ## 所有 AI Agent 都能用

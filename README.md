@@ -522,6 +522,21 @@ pip install -e . --no-build-isolation
 
 </details>
 
+### Nix
+
+Packaged by [numtide/llm-agents.nix](https://github.com/numtide/llm-agents.nix) — a bot follows
+every PyPI release, so the flake is never a version behind by hand:
+
+```bash
+# Run straight from the flake, no install step
+nix run github:numtide/llm-agents.nix#mcptoon -- --help
+```
+
+The plugin and the skill are both surfaced through
+[sudosubin/agents.nix](https://github.com/sudosubin/agents.nix) as
+`pkgs.agent-plugins.github.activeing123.mcptoon.<plugin-name>` and
+`pkgs.agent-skills.github.activeing123.mcptoon.<skill-name>`.
+
 ---
 
 ## Works with every AI agent
