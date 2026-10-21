@@ -29,7 +29,6 @@
   <a href="https://allmcps.com/mcp/mcptoon?verify=7eb0d0d6-5d4e-41a3-a048-2fe3c91a36ed"><img src="https://img.shields.io/badge/AllMCPs-Listed-orange?style=flat-square" alt="AllMCPs"></a>
   <a href="https://mcpvault.io/servers/mcptoon/health"><img src="https://img.shields.io/badge/MCPVault-Verified-purple?style=flat-square" alt="MCPVault"></a>
   <a href="https://mcpservers.org/servers/activeing123/mcptoon"><img src="https://img.shields.io/badge/mcpservers.org-Listed-blue?style=flat-square" alt="mcpservers.org"></a>
-  <a href="https://mcp-serverlist.com/mcp/mcptoon"><img src="https://mcp-serverlist.com/api/badge/mcptoon" alt="Listed on MCP ServerList"></a>
 </p>
 
 <p align="center">
