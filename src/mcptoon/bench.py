@@ -415,12 +415,26 @@ def run_bench(rest: list[str], fmt: str = "auto") -> None:
     if fmt == "json":
         from . import output as _output
         from . import footer as _footer
+        _mode = _footer.current_mode()
+        # Direct machine: the table rows are what it WOULD save, so carry the fix
+        # (recommended mode + one action) in the JSON, matching the human warning.
+        _rec_now = _rec_action = None
+        if _mode == "direct":
+            try:
+                from . import mode as _mode_mod
+                _rec = _mode_mod.recommend()
+                _rec_now = _rec.get("recommended")
+                _rec_action = _rec.get("one_action")
+            except Exception:
+                pass
         print(json.dumps(
             _output.stamp_schema({
                 "tokenizer": tokname,
                 "exact": exact,
-                "delivery_mode": _footer.current_mode(),
+                "delivery_mode": _mode,
                 "cli_credit": _footer.cli_credit(_footer.facts()),
+                "recommended": _rec_now,
+                "one_action": _rec_action,
                 "tools": {"servers": n_servers, "count": n_tools,
                           "rows": {w: t for w, t in tool_rows}},
                 "skills": {"roots": [str(r) for r in roots], "count": n_skills,

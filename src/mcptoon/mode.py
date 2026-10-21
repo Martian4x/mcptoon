@@ -187,11 +187,13 @@ def _human(n) -> str:
             return str(n)
 
 
-_MODE_TAG = {"serve": "serve", "cli": "cli", "direct": "direct!",
+_MODE_TAG = {"serve": "serve", "cli": "cli", "direct": "direct→sync",
              "empty": "no servers"}
 # The Chinese tags are short on purpose: a status bar counts a CJK glyph as two
 # columns, so these must stay tiny to keep the whole line within 80 columns.
-_MODE_TAG_ZH = {"serve": "serve", "cli": "CLI", "direct": "直连!",
+# `direct→sync` / `直连→sync` turns the bare "!" warning into the fix: a direct
+# machine is not saving, and the arrow names the one command that starts it.
+_MODE_TAG_ZH = {"serve": "serve", "cli": "CLI", "direct": "直连→sync",
                 "empty": "无服务器"}
 
 

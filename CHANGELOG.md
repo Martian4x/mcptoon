@@ -5,6 +5,31 @@ All notable changes to mcptoon will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **`mcptoon credit`** — one command that names your delivery mode, the real
+  saving, and the single next action (human line + `--json`). Prefer it over
+  assembling an answer from `status`/`stats`/`footer-facts`.
+- **Delivery mode is now named wherever a saving is claimed.** `quickstart` and
+  `install` end by saying whether the machine is actually saving (a fresh install
+  often stops at `direct` — installed, not wired — where nothing is saved), and
+  `report` warns at the top of a `direct` machine that the figures below are what
+  you *would* save.
+- **One JSON contract across every surface.** `status`, `mode`, `statusline`,
+  `report`, `savings`, `bench`, `usage`, `activity --summary`, `footer-facts`,
+  `doctor` and `credit` now all emit `delivery_mode`, `cli_credit`, and
+  `one_action` (+ `recommended`), so a script reads the mode and the fix instead
+  of parsing prose. `doctor` keeps `recommended_action` as a back-compat alias.
+- `statusline`'s `direct` tag is now `direct→sync` / `直连→sync` — the fix, not
+  just a warning.
+
+### Changed
+
+- SKILL.md (1.4.3) documents `mcptoon credit` and states plainly that `direct`
+  mode saves nothing, so an agent relaying savings names the mode first.
+
 ## [0.8.24] - 2026-10-20
 
 Wiring the badge into a host, and the defects an adversarial pass over that code
