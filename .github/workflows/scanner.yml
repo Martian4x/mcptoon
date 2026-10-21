@@ -1,0 +1,36 @@
+name: Plugin Security Scan
+
+# Maintainer-owned scanner CI. The awesome-ai-plugins catalog recommends this:
+# projects that keep scanner CI receive the full Registry trust score, projects
+# without it take a 10% reduction. Optional for listing, recommended for security.
+#
+# Pinned exactly as SCANNER_GUIDE.md prescribes: the action and its checkout are
+# immutable commit SHAs, permissions are contents:read only, no repository
+# secrets are used, and live network probing stays off.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scanner-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: hashgraph-online/ai-plugin-scanner-action@caba2e96aa8ad2feb6cf6fca52442b52e22e779f # v1.2.635
+        with:
+          plugin_dir: "."
+          min_score: 80
+          fail_on_severity: none
