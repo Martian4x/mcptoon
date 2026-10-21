@@ -648,3 +648,86 @@ def test_post_install_mode_hint_silent_for_machine(capsys):
     with patch.object(footer_mod, "current_mode", return_value="direct"):
         cli._post_install_mode_hint("json")
     assert capsys.readouterr().err == ""
+
+
+# ── Phase 7 ─────────────────────────────────────────────────────────────────
+
+# 24. credit --json carries delivery_mode (unified with the other surfaces).
+
+def test_credit_json_has_delivery_mode(isolated):
+    with patch.object(footer_mod, "current_mode", return_value="cli"), \
+            patch.object(footer_mod, "facts", return_value=_FACTS), \
+            patch.object(mode_mod, "recommend", return_value={
+                "recommended": "cli", "one_action": "x", "reason": "cheapest"}):
+        out, _e, _c = _run(["credit", "--json"])
+    data = json.loads(out)
+    assert data["delivery_mode"] == "cli"
+    assert data["delivery_mode"] == data["mode"]
+
+
+# 25. doctor --json carries one_action (+ back-compat recommended_action).
+
+def test_doctor_json_has_one_action_alias(tmp_path):
+    with patch.object(cfg, "CONFIG_FILE", tmp_path / "config.json"), \
+            patch.object(cfg, "CACHE_DIR", tmp_path / "cache"), \
+            patch.object(cfg, "load_config", return_value={"good": {"transport": "stdio"}}), \
+            patch.object(cfg, "has_config_file", return_value=True), \
+            patch.object(manifest_mod, "get_server_tools",
+                         side_effect=lambda name, use_cache=True: [{"name": "a"}]), \
+            patch.object(mode_mod, "statusline_status",
+                         return_value={"wired": False, "path": "p", "file_exists": False}), \
+            patch.object(footer_mod, "current_mode", return_value="direct"), \
+            patch.object(footer_mod, "facts", return_value=_FACTS), \
+            patch.object(mode_mod, "recommend", return_value={
+                "recommended": "serve", "one_action": "run `mcptoon sync --self`"}), \
+            patch.dict(os.environ, {"MCPTOON_NO_STAR_HINT": "1", "CI": ""}):
+        out, _e, _c = _run(["doctor", "--json"])
+    data = json.loads(out)
+    assert data["one_action"] == data["recommended_action"]
+    assert "sync --self" in data["one_action"]
+
+
+# 26. statusline direct tag names the fix (→sync), not a bare warning.
+
+def test_statusline_direct_tag_names_sync():
+    en = _statusline("direct", "en")
+    zh = _statusline("direct", "zh")
+    assert "direct→sync" in en
+    assert "直连→sync" in zh
+
+
+# 27. bench --json on direct carries recommended + one_action; off-direct null.
+
+def test_bench_json_direct_has_recommendation():
+    with patch.object(footer_mod, "current_mode", return_value="direct"), \
+            patch.object(footer_mod, "facts", return_value=_FACTS), \
+            patch.object(mode_mod, "recommend", return_value={
+                "recommended": "serve", "one_action": "run `mcptoon sync --self`"}):
+        from mcptoon import bench as bench_mod
+        with patch.object(bench_mod, "_tool_rows", return_value=(_TOOL_ROWS, 209, 7)), \
+                patch.object(bench_mod, "_skill_rows", return_value=([], 0, 0, "")), \
+                patch.object(bench_mod, "_tokenizer", return_value=(None, "tiktoken", True)), \
+                patch.object(bench_mod, "_roots_from", return_value=[]):
+            out, _e, _c = _run(["bench", "--json"])
+    data = json.loads(out)
+    assert data["recommended"] == "serve"
+    assert "sync --self" in data["one_action"]
+
+
+# 28. doctor's direct next-step names `mcptoon credit`.
+
+def test_doctor_direct_next_step_mentions_credit(tmp_path):
+    out, code = _run_doctor(tmp_path, "direct")
+    assert "mcptoon credit" in out
+
+
+# 29. CHANGELOG has an Unreleased section documenting the delivery-mode pass.
+
+def test_changelog_has_unreleased_delivery_mode():
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1]
+    md = (root / "CHANGELOG.md").read_text(encoding="utf-8")
+    assert "## [Unreleased]" in md
+    head = md[: md.index("## [0.8.24]")]
+    assert "mcptoon credit" in head
+    assert "delivery" in head.lower()

@@ -3852,6 +3852,7 @@ def _cmd_credit(_rest, fmt, head_n=0, max_chars=0, full=False):
     if fmt == "json":
         payload = {
             "mode": cur,
+            "delivery_mode": cur,   # unified key every other surface uses
             "cli_credit": credit,
             "resident_avoided": credit["resident_avoided"] if credit else 0,
             "calls": int(f.get("calls_recorded") or 0),
@@ -5469,7 +5470,8 @@ def _cmd_doctor(rest, fmt="auto"):
         emit("warn", "mode", "direct (not wired) — nothing is saved yet",
              f"  ! Mode: direct — installed but not wired, so the agent loads the "
              f"full {_dfull:,} tokens natively.\n"
-             f"      → run `mcptoon sync --self` to save, or use `mcptoon call`",
+             f"      → run `mcptoon sync --self` to save, or use `mcptoon call`\n"
+             f"      → `mcptoon credit` shows your mode and the real saving in one line",
              mode=_dmode)
     elif _dmode == "cli":
         emit("ok", "mode", "cli — 0 resident, full catalog never loads",
@@ -5496,7 +5498,8 @@ def _cmd_doctor(rest, fmt="auto"):
             "broken": [{"server": n, "reason": r} for n, r in broken],
             "delivery_mode": _dmode,
             "recommended": _rec_now,
-            "recommended_action": _rec_action,
+            "one_action": _rec_action,       # unified name (matches credit/report)
+            "recommended_action": _rec_action,  # back-compat alias
         }, ensure_ascii=False, indent=2))
         if issues:
             sys.exit(1)

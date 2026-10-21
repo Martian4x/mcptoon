@@ -116,7 +116,7 @@ def test_statusline_marks_direct_loudly(monkeypatch):
     _patch_mode(monkeypatch, servers=7, wired=False, routed=0, native=0)
     monkeypatch.setattr(mode, "_figures", lambda: {})
     monkeypatch.setattr(mode, "_exposed", lambda: 9)
-    assert "direct!" in mode.statusline(lng="en")
+    assert "direct→sync" in mode.statusline(lng="en")
 
 
 # ─── 3. explain names CLI as cheapest and states the honest headline ─────────
