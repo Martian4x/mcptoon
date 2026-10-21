@@ -80,6 +80,9 @@ KNOWN_FLAGS = frozenset(
         # Registered here for the same reason `--npm` is: the central parser
         # must pass them through, and `_cmd_exec` consumes them out of `rest`.
         "--langs", "--code",
+        # `kb`-only. `--ttl` and `--source` name cache lifetime and an index
+        # label; `--purge` is `session`'s destructive reset.
+        "--ttl", "--source", "--purge",
     }
 )
 
@@ -126,9 +129,9 @@ _COMMANDS_WITH_OWN_HELP = frozenset({"demo", "demo-server", "serve"})
 _COMPLETION_COMMANDS = (
     "activity", "add", "bench", "call", "completion", "config", "demo", "demo-server",
     "discover", "docs", "doctor", "exec", "footer-facts", "health", "help", "import",
-    "init", "inspect", "install", "list", "manifest", "mode", "off", "plugin",
+    "init", "inspect", "install", "kb", "list", "manifest", "mode", "off", "plugin",
     "policy", "quickstart", "remove", "report", "savings", "restore", "retrieve", "search",
-    "select", "serve", "skills", "stats", "status", "statusline", "sync", "toggle", "credit",
+    "select", "serve", "session", "skills", "stats", "status", "statusline", "sync", "toggle", "credit",
     "uninstall", "update", "usage",
     # aliases the dispatch chain also accepts
     "servers", "tools", "qs", "brief",
@@ -612,6 +615,12 @@ def _run(state: dict) -> None:
     elif command == "docs":
         from . import docs as docs_mod
         docs_mod.run(rest, fmt, head_n, max_chars, full)
+    elif command == "kb":
+        from . import kb as kb_mod
+        kb_mod.run(rest, fmt, head_n, max_chars, full)
+    elif command == "session":
+        from . import session_log as session_mod
+        session_mod.run(rest, fmt, head_n, max_chars, full)
     elif command == "retrieve":
         _cmd_retrieve(rest, fmt, max_chars)
     elif command == "footer-facts":
@@ -6692,6 +6701,15 @@ Usage:
     mcptoon docs resolve <query>          Best files for a query (returns paths, offline)
     mcptoon docs list                     Every indexed document, by slug
     mcptoon docs doctor                   Check the docs index against the disk
+
+    mcptoon kb index <path>               Index documents so you can search inside them
+    mcptoon kb fetch <url>                Fetch a URL and index it (24h TTL cache)
+    mcptoon kb search "<query>"           Ranked passages (porter + trigram, RRF)
+    mcptoon kb list                       Indexed sources with size and age
+    mcptoon kb stats                      Chunks, DB size, trigram support
+
+    mcptoon session                       What happened this session (catch up after a compact)
+    mcptoon session --purge               Delete this project's event log
 
     mcptoon bench                         Prove the savings on your own machine (tools + skills)
     mcptoon bench --json                  Machine-readable; --roots/--query/-k tune the skills half

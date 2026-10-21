@@ -218,6 +218,12 @@ class MCPServerBridge:
         # Last JSON-RPC response built by handle_request (in-process read-back
         # hook; the response is still delivered via _send_response as before).
         self._last_response: dict | None = None
+        # Progressive throttle for the gateway's own search tools. Bucketed per
+        # agent context (see floodguard's docstring for the fan-out bug a global
+        # counter causes). Only the search-shaped tools consult it: a throttle on
+        # `mcptoon_manifest` would punish normal discovery.
+        from .floodguard import FloodGuard
+        self._flood = FloodGuard()
 
     # ═══════════════════════════════════════════════════
     # Lifecycle
@@ -520,6 +526,8 @@ class MCPServerBridge:
             _ci = params.get("clientInfo")
             if isinstance(_ci, dict):
                 usage.set_host(_ci.get("name") or _ci.get("title"))
+                # Remember it for the flood guard's per-agent bucketing.
+                self._client_name = _ci.get("name") or _ci.get("title") or ""
         except Exception:
             pass
         client_version = params.get("protocolVersion", PROTOCOL_VERSION)
@@ -761,6 +769,38 @@ class MCPServerBridge:
             "uptime": time.time() - getattr(self, "_start_time", time.time()),
         }
 
+    def _throttle_search(self, name: str) -> dict | None:
+        """Apply the per-agent flood guard to the gateway's search tools.
+
+        Returns a tool result to send *instead of* running the tool when the call
+        is blocked, or None to let it proceed. Only the search-shaped tools are
+        throttled — throttling `mcptoon_manifest` would punish ordinary discovery,
+        which is the opposite of what the gateway is for.
+
+        The bucket key is the calling agent context. A stdio bridge serves one
+        client, so ``clientInfo`` name plus thread identity is the honest
+        granularity available; it keeps a fan-out of subagents from sharing one
+        budget (the bug that made a legitimate 10-agent × 2-call fan-out look like
+        a flood in the project this guard is modelled on).
+        """
+        if name not in ("mcptoon_kb_search", "mcptoon_resolve_skills"):
+            return None
+        key = f"{getattr(self, '_client_name', '') or 'unknown'}:{threading.get_ident()}"
+        guard = getattr(self, "_flood", None)
+        if guard is None:
+            # A bridge built by a test double may skip __init__; create the guard
+            # on first use rather than assuming construction ran.
+            from .floodguard import FloodGuard
+            guard = self._flood = FloodGuard()
+        decision = guard.record(key, int(time.time() * 1000))
+        if decision.blocked:
+            return _make_tool_error(decision.message(name))
+        if decision.soft_capped:
+            # Soft cap is advisory: the tool still runs, but the caller is told
+            # the budget is thinning so it can batch instead of piling on.
+            self._last_throttle_note = decision.message(name)
+        return None
+
     def _handle_call_tool(self, params: dict) -> dict:
         """Route a tool call to the underlying server (ADR 0004).
 
@@ -804,6 +844,9 @@ class MCPServerBridge:
                         target_args = {}
                     return self._handle_call_tool(
                         {"name": target, "arguments": target_args})
+                guard = self._throttle_search(name)
+                if guard is not None:
+                    return guard
                 return self._stamp_footer(
                     self._track_native(name, native_tools.call_native(
                         name, arguments, self._native_state())))
@@ -879,6 +922,7 @@ class MCPServerBridge:
             payload = _unwrap_envelope(envelope)
             usage.track_call(server, tool, ok=True, payload=payload,
                              ms=int((time.monotonic() - _t0) * 1000))
+            self._log_event(server, tool, arguments, ok=True)
 
             if isinstance(envelope, dict) and envelope.get("structuredContent") is not None:
                 # Build the response from the envelope explicitly. Passing the
@@ -905,17 +949,32 @@ class MCPServerBridge:
             usage.track_call(server, tool, ok=False,
                              err=f"{e.code}: {str(e.message)[:160]}",
                              ms=int((time.monotonic() - _t0) * 1000))
+            self._log_event(server, tool, arguments, ok=False)
             return _make_tool_error(f"[{e.code}] {e.message}")
         except concurrent.futures.TimeoutError:
             usage.track_call(server, tool, ok=False,
                              err=f"timeout after {_get_call_timeout()}s",
                              ms=int((time.monotonic() - _t0) * 1000))
+            self._log_event(server, tool, arguments, ok=False)
             return _make_tool_error(f"Call timed out after {_get_call_timeout()}s")
         except Exception as e:
             usage.track_call(server, tool, ok=False,
                              err=f"{type(e).__name__}: {str(e)[:160]}",
                              ms=int((time.monotonic() - _t0) * 1000))
+            self._log_event(server, tool, arguments, ok=False)
             return _make_tool_error(f"Call failed: {str(e)[:200]}")
+
+    def _log_event(self, server: str, tool: str, arguments: Any, ok: bool) -> None:
+        """Record one routed call in the per-project session log.
+
+        Best-effort and never raises: the log is a convenience for catching up
+        after a compaction, and must not be able to fail the call it is logging.
+        """
+        try:
+            from . import session_log
+            session_log.record(server, tool, arguments, ok=ok)
+        except Exception:
+            pass
 
     def _call_with_timeout(
         self, pool: MCPClientPool, server: str, tool: str,

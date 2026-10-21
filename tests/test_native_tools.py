@@ -106,24 +106,29 @@ class TestCatalogAlwaysNonEmpty(unittest.TestCase):
                                      f"{defn['name']}.{pname}")
 
     def test_every_native_tool_declares_honest_annotations(self):
-        """Every tool but the call bridge is read-only; the bridge must say it is not.
+        """Writers must say they write; every pure read must say it is one.
 
-        `mcptoon_call` is the one first-party tool that runs an upstream tool, so
-        claiming it read-only would be a lie a host could act on. The rest are pure
-        reads and must say so.
+        `mcptoon_call` runs an upstream tool and `mcptoon_kb_index` writes to the
+        knowledge base and can reach the network — claiming either read-only would
+        be a lie a host could act on. Everything else is a pure read and says so.
         """
         for defn in native_tools.native_tools():
             ann = defn["annotations"]
             self.assertIn("outputSchema", defn)
             self.assertIn("title", defn)
-            if defn["name"] == "mcptoon_call":
-                self.assertFalse(ann["readOnlyHint"], defn["name"])
-                self.assertTrue(ann["destructiveHint"], defn["name"])
-                self.assertTrue(ann["openWorldHint"], defn["name"])
+            name = defn["name"]
+            if name == "mcptoon_call":
+                self.assertFalse(ann["readOnlyHint"], name)
+                self.assertTrue(ann["destructiveHint"], name)
+                self.assertTrue(ann["openWorldHint"], name)
+            elif name == "mcptoon_kb_index":
+                self.assertFalse(ann["readOnlyHint"], name)
+                self.assertFalse(ann["destructiveHint"], name)
+                self.assertTrue(ann["openWorldHint"], name)
             else:
-                self.assertTrue(ann["readOnlyHint"], defn["name"])
-                self.assertFalse(ann["destructiveHint"], defn["name"])
-                self.assertFalse(ann["openWorldHint"], defn["name"])
+                self.assertTrue(ann["readOnlyHint"], name)
+                self.assertFalse(ann["destructiveHint"], name)
+                self.assertFalse(ann["openWorldHint"], name)
 
     def test_upstream_tool_with_same_name_wins(self):
         """A user's server must never be shadowed by our own naming.

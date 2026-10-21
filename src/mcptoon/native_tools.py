@@ -61,6 +61,9 @@ NATIVE_NAMES = (
     "mcptoon_inspect",
     "mcptoon_call",
     "mcptoon_retrieve",
+    "mcptoon_kb_search",
+    "mcptoon_kb_index",
+    "mcptoon_session",
 )
 
 
@@ -490,6 +493,130 @@ def native_tools() -> list[dict]:
                 "openWorldHint": False,
             },
         },
+        {
+            "name": "mcptoon_kb_search",
+            "title": "Search inside indexed documents",
+            "description": (
+                "Return the PASSAGES in already-indexed documents that match a query, "
+                "not the whole file. Use it instead of reading a large document whole "
+                "when you need a few lines from it. Index a document first with "
+                "mcptoon_kb_index."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Words to find. Substrings and typos are handled.",
+                    },
+                    "k": {
+                        "type": "integer",
+                        "description": "How many passages to return (default 5).",
+                    },
+                    "source": {
+                        "type": "string",
+                        "description": (
+                            "Restrict to sources whose name contains this text. "
+                            "Omit to search everything indexed."
+                        ),
+                    },
+                },
+                "required": ["query"],
+            },
+            "outputSchema": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string"},
+                    "hits": {"type": "array", "items": {"type": "object"}},
+                    "notes": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["query", "hits"],
+            },
+            "annotations": {
+                "title": "Search inside indexed documents",
+                "readOnlyHint": True,
+                "destructiveHint": False,
+                "idempotentHint": True,
+                "openWorldHint": False,
+            },
+        },
+        {
+            "name": "mcptoon_kb_index",
+            "title": "Index a document for search",
+            "description": (
+                "Chunk a local file or a URL into the knowledge base so "
+                "mcptoon_kb_search can find passages in it. Indexing is what keeps "
+                "the document out of your context window while staying searchable."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "A local file path to index.",
+                    },
+                    "url": {
+                        "type": "string",
+                        "description": (
+                            "A URL to fetch and index instead of a local path. "
+                            "Reuses the cached copy within its TTL."
+                        ),
+                    },
+                    "source": {
+                        "type": "string",
+                        "description": "Optional label for this source in the index.",
+                    },
+                },
+            },
+            "outputSchema": {
+                "type": "object",
+                "properties": {
+                    "indexed": {"type": "boolean"},
+                    "source": {"type": "string"},
+                    "chunks": {"type": "integer"},
+                    "bytes": {"type": "integer"},
+                    "error": {"type": "string"},
+                },
+                "required": ["indexed", "source", "chunks"],
+            },
+            "annotations": {
+                "title": "Index a document for search",
+                "readOnlyHint": False,
+                "destructiveHint": False,
+                "idempotentHint": True,
+                "openWorldHint": True,
+            },
+        },
+        {
+            "name": "mcptoon_session",
+            "title": "This session's activity",
+            "description": (
+                "Summarise what has routed through this gateway in this project: "
+                "tools used, files written, errors, git operations. Call it after a "
+                "context compaction to catch up on where you were. It is on-demand, "
+                "not automatic — the gateway cannot inject into your context itself."
+            ),
+            "inputSchema": {"type": "object", "properties": {}},
+            "outputSchema": {
+                "type": "object",
+                "properties": {
+                    "project": {"type": "string"},
+                    "events": {"type": "integer"},
+                    "filesWritten": {"type": "array", "items": {"type": "string"}},
+                    "toolsUsed": {"type": "array", "items": {"type": "object"}},
+                    "errors": {"type": "array", "items": {"type": "object"}},
+                    "gitOps": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["project", "events"],
+            },
+            "annotations": {
+                "title": "This session's activity",
+                "readOnlyHint": True,
+                "destructiveHint": False,
+                "idempotentHint": True,
+                "openWorldHint": False,
+            },
+        },
     ]
 
 
@@ -790,6 +917,58 @@ def _inspect(arguments: dict, state: dict) -> dict:
     }
 
 
+def _kb_search(arguments: dict, state: dict) -> dict:  # noqa: ARG001 - uniform signature
+    """Passages matching a query, from documents already indexed.
+
+    Delegates to :mod:`mcptoon.kb` so the MCP tool and `mcptoon kb search` share
+    one ranking pipeline. A KBError (empty index, no FTS5) becomes a structured
+    ``error`` rather than an exception, because "index something first" is advice
+    the model can act on, not a crash.
+    """
+    from . import kb as kb_mod
+
+    query = _as_str(arguments.get("query"))
+    k = _as_int(arguments.get("k"), 5, minimum=1)
+    source = _as_str(arguments.get("source")) or None
+    if not query:
+        return {"query": "", "hits": [], "notes": [],
+                "error": "pass a non-empty `query`"}
+    try:
+        report = kb_mod.search(query, k=k, source=source)
+    except kb_mod.KBError as exc:
+        return {"query": query, "hits": [], "notes": [], "error": str(exc)}
+    return report.as_dict()
+
+
+def _kb_index(arguments: dict, state: dict) -> dict:  # noqa: ARG001 - uniform signature
+    """Index a local path or a URL into the knowledge base."""
+    from . import kb as kb_mod
+
+    path = _as_str(arguments.get("path"))
+    url = _as_str(arguments.get("url"))
+    source = _as_str(arguments.get("source")) or None
+    if not path and not url:
+        return {"indexed": False, "source": "", "chunks": 0,
+                "error": "pass either `path` (a local file) or `url`"}
+    try:
+        if url:
+            report = kb_mod.fetch_and_index(url, source=source)
+        else:
+            report = kb_mod.index_file(path, source=source)
+    except kb_mod.KBError as exc:
+        return {"indexed": False, "source": path or url, "chunks": 0,
+                "error": str(exc)}
+    return {"indexed": True, "source": report.source, "chunks": report.chunks,
+            "bytes": report.bytes, "skipped": report.skipped}
+
+
+def _session(arguments: dict, state: dict) -> dict:  # noqa: ARG001 - uniform signature
+    """This project's session activity, for catching up after a compaction."""
+    from . import session_log
+
+    return session_log.summarise().as_dict()
+
+
 def _retrieve(arguments: dict, state: dict) -> dict:  # noqa: ARG001 - uniform signature
     """Fetch the original behind a compression handle (the CCR read half).
 
@@ -836,6 +1015,9 @@ _HANDLERS = {
     "mcptoon_resolve_skills": _resolve_skills,
     "mcptoon_inspect": _inspect,
     "mcptoon_retrieve": _retrieve,
+    "mcptoon_kb_search": _kb_search,
+    "mcptoon_kb_index": _kb_index,
+    "mcptoon_session": _session,
     # "mcptoon_call" is routed by the bridge to the upstream tool; it has no
     # handler here because it must reuse the bridge's pool, validation and
     # compression rather than duplicate them (see serve._handle_call_tool).

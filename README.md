@@ -18,7 +18,7 @@
   <a href="https://pypi.org/project/mcptoon/"><img src="https://img.shields.io/pypi/v/mcptoon?style=flat-square&color=238636&logo=pypi&logoColor=white" alt="PyPI version"></a>
   <a href="https://github.com/activeing123/mcptoon/stargazers"><img src="https://img.shields.io/github/stars/activeing123/mcptoon?style=flat-square&logo=github&color=58a6ff" alt="GitHub Stars"></a>
   <a href="https://github.com/activeing123/mcptoon/actions"><img src="https://img.shields.io/github/actions/workflow/status/activeing123/mcptoon/ci.yml?branch=main&style=flat-square&logo=githubactions&logoColor=white" alt="CI Build"></a>
-  <a href="#contributing"><img src="https://img.shields.io/badge/tests-2623%20passed-success?style=flat-square&logo=pytest&logoColor=white" alt="Tests"></a>
+  <a href="#contributing"><img src="https://img.shields.io/badge/tests-2665%20passed-success?style=flat-square&logo=pytest&logoColor=white" alt="Tests"></a>
   <a href="https://github.com/activeing123/mcptoon"><img src="https://img.shields.io/badge/dependencies-0%20(stdlib%20only)-blue?style=flat-square" alt="Zero Dependencies"></a>
   <a href="https://github.com/activeing123/mcptoon/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-informational?style=flat-square" alt="License"></a>
 </p>
@@ -680,6 +680,12 @@ mcptoon docs index <dir>        # index a Markdown tree so agents stop reading i
 mcptoon docs resolve "<query>"  # best files for a query — returns paths (offline)
 mcptoon docs list               # every indexed document, by slug
 mcptoon docs doctor             # check the docs index against the disk
+mcptoon kb index <path>         # index documents so you can search INSIDE them
+mcptoon kb fetch <url>          # fetch a URL and index it (24h TTL cache)
+mcptoon kb search "<query>"     # ranked passages, not whole files (porter + trigram, RRF)
+mcptoon kb list                 # indexed sources with size and age
+mcptoon kb stats                # chunks, DB size, trigram support
+mcptoon session                 # what happened this session (catch up after a compaction)
 mcptoon bench                   # prove the savings on this machine (tools + skills, one table)
 mcptoon demo                    # one command, live demo on your machine
 mcptoon demo-server             # the same proof with zero downloads (11 stdlib tools)
@@ -776,7 +782,7 @@ git clone https://github.com/activeing123/mcptoon.git
 cd mcptoon
 pip install -e . --no-build-isolation
 pip install pytest pytest-cov
-python -m pytest tests/ -v   # 2623 passed, 2 skipped
+python -m pytest tests/ -v   # 2665 passed, 2 skipped
 ```
 
 Three hard rules: zero dependencies (CI-enforced), new behavior ships with tests, Windows
@@ -784,7 +790,7 @@ is a first-class target. New here? Start with
 [CONTRIBUTING.md](https://github.com/activeing123/mcptoon/blob/main/CONTRIBUTING.md) and
 [DEVELOPERS.md](https://github.com/activeing123/mcptoon/blob/main/DEVELOPERS.md).
 
-The codebase: **33,564 lines of Python across 47 modules**, zero third-party dependencies.
+The codebase: **35,167 lines of Python across 50 modules**, zero third-party dependencies.
 
 ---
 
