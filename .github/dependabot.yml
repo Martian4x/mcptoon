@@ -1,0 +1,32 @@
+# Dependabot keeps the SHA-pinned GitHub Actions current.
+#
+# Every `uses:` in .github/workflows is pinned to an immutable commit SHA (a
+# moving tag can be retargeted, so a tag is not a lock). The cost of pinning is
+# that upgrades stop happening on their own — this file is what restores them:
+# Dependabot rewrites the SHA *and* the trailing `# vX.Y.Z` comment together.
+#
+# Docs: https://docs.github.com/code-security/dependabot/dependabot-version-updates
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "ci"
+    labels:
+      - "dependencies"
+      - "github-actions"
+
+  # mcptoon ships zero runtime dependencies, so there is nothing to bump in
+  # `dependencies`. `pip` here only tracks the dev/test toolchain declared under
+  # `[project.optional-dependencies]` (pytest, ruff, build, twine, ...).
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "chore"
+    labels:
+      - "dependencies"
+    open-pull-requests-limit: 5

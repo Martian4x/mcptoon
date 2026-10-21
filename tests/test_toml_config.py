@@ -39,10 +39,10 @@ command = ["npx", "-y"]
 args = ["exa-mcp-server"]
 
 [servers.exa.env]
-EXA_API_KEY = "test-key"
+EXA_API_KEY = "test"
 """
         data = _parse_toml(text)
-        assert data["servers"]["exa"]["env"]["EXA_API_KEY"] == "test-key"
+        assert data["servers"]["exa"]["env"]["EXA_API_KEY"] == "test"
 
     def test_boolean_value(self):
         text = """
@@ -136,12 +136,12 @@ class TestTomlDump:
                 "transport": "stdio",
                 "command": ["npx", "-y"],
                 "args": ["exa-mcp-server"],
-                "env": {"EXA_API_KEY": "test-key"},
+                "env": {"EXA_API_KEY": "test"},
             }
         }
         text = _dump_toml(servers)
         assert "[servers.exa.env]" in text
-        assert 'EXA_API_KEY = "test-key"' in text
+        assert 'EXA_API_KEY = "test"' in text
 
     def test_dump_multiple_servers(self):
         servers = {

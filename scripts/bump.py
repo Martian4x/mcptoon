@@ -54,6 +54,7 @@ _TARGETS = [
     ("pyproject.toml", r'(?m)^(version\s*=\s*)"{old}"', r'\g<1>"{new}"', "project version"),
     ("src/mcptoon/__init__.py", r'(__version__\s*=\s*)"{old}"', r'\g<1>"{new}"', "__version__"),
     ("gemini-extension.json", r'("version"\s*:\s*)"{old}"', r'\g<1>"{new}"', "gemini manifest version"),
+    ("claude-code-plugin/.claude-plugin/plugin.json", r'("version"\s*:\s*)"{old}"', r'\g<1>"{new}"', "claude plugin manifest version"),
     ("server.json", r'("version"\s*:\s*)"{old}"', r'\g<1>"{new}"', "server.json version (x2)"),
     ("docs/index.html", r'("softwareVersion"\s*:\s*)"{old}"', r'\g<1>"{new}"', "landing softwareVersion"),
     ("docs/index-zh.html", r'("softwareVersion"\s*:\s*)"{old}"', r'\g<1>"{new}"', "landing-zh softwareVersion"),

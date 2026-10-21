@@ -4,6 +4,7 @@
   "owner": {
     "name": "activeing123"
   },
+  "strict": true,
   "plugins": [
     {
       "name": "mcptoon",

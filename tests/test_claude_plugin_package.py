@@ -42,9 +42,22 @@ class TestPluginPackageStructure:
         assert data["author"]["name"] == "activeing123"
         assert data["homepage"].startswith("https://github.com/")
 
+    def test_plugin_json_version_matches_package(self):
+        # plugin.json carries a semver `version` (the HOL scanner's
+        # CLAUDE_FIELD_MISSING_VERSION rule requires it). It is a *version surface*:
+        # bump.py rewrites it, and this pins it to the package __version__ so a
+        # bump that misses it fails here instead of shipping a stale manifest.
+        import mcptoon
+
+        data = _load(PLUGIN / ".claude-plugin" / "plugin.json")
+        assert data["version"] == mcptoon.__version__
+
     def test_marketplace_json_declares_plugin(self):
         data = _load(MARKETPLACE)
         assert data["name"] == "mcptoon"
+        # HOL scanner CLAUDE_MARKETPLACE_STRICT_INVALID wants a top-level boolean
+        # `strict` on the marketplace manifest.
+        assert isinstance(data.get("strict"), bool)
         entries = data["plugins"]
         assert len(entries) == 1
         entry = entries[0]
