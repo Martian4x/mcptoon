@@ -74,6 +74,12 @@ KNOWN_FLAGS = frozenset(
         # `--npm`/`--pip`/`--url` are: the central parser must not reject them as
         # unknown; `_cmd_completion` consumes them out of `rest`.
         "--install", "--uninstall",
+        # `exec`-only. `--langs` lists the runtimes this machine can actually
+        # run; `--code` is the inline-source form (`--file` and `--timeout`
+        # already existed for other commands and are reused verbatim).
+        # Registered here for the same reason `--npm` is: the central parser
+        # must pass them through, and `_cmd_exec` consumes them out of `rest`.
+        "--langs", "--code",
     }
 )
 
@@ -119,7 +125,7 @@ _COMMANDS_WITH_OWN_HELP = frozenset({"demo", "demo-server", "serve"})
 # dispatch set from this file and fails if the two ever disagree.
 _COMPLETION_COMMANDS = (
     "activity", "add", "bench", "call", "completion", "config", "demo", "demo-server",
-    "discover", "docs", "doctor", "footer-facts", "health", "help", "import",
+    "discover", "docs", "doctor", "exec", "footer-facts", "health", "help", "import",
     "init", "inspect", "install", "list", "manifest", "mode", "off", "plugin",
     "policy", "quickstart", "remove", "report", "savings", "restore", "retrieve", "search",
     "select", "serve", "skills", "stats", "status", "statusline", "sync", "toggle", "credit",
@@ -571,6 +577,8 @@ def _run(state: dict) -> None:
         _cmd_select(rest, fmt, head_n, max_chars, full)
     elif command == "call":
         _cmd_call(rest, fmt, head_n, max_chars, full, use_stdin, fallback_json)
+    elif command == "exec":
+        _cmd_exec(rest, fmt, full)
     elif command in ("quickstart", "qs"):
         _cmd_quickstart(rest, fmt)
     elif command == "init":
@@ -1528,6 +1536,128 @@ def _cmd_call(rest, fmt, head_n, max_chars, full, use_stdin=False, fallback_json
     # Machine receipt on stderr for json AND toon; human prose otherwise.
     _emit_cli_receipt(server, tool, result, machine=(fmt in ("json", "toon")))
     if _tool_result_failed(result):
+        sys.exit(1)
+
+
+def _cmd_exec(rest, fmt, full):
+    """Run code so only its stdout reaches the context.
+
+    Usage:
+        mcptoon exec <lang> "<code>"
+        mcptoon exec <lang> --file <path>
+        mcptoon exec <lang> --file -            # read the program from stdin
+        mcptoon exec --langs                    # what this machine can run
+
+    Options:
+        --file <path>    Run a script file instead of inline code ("-" = stdin)
+        --timeout <s>    Kill the child after this many seconds (default 120)
+        --max-chars <n>  Bytes of stdout the context may see (default 8192;
+                         over that, head/tail + a retrieve handle)
+        --langs          List runnable languages and exit
+        --json           Machine-readable result object
+        --full           Show all of stdout, even over budget (still retrievable)
+
+    Only stdout is the answer. stderr comes back as a short tail because a
+    traceback is diagnostic, not output. A non-zero exit sets exit code 1.
+
+    The name says sandbox but it is a *context* sandbox: the child has your
+    shell's filesystem and network access. What it keeps out is the data.
+    """
+    from . import exec_sandbox as _exec
+
+    if "--langs" in rest:
+        langs = _exec.languages()
+        if fmt == "json":
+            print(json.dumps(langs, ensure_ascii=False, indent=2))
+        else:
+            print("Runtimes available on this machine:")
+            for item in langs:
+                print(f"  {item['name']:<12} {item['exe']}")
+        return
+
+    file_path = None
+    timeout = _exec.DEFAULT_TIMEOUT
+    max_output = _exec.DEFAULT_MAX_OUTPUT
+    code = None
+    lang = None
+
+    i = 0
+    while i < len(rest):
+        a = rest[i]
+        if a == "--file" and i + 1 < len(rest):
+            file_path = rest[i + 1]
+            i += 2
+        elif a == "--timeout" and i + 1 < len(rest):
+            try:
+                timeout = int(rest[i + 1])
+            except ValueError:
+                _err(f"Error: --timeout expects an integer number of seconds, got {rest[i + 1]!r}")
+                sys.exit(1)
+            i += 2
+        elif a == "--max-chars" and i + 1 < len(rest):
+            try:
+                max_output = int(rest[i + 1])
+            except ValueError:
+                _err(f"Error: --max-chars expects an integer, got {rest[i + 1]!r}")
+                sys.exit(1)
+            i += 2
+        elif a == "--code" and i + 1 < len(rest):
+            code = rest[i + 1]
+            i += 2
+        elif a == "--json":
+            i += 1  # already captured in fmt upstream
+        elif a.startswith("-") and a not in ("-",):
+            _err(f"Error: unknown option for exec: {a}")
+            _err("Run 'mcptoon exec --help' for usage.")
+            sys.exit(1)
+        elif lang is None:
+            lang = a
+            i += 1
+        elif code is None and file_path is None:
+            code = a
+            i += 1
+        else:
+            _err(f"Error: unexpected extra argument: {a!r}")
+            _err("Run 'mcptoon exec --help' for usage.")
+            sys.exit(1)
+
+    if lang is None:
+        _err("Usage: mcptoon exec <lang> \"<code>\"  |  mcptoon exec <lang> --file <path>")
+        _err("       mcptoon exec --langs")
+        sys.exit(1)
+
+    if file_path == "-":
+        file_path = None
+        code = _read_stdin_text()
+
+    try:
+        result = _exec.run(lang, code, file_path=file_path,
+                           timeout=timeout, max_output=(0 if full else max_output))
+    except _exec.ExecError as exc:
+        _err(f"Error: {exc}")
+        sys.exit(1)
+
+    if fmt == "json":
+        print(json.dumps(result.as_dict(), ensure_ascii=False, indent=2))
+    else:
+        if result.stdout:
+            print(result.stdout, end="" if result.stdout.endswith("\n") else "\n")
+        if result.truncated:
+            if result.handle:
+                _err(f"[exec] stdout was {result.stdout_bytes} bytes; the rest is at "
+                     f"mcptoon retrieve {result.handle}")
+            else:
+                _err(f"[exec] stdout was {result.stdout_bytes} bytes; it could not be "
+                     f"stored for retrieval (store unavailable)")
+        if result.stderr_tail:
+            _err("--- stderr (tail) ---")
+            _err(result.stderr_tail)
+        if result.failure:
+            _err(f"[exec] {result.failure}")
+        _err(f"[exec] {result.lang} · {result.elapsed_ms} ms · "
+             f"exit {result.exit_code}")
+
+    if not result.ok:
         sys.exit(1)
 
 
@@ -6494,6 +6624,9 @@ Usage:
     mcptoon call <server> <tool> [ARGS]   Call a tool
     mcptoon call --auto <tool> [ARGS]     Call a tool (auto-find server)
     mcptoon call <server> <tool> --stdin  Read args from stdin (large payloads)
+    mcptoon exec <lang> "<code>"          Run code; only its stdout enters context
+    mcptoon exec <lang> --file <path>     Run a script file the same way
+    mcptoon exec --langs                  List the runtimes this machine can run
     mcptoon init                          Create sample config
     mcptoon init --auto                   Auto-discover all MCP servers
     mcptoon init --auto --http <url>      Auto-discover + add HTTP MCP endpoint
@@ -6798,7 +6931,7 @@ def _populate_command_handlers() -> None:
         "list": _cmd_list, "servers": _cmd_list,
         "manifest": _cmd_manifest, "tools": _cmd_manifest,
         "inspect": _cmd_inspect, "search": _cmd_search, "select": _cmd_select,
-        "call": _cmd_call, "quickstart": _cmd_quickstart, "qs": _cmd_quickstart,
+        "call": _cmd_call, "exec": _cmd_exec, "quickstart": _cmd_quickstart, "qs": _cmd_quickstart,
         "init": _cmd_init, "add": _cmd_add, "remove": _cmd_remove,
         "usage": _cmd_usage, "status": _cmd_status, "brief": _cmd_status,
         "stats": _cmd_stats, "retrieve": _cmd_retrieve, "activity": _cmd_activity,

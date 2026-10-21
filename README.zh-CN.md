@@ -18,7 +18,7 @@
   <a href="https://pypi.org/project/mcptoon/"><img src="https://img.shields.io/pypi/v/mcptoon?style=flat-square&color=238636&logo=pypi&logoColor=white" alt="PyPI 版本"></a>
   <a href="https://github.com/activeing123/mcptoon/stargazers"><img src="https://img.shields.io/github/stars/activeing123/mcptoon?style=flat-square&logo=github&color=58a6ff" alt="GitHub Stars"></a>
   <a href="https://github.com/activeing123/mcptoon/actions"><img src="https://img.shields.io/github/actions/workflow/status/activeing123/mcptoon/ci.yml?branch=main&style=flat-square&logo=githubactions&logoColor=white" alt="CI 构建"></a>
-  <a href="#贡献指南"><img src="https://img.shields.io/badge/tests-2606%20passed-success?style=flat-square&logo=pytest&logoColor=white" alt="测试"></a>
+  <a href="#贡献指南"><img src="https://img.shields.io/badge/tests-2623%20passed-success?style=flat-square&logo=pytest&logoColor=white" alt="测试"></a>
   <a href="https://github.com/activeing123/mcptoon"><img src="https://img.shields.io/badge/dependencies-0%20(stdlib%20only)-blue?style=flat-square" alt="零第三方依赖"></a>
   <a href="https://github.com/activeing123/mcptoon/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-informational?style=flat-square" alt="许可证"></a>
 </p>
@@ -566,6 +566,9 @@ mcptoon inspect <server> <tool> # 查看某个工具的真实参数
 mcptoon search <query>          # 跨服务器搜工具
 mcptoon select "<任务>"          # 为某个任务挑最该用的 3 个工具（工具超 ~40 个模型就开始选错）
 mcptoon call <server> <tool> '{"args":"here"}'   # 调工具
+mcptoon exec python "print(len(open('big.log').readlines()))"  # 跑代码，只有 stdout 进上下文
+mcptoon exec python --file analyze.py            # 同上，从脚本文件跑
+mcptoon exec --langs                             # 本机到底能跑哪几种语言
 mcptoon add <name> --stdio|--http <cmd|url>     # 添加任意 MCP 服务器
 mcptoon remove <name>           # 删除一个服务器
 mcptoon install <name> --npm|--pip|--url <pkg>  # 安装 + 自动生成 handler
@@ -665,12 +668,12 @@ git clone https://github.com/activeing123/mcptoon.git
 cd mcptoon
 pip install -e . --no-build-isolation
 pip install pytest pytest-cov
-python -m pytest tests/ -v   # 2606 passed, 2 skipped
+python -m pytest tests/ -v   # 2623 passed, 2 skipped
 ```
 
 三条硬规则：零依赖（CI 强制）、新功能必须带测试、Windows 是一等目标。新手可以先看 [CONTRIBUTING.md](https://github.com/activeing123/mcptoon/blob/main/CONTRIBUTING.md) 和 [DEVELOPERS.md](https://github.com/activeing123/mcptoon/blob/main/DEVELOPERS.md)。
 
-代码规模：**46 个模块、33,060 行 Python**，零第三方依赖。
+代码规模：**47 个模块、33,564 行 Python**，零第三方依赖。
 
 ---
 
