@@ -196,6 +196,7 @@ What mcptoon has earned externally, and the standing obligation each one creates
 | `microsoft/winget-pkgs` | PR #443014 open (0.8.3), awaiting a community moderator (validation pipeline already passed) | manual: needs a self-contained zip asset per version. Advisory-only in the drift gate. Say "PR submitted", never "on winget" until merged. **Decided 2026-10-02:** merge 0.8.3 first to claim the version number (version directories are immutable in winget), then file a fresh 0.8.5 manifest afterwards. Do not reopen the PR to change its version, and do not chase the moderator. |
 | ClawHub skill listing | listed; its tag number is ClawHub's own counter (**not** the CLI version, **not** the SKILL.md frontmatter version) | manual republish when SKILL.md changes. Never compare its number to any other version line |
 | apify/mcpc client comparison | listed in comparison table | none — leave the table alone |
+| HOL Registry (`hol.org`) | listed; **owner-verified 2026-10-22** (GitHub provenance check; the granted scopes are `read:user` + `user:email` only — no repo access) | free Owner-verified badge + a followed link on the verified listing. A live README badge exists but its `trust` metric is still `unknown` — do not paste it until it resolves. It is a listing, not a versioned channel: nothing to re-publish per release |
 | awesome-mcp-clients PR #283 | pending | do not nag maintainers until ≥500 stars |
 | striki18/benchmark | third-party benchmark harness running mcptoon | external repo — read for intel, do not touch |
 
