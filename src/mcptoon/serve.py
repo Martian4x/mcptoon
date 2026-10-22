@@ -69,6 +69,7 @@ from .client import (
     SUPPORTED_PROTOCOL_VERSIONS,
     ERR_UNSUPPORTED_PROTOCOL_VERSION,
     _META_PROTOCOL_KEY,
+    default_call_timeout,
 )
 from . import manifest as manifest_mod
 from . import native_tools
@@ -252,7 +253,10 @@ class MCPServerBridge:
                     "mcptoon: ignoring self-referencing server entry "
                     f"{_self_dropped!r} — the gateway cannot be its own upstream.\n")
                 self._servers = strip_self_entries(self._servers)
-            self._pool = MCPClientPool(self._servers)
+            # Hand the documented call timeout down to the clients too: the
+            # wrapper in _call_with_timeout can wait 900s, but the client's own
+            # deadline fired first at its 30s default (issue #34, 2026-10-22).
+            self._pool = MCPClientPool(self._servers, timeout=_get_call_timeout())
             self._build_tool_index()
             self._build_prompts_index()
             self._initialized = True
@@ -909,7 +913,7 @@ class MCPServerBridge:
         _t0 = time.monotonic()
         try:
             if not self._pool:
-                self._pool = MCPClientPool(self._servers)
+                self._pool = MCPClientPool(self._servers, timeout=_get_call_timeout())
 
             # Call with timeout. Keep the full envelope, not just the extracted
             # payload: a tool that advertises an outputSchema in tools/list MUST
@@ -1397,11 +1401,12 @@ def _log(msg: str):
 
 
 def _get_call_timeout() -> int:
-    """Get the configured timeout for tool calls."""
-    try:
-        return int(os.environ.get("MCPTOON_CALL_TIMEOUT", _DEFAULT_CALL_TIMEOUT))
-    except ValueError:
-        return _DEFAULT_CALL_TIMEOUT
+    """Get the configured timeout for tool calls.
+
+    Delegates to client.default_call_timeout() so the gateway and the CLI can
+    never disagree about MCPTOON_CALL_TIMEOUT (issue #34).
+    """
+    return int(default_call_timeout())
 
 
 # ═══════════════════════════════════════════════════

@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`MCPTOON_CALL_TIMEOUT` now actually extends a call.** The gateway read the
+  documented env var but used it only for its own worker-thread wait; the MCP
+  client underneath kept its separate 30s default, so a call configured for 900s
+  still died at 30s with `[RESPONSE_TIMEOUT] ... within 30s (server went silent)`
+  while the upstream process kept running and its result was lost. `MCPClientPool`
+  now takes a default per-request deadline and forwards it to every client it
+  creates, and both construction sites in `serve.py` pass `_get_call_timeout()`.
+  An explicit per-server `"timeout"` in `config.json` still wins, so the
+  workaround in the report keeps working. Reported as #34.
+
 - **`mcptoon_call` now answers in the shape it advertises.** Under the default
   compact exposure every upstream call is routed through `mcptoon_call`, which
   declares an `outputSchema` requiring `tool` and `server`. The escape hatch

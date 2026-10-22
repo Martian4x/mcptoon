@@ -25,7 +25,12 @@ import unicodedata
 from typing import Any
 from collections.abc import Callable
 
-from .client import MCPClientPool, MCPError, MCPInputRequired
+from .client import (
+    MCPClientPool,
+    MCPError,
+    MCPInputRequired,
+    default_call_timeout,
+)
 from .config import load_config, resolve_server_name
 from .errors import make_error, is_error
 from . import usage
@@ -335,7 +340,7 @@ def _get_pool() -> MCPClientPool:
                 _global_pool.close()
             except Exception:
                 pass
-        _global_pool = MCPClientPool(servers)
+        _global_pool = MCPClientPool(servers, timeout=default_call_timeout())
         _global_pool_config = servers
     return _global_pool
 

@@ -1098,6 +1098,28 @@ class MCPClient:
 
 
 # ═══════════════════════════════════════════════════
+# Per-call deadline shared by every entry point
+# ═══════════════════════════════════════════════════
+
+_DEFAULT_CALL_TIMEOUT = 30
+
+
+def default_call_timeout() -> float:
+    """Per-request deadline in seconds, from MCPTOON_CALL_TIMEOUT (default 30).
+
+    Issue #34: `serve` read this variable but the client underneath kept its own
+    30s default, so the documented setting could not extend a call. Keep the
+    parsing in one place so `serve` and the CLI router cannot drift apart again.
+    A bad value falls back to the default instead of raising — a typo in an env
+    var must not make the gateway unusable.
+    """
+    try:
+        return float(os.environ.get("MCPTOON_CALL_TIMEOUT", _DEFAULT_CALL_TIMEOUT))
+    except (TypeError, ValueError):
+        return _DEFAULT_CALL_TIMEOUT
+
+
+# ═══════════════════════════════════════════════════
 # Convenience: connection pool (reuse clients across calls)
 # ═══════════════════════════════════════════════════
 
@@ -1110,11 +1132,21 @@ class MCPClientPool:
         pool.close()
     """
 
-    def __init__(self, servers: dict):
-        """servers: {name: {transport config}} from config.json"""
+    def __init__(self, servers: dict, timeout: Optional[float] = None):
+        """servers: {name: {transport config}} from config.json
+
+        timeout: default per-request deadline handed to every client this pool
+        creates, used when a server entry has no explicit "timeout". Before this
+        existed the pool silently ignored MCPTOON_CALL_TIMEOUT and every client
+        fell back to its own 30s default, so a documented 900s call died at 30s
+        with RESPONSE_TIMEOUT (issue #34, 2026-10-22). An explicit per-server
+        "timeout" in config.json still wins — that is the documented workaround
+        and must keep working.
+        """
         self._servers = servers
         self._clients: dict[str, MCPClient] = {}
         self._lock = threading.Lock()
+        self._timeout = timeout
 
     def _get_client(self, name: str) -> MCPClient:
         """Get or create a client for server name.
@@ -1135,7 +1167,7 @@ class MCPClientPool:
             raise MCPError("UNKNOWN_SERVER", f"Server '{name}' not in config")
 
         # Create client (no lock needed — each thread creates its own)
-        client = self._make_client(cfg)
+        client = self._make_client(cfg, self._timeout)
         client.initialize()
 
         # Store in pool (lock only for dict write)
@@ -1153,9 +1185,15 @@ class MCPClientPool:
             return client
 
     @staticmethod
-    def _make_client(cfg: dict) -> MCPClient:
-        """Create MCPClient from config dict."""
+    def _make_client(cfg: dict, default_timeout: Optional[float] = None) -> MCPClient:
+        """Create MCPClient from config dict.
+
+        default_timeout fills in the per-request deadline when the server entry
+        carries no "timeout" of its own (issue #34).
+        """
         transport = cfg.get("transport", "stdio")
+        if default_timeout is None:
+            default_timeout = 30
 
         if transport == "stdio":
             command = cfg.get("command", [])
@@ -1171,7 +1209,7 @@ class MCPClientPool:
             return MCPClient(
                 stdio=command + cfg.get("args", []),
                 env=env or None,
-                timeout=cfg.get("timeout", 30),
+                timeout=cfg.get("timeout", default_timeout),
                 spec=cfg.get("spec", "auto"),
                 cwd=cfg.get("cwd"),
             )
@@ -1179,7 +1217,7 @@ class MCPClientPool:
             return MCPClient(
                 http=cfg["url"],
                 headers=cfg.get("headers", {}),
-                timeout=cfg.get("timeout", 30),
+                timeout=cfg.get("timeout", default_timeout),
                 spec=cfg.get("spec", "auto"),
                 http_transport=cfg.get("http_transport") or _HTTP_TRANSPORT_DEFAULT,
             )
