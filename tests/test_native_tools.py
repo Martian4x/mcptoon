@@ -330,6 +330,56 @@ class TestCallBridge(unittest.TestCase):
         self.assertIn("Blocked", res["content"][0]["text"])
         self.assertEqual(calls, [])
 
+    def _call_schema_required(self):
+        """The `required` list from the outputSchema mcptoon_call actually publishes."""
+        defs = {d["name"]: d for d in native_tools.native_tools()}
+        return defs["mcptoon_call"]["outputSchema"]["required"]
+
+    def _bridge_with_structured_pool(self, envelope):
+        b = _bridge(servers={"mem": {"command": "x"}},
+                    index={"mem_graph": {"server": "mem", "tool": "graph",
+                                         "full_schema": {},
+                                         "full_def": {"name": "graph", "description": "d"}}})
+
+        class FakePool:
+            def call_full(self, server, tool, arguments):
+                return envelope
+
+        b._pool = FakePool()
+        return b
+
+    def test_output_schema_is_satisfied_when_upstream_returns_structured_content(self):
+        """Issue #33: an outputSchema tool reached via mcptoon_call must answer in
+        the {tool, server, result} shape the gateway itself advertises, not the raw
+        upstream structuredContent (which strict clients reject)."""
+        upstream = {"entities": [], "relations": []}
+        b = self._bridge_with_structured_pool({
+            "content": [{"type": "text", "text": '{"entities": [], "relations": []}'}],
+            "structuredContent": upstream, "isError": False, "resultType": "complete"})
+        res = b._handle_call_tool({"name": "mcptoon_call",
+                                   "arguments": {"name": "mem_graph", "arguments": {}}})
+        self.assertFalse(res["isError"])
+        sc = res["structuredContent"]
+        for key in self._call_schema_required():
+            self.assertIn(key, sc, f"mcptoon_call answer violates its own outputSchema: {key}")
+        self.assertEqual(sc["tool"], "graph")
+        self.assertEqual(sc["server"], "mem")
+        self.assertEqual(sc["result"], upstream)
+
+    def test_output_schema_is_satisfied_on_a_routed_error(self):
+        """A routed failure is still reported (isError), but the payload must not
+        skip the declared schema — the required keys are present even on error."""
+        b = _bridge(servers={"alpha": {"command": "x"}}, index=self.index)
+        b._pool = None
+        res = b._handle_call_tool({"name": "mcptoon_call",
+                                   "arguments": {"name": "alpha_find", "arguments": {}}})
+        self.assertTrue(res["isError"])
+        sc = res["structuredContent"]
+        for key in self._call_schema_required():
+            self.assertIn(key, sc, f"error answer violates outputSchema: {key}")
+        self.assertEqual(sc["tool"], "find")
+        self.assertEqual(sc["server"], "alpha")
+
 
 class TestServersAndHealth(unittest.TestCase):
     def _payload(self, name: str, args: dict, servers: dict, index: dict | None = None):

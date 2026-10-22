@@ -5,6 +5,22 @@ All notable changes to mcptoon will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **`mcptoon_call` now answers in the shape it advertises.** Under the default
+  compact exposure every upstream call is routed through `mcptoon_call`, which
+  declares an `outputSchema` requiring `tool` and `server`. The escape hatch
+  re-entered the direct-call path and returned that path's envelope verbatim, so
+  when the upstream tool answered with its own `structuredContent` (e.g.
+  `{"entities": [], "relations": []}` from a graph tool) the response did not
+  match the schema the gateway itself published — and a strict client rejected
+  every such call. The answer is now rebuilt as `{tool, server, result}`,
+  including on a routed error, so the declared schema is always satisfied. A
+  side effect of the #22 fix; reported as #33. Workaround until release:
+  `mcptoon config set exposure full`.
+
 ## [0.8.26] - 2026-10-22
 
 ### Added

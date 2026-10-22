@@ -1020,7 +1020,10 @@ _HANDLERS = {
     "mcptoon_session": _session,
     # "mcptoon_call" is routed by the bridge to the upstream tool; it has no
     # handler here because it must reuse the bridge's pool, validation and
-    # compression rather than duplicate them (see serve._handle_call_tool).
+    # compression rather than duplicate them (see serve._handle_call_tool). The
+    # bridge wraps the routed answer in {tool, server, result} so this tool's
+    # declared outputSchema is satisfied even when the upstream returns its own
+    # structuredContent (issue #33).
 }
 
 

@@ -112,6 +112,31 @@ class TestSchemaToolSurvivesTheRealPath(unittest.TestCase):
         self.assertEqual(res.get("structuredContent"), {"content": "[DIR] alpha"},
                          "a tool declaring outputSchema must return structuredContent")
 
+    def test_compact_bridge_over_a_real_server_still_matches_the_schema(self):
+        """Issue #33 repro over a real stdio server: in compact mode the call goes
+        through mcptoon_call, whose outputSchema requires {tool, server}. The answer
+        must match it even though the upstream returns its own structuredContent."""
+        b = MCPServerBridge()
+        b._servers = {"schemahost": {"command": PY, "args": [str(self.srv)]}}
+        b._tool_index = {"schemahost_list_directory": {
+            "server": "schemahost", "tool": "list_directory", "full_schema": {},
+            "full_def": {"name": "list_directory", "description": "List a directory.",
+                         "outputSchema": {"type": "object",
+                                          "properties": {"content": {"type": "string"}},
+                                          "required": ["content"]}}}}
+        b._initialized = True
+        try:
+            res = b._handle_call_tool({"name": "mcptoon_call",
+                                       "arguments": {"name": "schemahost_list_directory",
+                                                     "arguments": {}}})
+        except Exception as e:  # a real-server failure is a skip, not a red build
+            self.skipTest(f"real stdio server unavailable: {e}")
+        self.assertFalse(res.get("isError"), res.get("content"))
+        sc = res.get("structuredContent") or {}
+        self.assertEqual(sc.get("tool"), "list_directory")
+        self.assertEqual(sc.get("server"), "schemahost")
+        self.assertEqual(sc.get("result"), {"content": "[DIR] alpha"})
+
     def test_health_uptime_is_lossless_through_a_real_round_trip(self):
         """The #23 repro: the payload must survive json.dumps -> json.loads -> json.dumps."""
         res = call_native("mcptoon_health", {}, {

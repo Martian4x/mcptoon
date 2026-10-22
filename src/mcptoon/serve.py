@@ -842,8 +842,9 @@ class MCPServerBridge:
                     target_args = inner.get("arguments", {})
                     if not isinstance(target_args, dict):
                         target_args = {}
-                    return self._handle_call_tool(
-                        {"name": target, "arguments": target_args})
+                    return self._wrap_call_envelope(
+                        target,
+                        self._handle_call_tool({"name": target, "arguments": target_args}))
                 guard = self._throttle_search(name)
                 if guard is not None:
                     return guard
@@ -963,6 +964,67 @@ class MCPServerBridge:
                              ms=int((time.monotonic() - _t0) * 1000))
             self._log_event(server, tool, arguments, ok=False)
             return _make_tool_error(f"Call failed: {str(e)[:200]}")
+
+    def _wrap_call_envelope(self, target: str, result: dict) -> dict:
+        """Wrap a routed answer in the shape `mcptoon_call` advertises.
+
+        `mcptoon_call` declares an outputSchema requiring `tool` and `server`, but
+        the escape hatch re-enters the direct-call path and returned that path's
+        envelope verbatim — so when the upstream tool answered with its own
+        structuredContent (``{"entities": [], "relations": []}`` and the like), a
+        strict client rejected every such call: the response did not match the
+        schema the gateway itself published (issue #33, a side effect of #22).
+
+        This rebuilds ``{tool, server, result}`` from whatever the routed call
+        produced, so the declared schema is always satisfied:
+
+        * success with structuredContent -> ``result`` is that structuredContent,
+          and the upstream text view is kept as the content block;
+        * success without it -> ``result`` is the unwrapped payload;
+        * a routed failure (bad args, danger block, timeout, unknown tool) ->
+          ``isError`` stays true (the failure is still reported) and ``result``
+          carries the error text, so even an error answer matches the schema.
+
+        It wraps, it does not re-run: validation, danger checks, compression,
+        usage accounting and the footer stamp all already happened inside the
+        routed call and are preserved here.
+        """
+        server = ""
+        tool = target
+        with self._tool_index_lock:
+            info = self._tool_index.get(target)
+        if info:
+            server = info.get("server", "") or ""
+            tool = info.get("tool", target) or target
+        else:
+            known = list(self._servers.keys()) if self._servers else []
+            server, split_tool = split_namespaced(target, known)
+            tool = split_tool or target
+
+        failed = bool(isinstance(result, dict) and result.get("isError"))
+        structured = result.get("structuredContent") if isinstance(result, dict) else None
+        if structured is None:
+            if failed:
+                # No upstream payload to expose; surface the error text as the
+                # wrapped result rather than inventing an empty object.
+                text = _error_text(result)
+                structured = {"error": text} if text else {}
+            else:
+                structured = _unwrap_envelope(result)
+
+        wrapped = {"tool": tool, "server": server, "result": structured}
+
+        out: dict = {
+            "structuredContent": wrapped,
+            "isError": failed,
+            "resultType": "complete",
+        }
+        if isinstance(result, dict) and isinstance(result.get("content"), list):
+            out["content"] = result["content"]
+        else:
+            out["content"] = [{"type": "text", "text": json.dumps(
+                structured, ensure_ascii=False)}]
+        return out
 
     def _log_event(self, server: str, tool: str, arguments: Any, ok: bool) -> None:
         """Record one routed call in the per-project session log.
@@ -1281,6 +1343,16 @@ def _make_tool_error(message: str) -> dict:
         "isError": True,
         "resultType": "complete",
     }
+
+
+def _error_text(result: Any) -> str:
+    """Pull the human-readable message out of a routed error result."""
+    if not isinstance(result, dict):
+        return str(result) if result else ""
+    for block in result.get("content") or []:
+        if isinstance(block, dict) and isinstance(block.get("text"), str):
+            return block["text"]
+    return ""
 
 def _find_server_for_tool(tool_name: str, tool_index: dict) -> str:
     """Try to find which server owns a tool by name (fuzzy fallback)."""
