@@ -358,6 +358,73 @@ def explain_error(raw: str) -> tuple[str, str]:
     )
 
 
+def sort_manifest(manifest: dict, order: str = "default") -> dict:
+    """Reorder tools inside each server by ``order``.
+
+    ``order`` is one of:
+      * ``default`` — leave insertion order (server's own tools/list order)
+      * ``alpha``   — tool name, case-insensitive
+      * ``usage``   — most-called first, ties broken alphabetically
+      * ``recent``  — most-recently-called first, never-called last
+
+    Servers keep their own order; only the tool lists inside are reordered.
+    Unknown values fall back to ``default`` rather than raising — this is a
+    display hint, not a contract.
+
+    ``usage``/``recent`` read the rolling call window via
+    :func:`usage.tool_usage_index`; with no history every tool ties and the
+    alphabetical tiebreak makes the output stable instead of arbitrary.
+    """
+    order = (order or "default").lower()
+    if order not in ("default", "alpha", "usage", "recent"):
+        order = "default"
+    if order == "default":
+        return manifest
+
+    index = {}
+    if order in ("usage", "recent"):
+        try:
+            from . import usage as usage_mod
+            index = usage_mod.tool_usage_index()
+        except Exception:
+            index = {}
+
+    out = {}
+    for server, tools in manifest.items():
+        if not isinstance(tools, list) or any("error" in t for t in tools):
+            out[server] = tools
+            continue
+        if order == "alpha":
+            out[server] = sorted(tools, key=lambda t: (t.get("name") or "").lower())
+        elif order == "usage":
+            out[server] = sorted(
+                tools,
+                key=lambda t: (
+                    -(index.get((server, t.get("name")), {}).get("calls", 0)),
+                    (t.get("name") or "").lower(),
+                ),
+            )
+        else:  # recent
+            out[server] = sorted(
+                tools,
+                key=lambda t: (
+                    -(index.get((server, t.get("name")), {}).get("last_ts", 0.0)),
+                    (t.get("name") or "").lower(),
+                ),
+            )
+    return out
+
+
+def cap_tools_per_server(manifest: dict, top_n: int) -> dict:
+    """Keep only the first ``top_n`` tools of each server (for agent budgets)."""
+    if not top_n or top_n <= 0:
+        return manifest
+    out = {}
+    for server, tools in manifest.items():
+        out[server] = tools[:top_n] if isinstance(tools, list) else tools
+    return out
+
+
 def format_manifest(manifest: dict, full: bool = False) -> str:
     """Format manifest as human-readable text."""
     lines = []

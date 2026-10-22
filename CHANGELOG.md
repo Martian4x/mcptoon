@@ -5,6 +5,58 @@ All notable changes to mcptoon will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.26] - 2026-10-22
+
+### Added
+
+- **`mcptoon openapi list|call`** — drive any OpenAPI / Swagger REST API as if it
+  were MCP tools. One command per operation, `name=value` params, a cached spec
+  keyed by a caller-supplied `--cache-key` (traversal-safe), `--cache-ttl`, and
+  `--base-url` to point the same spec at prod or staging. Reuses the shared safety
+  gates (dangerous-op, poisoning, credential-leak) and usage tracking.
+- **`mcptoon graphql list|call`** — the same shape for GraphQL endpoints:
+  `list` enumerates queries/mutations, `call` runs one with `--fields "a b"`.
+- **`mcptoon auth login|creds|status`** — OAuth for protected APIs. `login` runs
+  the PKCE browser flow, `creds` the client-credentials grant, `status` reports
+  token state (never the token). `--register URL` performs RFC 7591 Dynamic Client
+  Registration so no `client-id` has to be pasted; `--client-name` sets the name the
+  server records.
+- **`mcptoon resources list|read`, `mcptoon prompts list|get`, `mcptoon complete`** —
+  the MCP primitives beyond tools: read a server's resources, render its prompt
+  templates, and ask it to complete an argument value
+  (`<ref>:<arg>=<prefix>`, split on the first `=` after the arg name).
+- **`mcptoon bake create|list|show|update|remove|install|run`** — save a connection
+  under a short name and reuse it. **Literal secrets are rejected**; headers accept
+  only `env:VAR` or `file:PATH` references, and `install` writes a launcher that
+  carries only the bake *name*, never a URL or key.
+- **`manifest --sort alpha|usage|recent`, `manifest --top N`, `--verbose`** — order
+  the tool list by name / your own call frequency / recency, cap it to N tools per
+  server, and optionally add descriptions.
+- **`--transport auto|sse|streamable`** — process-wide preference for how HTTP MCP
+  servers are negotiated (a per-server `http_transport` in config still wins).
+
+### Changed
+
+- **README restructured.** The hero is now three cards matching the three jobs a
+  user actually has — save context (tools, skills **and docs**), configure every
+  agent once (a **native CLI**: any shell-capable agent gets every feature; `sync`
+  covers the GUI clients), and find the right tool among 17,000+ (`discover` picks
+  up what is already installed, so nothing is reinstalled). The capability table is
+  regrouped to match those three, and now names the API-passthrough, OAuth, MCP
+  resource/prompt and `bake` features that earlier versions omitted.
+
+### Fixed
+
+- **Stale skill-catalog figures.** The READMEs and the two benchmark docs still
+  quoted the 371-skill era (**926,232 tokens**, **501**-token lookup, **7.07**
+  context windows). Measured on this machine with `tiktoken cl100k_base` over all
+  six skill roots, de-duplicated by real path: **480 skills, 1,572,330 tokens,
+  791-token lookup, 12.00 windows**. All surfaces now carry the current numbers and
+  the caliber that produces them.
+- **Stale wheel size.** Every surface said **363KB**; the LF-built wheel for this
+  tree is **534KB** (547,133 bytes). Updated on all eight claim surfaces and the
+  footprint guard now pins 534KB (`363KB` retired).
+
 ## [0.8.25] - 2026-10-21
 
 ### Added

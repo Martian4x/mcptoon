@@ -66,6 +66,7 @@ KNOWN_FLAGS = frozenset(
         "--self", "--pack", "--packs",
         "--slim", "--smart",
         "--stdin", "--stdio", "--takeover", "--timeout", "--tombstone", "--toon", "--tools-k", "--top",
+        "--sort", "--verbose", "--base-url", "--cache-key", "--cache-ttl", "--register", "--client-name", "--bin", "--openapi", "--graphql", "--mcp", "--transport", "--complete",
         "--url", "--usage",
         "--version", "--version-gate", "--view", "--watch",
         "--allow-tracked-deletes",
@@ -74,6 +75,18 @@ KNOWN_FLAGS = frozenset(
         # `--npm`/`--pip`/`--url` are: the central parser must not reject them as
         # unknown; `_cmd_completion` consumes them out of `rest`.
         "--install", "--uninstall",
+        # `openapi`-only. `mcptoon openapi ...` hands its tail to the adapter
+        # verbatim, but the flag must still be known so a caller that puts it
+        # before the verb is not rejected as a typo. `--no-check` opts out of
+        # the response scan; `--pretty` is accepted as a no-op alias for --json.
+        "--auth", "--auth-header", "--no-check", "--pretty", "--refresh",
+        # `graphql`-only. `--fields` is the selection set; `--schema` reads a
+        # saved introspection file. Registered for the same pass-through reason.
+        "--fields", "--schema",
+        # `auth`-only (OAuth login/creds). Registered so the central parser does
+        # not reject them before the `auth` module sees them.
+        "--auth-url", "--token-url", "--client-id", "--client-secret",
+        "--scope", "--port", "--redirect-port", "--device", "--name",
         # `exec`-only. `--langs` lists the runtimes this machine can actually
         # run; `--code` is the inline-source form (`--file` and `--timeout`
         # already existed for other commands and are reused verbatim).
@@ -113,7 +126,7 @@ def _human_bytes(n: int) -> str:
 # here without a help handler in its own module silently loses that help — see
 # tests/test_serve.py and tests/test_serve_perf.py, which pin serve's, and
 # tests/test_help_shortcircuit.py, which pins this set's purpose.
-_COMMANDS_WITH_OWN_HELP = frozenset({"demo", "demo-server", "serve"})
+_COMMANDS_WITH_OWN_HELP = frozenset({"demo", "demo-server", "serve", "openapi", "graphql", "auth", "resources", "prompts", "complete", "bake"})
 
 # The verbs shell completion offers. This is the dispatch chain's canonical verbs
 # plus the aliases it accepts (list|servers, manifest|tools, quickstart|qs,
@@ -129,7 +142,7 @@ _COMMANDS_WITH_OWN_HELP = frozenset({"demo", "demo-server", "serve"})
 _COMPLETION_COMMANDS = (
     "activity", "add", "bench", "call", "completion", "config", "demo", "demo-server",
     "discover", "docs", "doctor", "exec", "footer-facts", "health", "help", "import",
-    "init", "inspect", "install", "kb", "list", "manifest", "mode", "off", "plugin",
+    "init", "inspect", "install", "kb", "list", "manifest", "mode", "off", "openapi", "graphql", "auth", "resources", "prompts", "complete", "bake", "plugin",
     "policy", "quickstart", "remove", "report", "savings", "restore", "retrieve", "search",
     "select", "serve", "session", "skills", "stats", "status", "statusline", "sync", "toggle", "credit",
     "uninstall", "update", "usage",
@@ -472,6 +485,24 @@ def _run(state: dict) -> None:
             fmt_flag = a
         elif a == "--full":
             full = True
+        elif a == "--transport" and i + 1 < len(args):
+            # Global preference for how HTTP MCP servers are negotiated.
+            # Applied process-wide (see client.set_http_transport); a
+            # per-server `http_transport` in config.json still wins.
+            from . import client as client_mod
+            try:
+                client_mod.set_http_transport(args[i + 1])
+            except ValueError as exc:
+                _err(f"Error: {exc}")
+                sys.exit(1)
+            i += 1
+        elif a.startswith("--transport="):
+            from . import client as client_mod
+            try:
+                client_mod.set_http_transport(a.split("=", 1)[1])
+            except ValueError as exc:
+                _err(f"Error: {exc}")
+                sys.exit(1)
         elif a == "--stdin":
             use_stdin = True
         elif a == "--fallback-json":
@@ -537,6 +568,14 @@ def _run(state: dict) -> None:
                     sys.exit(2)
                 print(msg + " (ignored: MCPTOON_STRICT_FLAGS=0)", file=sys.stderr)
             cmd_args.append(a)
+            # `openapi`/`graphql`/`auth`/`bake` pass their own flags through to
+            # the module (e.g. `mcptoon openapi call <spec> <cmd> <param>=<value>`,
+            # `mcptoon bake create <name> --openapi <spec>`). Those flags are
+            # unknown to the global parser, which would reject them with exit 2.
+            # Stop parsing here and hand the remainder over verbatim.
+            if a in ("openapi", "graphql", "auth", "bake") and len(cmd_args) == 1:
+                cmd_args.extend(args[i + 1:])
+                break
         i += 1
 
     if not cmd_args:
@@ -618,6 +657,22 @@ def _run(state: dict) -> None:
     elif command == "kb":
         from . import kb as kb_mod
         kb_mod.run(rest, fmt, head_n, max_chars, full)
+    elif command == "openapi":
+        from . import openapi as openapi_mod
+        openapi_mod.run(rest, fmt, head_n, max_chars, full)
+    elif command == "graphql":
+        from . import graphql as graphql_mod
+        graphql_mod.run(rest, fmt, head_n, max_chars, full)
+    elif command == "auth":
+        from . import oauth as oauth_mod
+        oauth_mod.run(rest, fmt, head_n, max_chars, full)
+    elif command in ("resources", "prompts", "complete"):
+        from . import mcp_extras as extras_mod
+        # Prepend the pillar so the module knows which one was invoked.
+        extras_mod.run([command] + rest, fmt, head_n, max_chars, full)
+    elif command == "bake":
+        from . import bake as bake_mod
+        bake_mod.run(rest, fmt, head_n, max_chars, full)
     elif command == "session":
         from . import session_log as session_mod
         session_mod.run(rest, fmt, head_n, max_chars, full)
@@ -1032,10 +1087,40 @@ def _cmd_manifest(rest, fmt, head_n, max_chars, full, export_format=""):
     """List all tools."""
     full_mode = "--full" in rest or full
 
+    # --sort / --top / --verbose (mcp2cli parity). Parsed here rather than in
+    # the global loop because they only mean something to `manifest`.
+    sort_order = "default"
+    top_n = 0
+    verbose = "--verbose" in rest
+    for i, a in enumerate(rest):
+        if a == "--sort" and i + 1 < len(rest):
+            sort_order = rest[i + 1]
+        elif a.startswith("--sort="):
+            sort_order = a.split("=", 1)[1]
+        elif a == "--top" and i + 1 < len(rest):
+            try:
+                top_n = int(rest[i + 1])
+            except ValueError:
+                _err(f"  --top needs a number, got {rest[i + 1]!r}")
+                return
+        elif a.startswith("--top="):
+            try:
+                top_n = int(a.split("=", 1)[1])
+            except ValueError:
+                _err(f"  --top needs a number, got {a.split('=', 1)[1]!r}")
+                return
+    if sort_order not in ("default", "alpha", "usage", "recent"):
+        _err(f"  --sort must be one of default|alpha|usage|recent, got {sort_order!r}")
+        return
+
     manifest = manifest_mod.get_manifest(use_cache=True)
     if not manifest:
         print("No tools found. Run: mcptoon quickstart")
         return
+
+    # Order and cap before any renderer sees it, so every format agrees.
+    manifest = manifest_mod.sort_manifest(manifest, sort_order)
+    manifest = manifest_mod.cap_tools_per_server(manifest, top_n)
 
     # Export format takes priority
     if export_format:
@@ -1082,7 +1167,10 @@ def _cmd_manifest(rest, fmt, head_n, max_chars, full, export_format=""):
         if fmt == "json":
             print(output.render(manifest, fmt="json", head_n=head_n, max_chars=max_chars, full=full))
         else:
-            text = manifest_mod.format_manifest(manifest, full=full_mode)
+            # --verbose shows each tool's full description (wrapped); without
+            # it, the name-only index stays the cheap default. --verbose implies
+            # the same per-tool layout as --full but without the schema dump.
+            text = manifest_mod.format_manifest(manifest, full=full_mode or verbose)
             if max_chars > 0:
                 text = output._truncate(text, max_chars)
             print(text)
@@ -6636,6 +6724,21 @@ Usage:
     mcptoon call <server> <tool> [ARGS]   Call a tool
     mcptoon call --auto <tool> [ARGS]     Call a tool (auto-find server)
     mcptoon call <server> <tool> --stdin  Read args from stdin (large payloads)
+    mcptoon openapi list <spec>           Drive any OpenAPI/Swagger REST API as commands
+    mcptoon openapi call <spec> <cmd>     Call one operation (params: name=value)
+    mcptoon graphql list <endpoint>       Drive any GraphQL endpoint as commands
+    mcptoon graphql call <endpoint> <cmd> Call one query/mutation (--fields "a b")
+    mcptoon auth login <name> ...         OAuth login (PKCE) for a protected API
+    mcptoon auth creds <name> ...         OAuth client-credentials token
+    mcptoon auth status <name>            Show token state (never the token)
+    mcptoon resources list [server]       List a server's MCP resources
+    mcptoon resources read <server> <uri> Read one resource by URI
+    mcptoon prompts list [server]         List a server's prompt templates
+    mcptoon prompts get <server> <name>   Render a prompt with arguments
+    mcptoon complete <server> <ref>       Ask server to complete an argument value
+    mcptoon bake create <name> ...        Save a connection under a short name
+    mcptoon bake run <name> <action> ...  Reuse a saved connection
+    mcptoon bake list|show|remove|install Manage saved connections
     mcptoon exec <lang> "<code>"          Run code; only its stdout enters context
     mcptoon exec <lang> --file <path>     Run a script file the same way
     mcptoon exec --langs                  List the runtimes this machine can run

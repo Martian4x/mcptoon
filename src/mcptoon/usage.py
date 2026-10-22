@@ -607,6 +607,43 @@ def _lifetime_result_tokens(data: dict) -> int:
     return max(total, window)
 
 
+def tool_usage_index() -> dict[tuple[str, str], dict]:
+    """Per-tool usage counters, keyed by (server, tool).
+
+    Reads the same rolling window ``track_call`` appends to (last 1000 calls)
+    and folds it into ``{calls, last_ts}`` per tool. This is what
+    ``mcptoon manifest --sort usage`` orders by, and what ``--sort recent``
+    orders by timestamp.
+
+    Honest limit: the window is capped at 1000 calls, so a tool that was hot
+    long ago but unused since falls out. That is the right trade for a hint —
+    the alternative is an unbounded per-tool table nobody prunes.
+
+    Returns ``{}`` on any read problem: sorting is a convenience, it must never
+    be the thing that breaks a listing.
+    """
+    index: dict[tuple[str, str], dict] = {}
+    try:
+        data = _load_usage()
+        for c in data.get("calls") or []:
+            server = c.get("server")
+            tool = c.get("tool")
+            if not server or not tool:
+                continue
+            key = (server, tool)
+            row = index.setdefault(key, {"calls": 0, "last_ts": 0.0})
+            row["calls"] += 1
+            try:
+                ts = float(c.get("ts") or 0)
+            except (TypeError, ValueError):
+                ts = 0.0
+            if ts > row["last_ts"]:
+                row["last_ts"] = ts
+    except Exception:
+        return {}
+    return index
+
+
 def reset_usage():
     """Clear all usage data — the counter *and* the activity ledger.
 

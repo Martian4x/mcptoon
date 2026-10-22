@@ -18,7 +18,7 @@
   <a href="https://pypi.org/project/mcptoon/"><img src="https://img.shields.io/pypi/v/mcptoon?style=flat-square&color=238636&logo=pypi&logoColor=white" alt="PyPI version"></a>
   <a href="https://github.com/activeing123/mcptoon/stargazers"><img src="https://img.shields.io/github/stars/activeing123/mcptoon?style=flat-square&logo=github&color=58a6ff" alt="GitHub Stars"></a>
   <a href="https://github.com/activeing123/mcptoon/actions"><img src="https://img.shields.io/github/actions/workflow/status/activeing123/mcptoon/ci.yml?branch=main&style=flat-square&logo=githubactions&logoColor=white" alt="CI Build"></a>
-  <a href="#contributing"><img src="https://img.shields.io/badge/tests-2672%20passed-success?style=flat-square&logo=pytest&logoColor=white" alt="Tests"></a>
+  <a href="#contributing"><img src="https://img.shields.io/badge/tests-2866%20passed-success?style=flat-square&logo=pytest&logoColor=white" alt="Tests"></a>
   <a href="https://github.com/activeing123/mcptoon"><img src="https://img.shields.io/badge/dependencies-0%20(stdlib%20only)-blue?style=flat-square" alt="Zero Dependencies"></a>
   <a href="https://github.com/activeing123/mcptoon/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-informational?style=flat-square" alt="License"></a>
 </p>
@@ -49,21 +49,35 @@
      github.com URL (it 302-redirects, failing the media URL safety check). -->
 https://github.com/user-attachments/assets/0272d3a8-c74f-428d-8559-fbf804ce0685
 
+<table>
+<tr>
+<td align="center" width="33%" valign="top">
+<br><b>① 💥 Tools, skills &amp; docs eating your context — afraid to add more?</b><br><br>
+Add as many as you like. Tool schemas <b>72k → 581 tokens</b>.<br>
+<sub>Tools −99.2% · Skills −99.99% · Docs 40k→17k per question</sub>
+</td>
+<td align="center" width="33%" valign="top">
+<br><b>② 🧩 Several agents — JSON configs and skills both a chore?</b><br><br>
+It's a <b>native CLI</b>: any agent that can run a shell command gets <b>every feature</b> — no MCP server, no config. <code>sync</code> covers the GUI clients too (<b>103+</b>).<br>
+<sub>No JSON editing, no restart</sub>
+</td>
+<td align="center" width="33%" valign="top">
+<br><b>③ 🔍 Know there are 17,000+ — but not which one fits?</b><br><br>
+It first <b>picks up the servers you already have</b> (nothing to reinstall), then finds the rest by plain words — install and call on the spot.<br>
+<sub><code>mcptoon discover</code> → <code>search</code> → <code>call</code></sub>
+</td>
+</tr>
+</table>
+
+<p align="center">
+  <sub>Also: OpenAPI / GraphQL passthrough · OAuth · MCP resources &amp; prompts · saved connections · code sandbox — <a href="#all-commands">see All commands</a>.</sub>
+</p>
+
+<p align="center">
+  <b><code>pip install mcptoon &amp;&amp; mcptoon quickstart</code></b> — 534KB, zero dependencies, zero config.
+</p>
+
 </div>
-
-### ⚡ Core Capabilities at a Glance
-
-| 💰 Token & Context Optimization | 🛠️ Universal Tool Management |
-| :--- | :--- |
-| • ✅ **Compact Name Index (-99.2%)**: 72k tokens → 581 tokens name-only index<br>• ✅ **Lossless Compression (CCR)**: Reversible with handle retrieval (`retrieve`)<br>• ✅ **Session Deduplication**: Blocks byte-identical output duplication in turn<br>• ✅ **Honest Measurements**: Real `tiktoken` accounting via `mcptoon bench` | • ✅ **17,000+ Registry Discovery**: Natural language search (`search`)<br>• ✅ **Uniform CLI Execution (`call`)**: Headless driver for any MCP tool<br>• ✅ **On-Demand Inspection (`inspect`)**: Schema pulled only when needed<br>• ✅ **Diagnostic Doctor (`doctor`)**: Self-heals stdio pipes & environments |
-
-| 🧠 Skills Governance | 📚 Zero-Tax Docs Routing (`mcptoon docs`) |
-| :--- | :--- |
-| • ✅ **Single-Source Multi-Agent Sync**: Claude, Cursor, Roo, OpenCode<br>• ✅ **Self-Installed Skill Included**: Bundles `/mcptoon` official agent skill<br>• ✅ **Offline BM25 Skill Router**: <5ms matching, zero model API costs<br>• ✅ **Version Gate (`--version-gate`)**: Blocks unversioned content drift<br>• ✅ **Tombstone Removal**: Prevents dead skills from reviving via git pull | • ✅ **Markdown Tree Indexing**: Automatic index over large doc directories<br>• ✅ **Targeted Chapter Feeding**: Feeds 1 chapter instead of 19 chapters<br>• ✅ **Zero Model Overhead**: Pure offline BM25 keyword matching engine<br>• ✅ **Context Tax Shield**: Drops 40k doc tokens to 17k per lookup |
-
-| 🔌 103+ AI Clients Supported | 🛡️ Engineering Discipline |
-| :--- | :--- |
-| • ✅ **103+ Clients Out-of-the-Box**: Claude Code, Cursor, Windsurf, Zed, Cline...<br>• ✅ **Dual Modes (CLI & Native MCP)**: 42 CLI direct + 61 MCP serve fallback<br>• ✅ **Transparent Session Footer**: Live savings breakdown printed after turns | • ✅ **Zero Dependencies**: 100% Python standard library (`pyproject.toml` clean)<br>• ✅ **Ultra Lightweight**: Only 363KB total package footprint, installs in 2s<br>• ✅ **100% Local & Private**: No cloud calls, zero telemetry, air-gap ready<br>• ✅ **Strict XDG Compliant**: Sandbox-friendly config isolation via `--dir` |
 
 ---
 
@@ -93,7 +107,7 @@ When installed, mcptoon **automatically injects its own official skill (`/mcptoo
 <h4>⚡ Terminal Way: 30-Second Setup</h4>
 
 ```bash
-# 1. Install (zero dependencies, 363KB)
+# 1. Install (zero dependencies, 534KB)
 pip install mcptoon
 
 # 2. One command: detect MCP servers & auto-configure agents
@@ -116,8 +130,23 @@ mcptoon docs resolve "how does release gating work"
 **direct** mode — installed but not wired into the agent — and save nothing. See
 [Which mode is cheapest?](#which-mode-is-cheapest), or just run `mcptoon mode`.
 
----
+### ⚡ Core Capabilities at a Glance
 
+| 💥 Save context (why ①) | 🧩 One config, every agent (why ②) |
+| :--- | :--- |
+| • ✅ **Compact name index (−99.2%)**: 255 tools → **581 tokens**, full schema fetched on demand<br>• ✅ **Lossless result compression**: reversible, `retrieve` the original behind any handle<br>• ✅ **Session dedup**: byte-identical output in one turn becomes a reference<br>• ✅ **Skills the same way**: one 39-token pointer + one lookup replaces every `SKILL.md`<br>• ✅ **Docs too**: `docs` feeds 1 chapter, not 19 — **40k → 17k tokens per question**<br>• ✅ **Honest numbers**: real `tiktoken` accounting via `mcptoon bench` | • ✅ **Native CLI**: any shell-capable agent runs `mcptoon` and gets **every feature** — no MCP server, no config<br>• ✅ **GUI clients too**: `sync` writes the JSON for Claude, Cursor, Cline, Windsurf, VS Code, Claude Code — **6 here, 103+ supported**<br>• ✅ **Verified list**: 42 clients run the CLI directly, 61 mount one `mcptoon serve` entry<br>• ✅ **Skills too**: one catalog distributed to every agent's folder (`skills sync`)<br>• ✅ **Import what you have**: pull servers from Claude / Cursor / Cline / Windsurf<br>• ✅ **One-command setup**: `quickstart` = discover + configure + show tools<br>• ✅ **Fine control**: `toggle` on/off, `policy` sets each tool's output tier, `--version-gate` / `--tombstone` for skills |
+
+| 🔍 Find & call (why ③) | 🔌 Drive any API, not just MCP |
+| :--- | :--- |
+| • ✅ **17,000+ registry**: plain-language `search` across servers<br>• ✅ **Discover what's already installed**: `discover` scans existing client configs — **nothing to reinstall**<br>• ✅ **Call anything**: `call` headless, or `call --auto` to auto-find the server<br>• ✅ **On-demand schema**: `inspect` only when a tool is actually used<br>• ✅ **Pick for a task**: `select "<task>"` returns just the top few<br>• ✅ **Export anywhere**: `manifest --format openai\|openapi\|mcp` | • ✅ **OpenAPI / Swagger**: any REST API as commands (`openapi list\|call`)<br>• ✅ **GraphQL**: any endpoint as commands (`graphql list\|call`)<br>• ✅ **OAuth built in**: PKCE login, client-credentials, Dynamic Client Registration<br>• ✅ **MCP resources & prompts**: `resources`, `prompts`, `complete`<br>• ✅ **Saved connections**: `bake` — secrets by reference only (`env:` / `file:`)<br>• ✅ **Code sandbox**: `exec` — only stdout enters context |
+
+| 🛡️ Safe, small, private | 📚 Docs & doctor |
+| :--- | :--- |
+| • ✅ **Zero dependencies**: pure standard library, `pyproject.toml` clean<br>• ✅ **534KB, installs in 2s**<br>• ✅ **100% local & private**: no cloud, no telemetry, air-gap ready<br>• ✅ **Guards**: destructive-op + prompt-injection + credential-leak checks on every call<br>• ✅ **XDG compliant**: sandbox-friendly `--dir` isolation | • ✅ **Docs router**: `docs` indexes a Markdown tree, feeds 1 chapter instead of 19 (40k → 17k tokens)<br>• ✅ **Search inside docs**: `kb` returns passages, not whole files (95KB → 3 snippets)<br>• ✅ **Self-heal**: `doctor` repairs stdio pipes & environments; `health` probes every server<br>• ✅ **Live proof**: `bench` / `demo` show the real numbers on your machine<br>• ✅ **Transparent footer**: `footer-facts` prints live savings after each turn |
+
+<sub>Every command, with flags, is in [All commands](#all-commands).</sub>
+
+---
 
 ## Why mcptoon
 
@@ -128,7 +157,7 @@ Every MCP agent (Claude Code, Cursor, Codex, …) loads **the full description o
 mcptoon keeps those descriptions **on disk, not in context**, and hands the agent a compact view instead:
 
 - **A name index, not full schemas.** Picking a tool only needs its name — 255 tools become **581 tokens (−99.2%)**. The full schema is fetched on demand with `mcptoon inspect`, only when a tool is actually called.
-- **Skills the same way.** One resident pointer (**39 tokens**) plus one lookup (**501 tokens**) replaces loading every `SKILL.md` in full — **926,232 → 39 + 501 (−99.9%)**.
+- **Skills the same way.** One resident pointer (**39 tokens**) plus one lookup (**791 tokens**) replaces loading every `SKILL.md` in full — **1,572,330 → 39 + 791 (−99.99%)**.
 - **Results too.** `--toon` re-encodes a tool's *result* as standard TOON.
   Measured **5.7%** smaller on a mixed result sample, ranging **1.8%-48.6%** by
   result shape — a list of records barely shrinks, a single record halves. Not a
@@ -136,7 +165,7 @@ mcptoon keeps those descriptions **on disk, not in context**, and hands the agen
 
 Nothing is lost: the full schema and the full skill text stay one command away. Only the context window is spared.
 
-mcptoon is a **363KB, zero-dependency native CLI** that manages every MCP tool and agent skill on your computer — and shares them across all your agents with no config written by you.
+mcptoon is a **534KB, zero-dependency native CLI** that manages every MCP tool and agent skill on your computer — and shares them across all your agents with no config written by you.
 
 ## This isn't just us talking
 
@@ -189,7 +218,7 @@ catalog, not the fixed 255-tool sample below (that sample's method is in
 | **Finding tools & skills** | hunt GitHub by hand | `install --search` (**17,000+ MCP servers**) + `skills search` |
 | **Starting from scratch** | wire tools one by one | 4 built-in starter packs — one command to a working set |
 
-Skills work the same way: **926,232 tokens** of `SKILL.md` text → **39** resident + **501** per lookup (−99.9%). Call results shrink a further **~6%** with `--toon` (shape-dependent).
+Skills work the same way: **1,572,330 tokens** of `SKILL.md` text → **39** resident + **791** per lookup (−99.99%). Call results shrink a further **~6%** with `--toon` (shape-dependent).
 
 ---
 
@@ -270,7 +299,7 @@ Full reference: [DEVELOPERS.md](https://github.com/activeing123/mcptoon/blob/mai
 ## 30 seconds up and running
 
 ```bash
-pip install mcptoon                          # pure stdlib, 363KB, zero dependencies
+pip install mcptoon                          # pure stdlib, 534KB, zero dependencies
 
 # One command: find your MCP servers, write your config, register the gateway
 # in every agent you have, and show you what it found:
@@ -331,7 +360,7 @@ turn.
 ### Skills: one resident pointer
 
 No more loading the whole catalog. A single pointer line stays resident (39 tokens) and
-one lookup returns the most relevant skills (501 tokens). Views are **links** (a junction
+one lookup returns the most relevant skills (791 tokens). Views are **links** (a junction
 on Windows, no admin needed), so one edit at the source is live everywhere and there is no
 second copy to drift.
 
@@ -439,23 +468,23 @@ types, 8,282 tokens, −88.5%) or `--full` (the complete schema).
 This bill comes due *after* a tool returns. `mcptoon call` prints JSON by default and
 **saves nothing by default**. Add `--toon` to shrink the result.
 
-### Bill 3 · Skill catalog (`skills`): 926,232 → 39 resident + 501 per lookup
+### Bill 3 · Skill catalog (`skills`): 1,572,330 → 39 resident + 791 per lookup
 
 ```bash
 mcptoon skills manifest                      # 39 tokens, resident
-mcptoon skills resolve "make a PDF" --k 5    # 501 tokens, the 5 most relevant
+mcptoon skills resolve "make a PDF" --k 5    # 791 tokens, the 5 most relevant
 ```
 
 **One table, all three, on the machine this README was written on:**
 
 | Path | What the agent loads | Tokens | vs native |
 |---|---|---:|---:|
-| Tool schemas (1109) | every full schema | 139,863 | — |
-| | `manifest` (name index) | 5,406 | 96.1% |
-| | `manifest --slim` | 16,396 | 88.3% |
-| Skill files (371) | every `SKILL.md`, full text | 926,232 | — |
-| | `skills manifest` (pointer) | 39 | 100.0% |
-| | `skills resolve --k 5` | 501 | 99.9% |
+| Tool schemas (212) | every full schema | 640,787 | — |
+| | `manifest` (name index) | 914 | 99.85% |
+| | `manifest --slim` | 3,056 | 99.52% |
+| Skill files (480) | every `SKILL.md`, full text | 1,572,330 | — |
+| | `skills manifest` (pointer) | 39 | 99.99% |
+| | `skills resolve --k 5` | 791 | 99.94% |
 
 The fixed headline benchmark — a **synthetic sample** of 255 tools across 50 servers,
 `tiktoken cl100k_base`. It is not your catalog; run `mcptoon status` to see your own
@@ -670,15 +699,36 @@ mcptoon import                  # import servers from Claude Desktop / Cursor / 
 mcptoon init                    # create a sample config (--auto to discover and fill it)
 mcptoon list                    # show configured servers
 mcptoon manifest                # all tool names (compact by default; 255 tools = 581 tokens)
-mcptoon manifest --slim         # names + param types (8,282 vs 71,929 = −88.5%)
+mcptoon manifest --sort alpha|usage|recent       # order the list (usage = your most-called first)
+mcptoon manifest --top 3 --verbose              # cap to N tools per server; --verbose adds descriptions
 mcptoon inspect <server> <tool> # inspect one tool's schema
 mcptoon search <query>          # search tools across servers
 mcptoon select "<task>"         # top 3 tools for a task (past ~40 tools, models pick wrong)
 mcptoon select "<task>" --top 5 # ...or how many you want
 mcptoon call <server> <tool> '{"args":"here"}'   # call a tool
+mcptoon call <server> <tool> ... --transport sse|streamable  # HTTP transport preference (default auto)
 mcptoon exec python "print(len(open('big.log').readlines()))"  # run code; only stdout enters context
 mcptoon exec python --file analyze.py            # same, from a script file
 mcptoon exec --langs                             # what this machine can actually run
+mcptoon openapi list <spec>                      # any OpenAPI/Swagger REST API as commands
+mcptoon openapi call <spec> <cmd> pet-id=2       # call one operation (params: name=value)
+mcptoon openapi call <spec> <cmd> --base-url U   # override the server (prod vs staging)
+mcptoon openapi call <spec> <cmd> --cache-ttl 0 --cache-key v2  # re-fetch the spec; keep versions apart
+mcptoon graphql list <endpoint>                  # any GraphQL endpoint as commands
+mcptoon graphql call <endpoint> <cmd> --fields "name id"  # one query/mutation
+mcptoon auth login <name> --auth-url U --token-url U --client-id ID  # OAuth (PKCE)
+mcptoon auth creds <name> --token-url U --client-id ID  # OAuth client credentials
+mcptoon auth login <name> ... --register REG_URL --client-name mine  # DCR (RFC 7591) — no client-id needed
+mcptoon openapi call <spec> <cmd> --auth oauth:<name>   # use a stored token
+mcptoon resources list [server]                  # list a server's MCP resources
+mcptoon resources read <server> <uri>            # read one resource by URI
+mcptoon prompts list [server]                    # list a server's prompt templates
+mcptoon prompts get <server> <name> a=1          # render a prompt with arguments
+mcptoon complete <server> <ref>:<arg>=<prefix>   # ask the server to finish a value
+mcptoon bake create <name> --openapi <spec>      # save a connection under a name
+mcptoon bake create <name> --openapi <spec> --auth-header 'K: env:VAR'  # secret by reference only (env:/file:)
+mcptoon bake run <name> <action> ...             # reuse a saved connection
+mcptoon bake install <name> --bin ~/.local/bin   # write a launcher that only carries the bake name
 mcptoon add <name> --stdio|--http <cmd|url>     # add any MCP server
 mcptoon remove <name>           # remove a server
 mcptoon install <name> --npm|--pip|--url <pkg>  # install + auto-generate handler
@@ -751,7 +801,7 @@ to injecting every schema, at a fraction of the cost.
 
 ## Trust and safety
 
-**It's just a 363KB native CLI — delete it anytime; keep it, and you never have to configure tools or skills for any agent again.** mcptoon touches your agent configs, so it is built to be transparent — and easy to walk away from.
+**It's just a 534KB native CLI — delete it anytime; keep it, and you never have to configure tools or skills for any agent again.** mcptoon touches your agent configs, so it is built to be transparent — and easy to walk away from.
 
 Three guards run on every tool result before your agent sees it:
 
@@ -797,7 +847,7 @@ git clone https://github.com/activeing123/mcptoon.git
 cd mcptoon
 pip install -e . --no-build-isolation
 pip install pytest pytest-cov
-python -m pytest tests/ -v   # 2672 passed, 2 skipped
+python -m pytest tests/ -v   # 2866 passed, 2 skipped
 ```
 
 Three hard rules: zero dependencies (CI-enforced), new behavior ships with tests, Windows
@@ -805,7 +855,7 @@ is a first-class target. New here? Start with
 [CONTRIBUTING.md](https://github.com/activeing123/mcptoon/blob/main/CONTRIBUTING.md) and
 [DEVELOPERS.md](https://github.com/activeing123/mcptoon/blob/main/DEVELOPERS.md).
 
-The codebase: **35,186 lines of Python across 50 modules**, zero third-party dependencies.
+The codebase: **39,364 lines of Python across 55 modules**, zero third-party dependencies.
 
 ---
 

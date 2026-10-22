@@ -82,6 +82,39 @@ SUPPORTED_PROTOCOL_VERSIONS = [
 #: Backwards-compat alias (was hardcoded to "2024-11-05" before v0.7.0).
 PROTOCOL_VERSION = LEGACY_PROTOCOL_VERSION
 
+#: Preferred HTTP response shape, set by `--transport`. mcptoon always sends
+#: both `Accept` values by default (a server may answer either way), so this
+#: only controls which one we ADVERTISE FIRST:
+#:   * "auto"       — both, JSON first (default; the server decides)
+#:   * "sse"        — advertise text/event-stream first
+#:   * "streamable" — advertise application/json only (no SSE in Accept)
+#: It never changes the request body or method: this is a negotiation hint for
+#: servers whose Accept handling is picky, not a different protocol.
+TRANSPORT_PREF_ACCEPT = {
+    "auto": "application/json, text/event-stream",
+    "sse": "text/event-stream, application/json",
+    "streamable": "application/json",
+}
+VALID_TRANSPORTS = tuple(TRANSPORT_PREF_ACCEPT)
+
+#: Process-wide default set by `--transport`. A per-server `http_transport` in
+#: config.json wins over it; this is the "one command, one preference" knob for
+#: a server whose Accept handling is picky and which the user has not added yet.
+_HTTP_TRANSPORT_DEFAULT = "auto"
+
+
+def set_http_transport(name: str) -> None:
+    """Set the process-wide default HTTP transport preference (from --transport)."""
+    global _HTTP_TRANSPORT_DEFAULT
+    if name not in TRANSPORT_PREF_ACCEPT:
+        raise ValueError(
+            f"transport must be one of {', '.join(VALID_TRANSPORTS)}, got {name!r}")
+    _HTTP_TRANSPORT_DEFAULT = name
+
+
+def get_http_transport_default() -> str:
+    return _HTTP_TRANSPORT_DEFAULT
+
 # _meta keys defined by the 2026-07-28 spec (stateless request annotation)
 _META_PROTOCOL_KEY = "io.modelcontextprotocol/protocolVersion"
 _META_CAPS_KEY = "io.modelcontextprotocol/clientCapabilities"
@@ -236,11 +269,16 @@ class MCPClient:
         timeout: float = 30,
         spec: str = "auto",
         cwd: Optional[str] = None,
+        http_transport: str = "auto",
     ):
         if stdio and http:
             raise ValueError("Pass exactly one of stdio= or http=")
         if not stdio and not http:
             raise ValueError("Must pass stdio= or http=")
+        if http_transport not in TRANSPORT_PREF_ACCEPT:
+            raise ValueError(
+                f"http_transport must be one of {', '.join(VALID_TRANSPORTS)}, "
+                f"got {http_transport!r}")
 
         self._transport = "stdio" if stdio else "http"
         self._stdio_cmd = stdio
@@ -249,6 +287,7 @@ class MCPClient:
         self._env = env
         self._timeout = timeout
         self._cwd = cwd
+        self._http_transport = http_transport
 
         # stdio state
         self._proc: Optional[subprocess.Popen] = None
@@ -429,6 +468,78 @@ class MCPClient:
         if request_state:
             params["requestState"] = request_state
         return self._request("tools/call", params)
+
+    # ── MCP resources (spec: resources/list, resources/templates/list,
+    #    resources/read) ────────────────────────────────────────────────────
+    # These return the raw protocol result rather than flattened content:
+    # a resource read yields a `contents` array (text or base64 blob), and
+    # dropping mimeType/uri would lose information the caller needs.
+
+    def list_resources(self, use_cache: bool = False) -> list[dict]:
+        """List the server's resources. Returns the `resources` array."""
+        if use_cache and getattr(self, "_resources_cache", None):
+            return self._resources_cache
+        result = self._request("resources/list", {})
+        resources = result.get("resources", []) if isinstance(result, dict) else []
+        self._resources_cache = resources
+        return resources
+
+    def list_resource_templates(self) -> list[dict]:
+        """List resource URI templates. Returns the `resourceTemplates` array."""
+        result = self._request("resources/templates/list", {})
+        if isinstance(result, dict):
+            return result.get("resourceTemplates", [])
+        return []
+
+    def read_resource(self, uri: str) -> dict:
+        """Read one resource by URI. Returns the full result (`contents`)."""
+        result = self._request("resources/read", {"uri": uri})
+        return result if isinstance(result, dict) else {"contents": result}
+
+    # ── MCP argument completion (spec: completion/complete) ────────────────
+
+    def complete(self, ref: str, argument: str, value: str,
+                 context: dict | None = None) -> dict:
+        """Ask the server to complete an argument value.
+
+        ``ref`` is either a prompt name or a resource URI template:
+          * a bare name (no ``://``) is sent as ``{"type": "ref/prompt"}``
+          * anything containing ``://`` is sent as ``{"type": "ref/resource",
+            "uri": ...}`` — matching the spec's two reference kinds, and
+            matching how mcp2cli spells ``--complete REF:ARG=PREFIX``.
+
+        Returns the raw result (``{"completion": {"values": [...],
+        "hasMore": bool}}``). A server that does not implement completions
+        raises MCPError(METHOD_NOT_FOUND); the caller turns that into one line.
+        """
+        if "://" in ref:
+            ref_obj: dict = {"type": "ref/resource", "uri": ref}
+        else:
+            ref_obj = {"type": "ref/prompt", "name": ref}
+        params: dict = {"ref": ref_obj, "argument": {"name": argument, "value": value}}
+        if context:
+            params["context"] = context
+        result = self._request("completion/complete", params)
+        return result if isinstance(result, dict) else {"completion": result}
+
+    # ── MCP prompts (spec: prompts/list, prompts/get) ──────────────────────
+
+    def list_prompts(self, use_cache: bool = False) -> list[dict]:
+        """List the server's prompt templates. Returns the `prompts` array."""
+        if use_cache and getattr(self, "_prompts_cache", None):
+            return self._prompts_cache
+        result = self._request("prompts/list", {})
+        prompts = result.get("prompts", []) if isinstance(result, dict) else []
+        self._prompts_cache = prompts
+        return prompts
+
+    def get_prompt(self, name: str, arguments: dict | None = None) -> dict:
+        """Render a prompt by name. Returns the full result (`messages`)."""
+        params: dict = {"name": name}
+        if arguments:
+            params["arguments"] = arguments
+        result = self._request("prompts/get", params)
+        return result if isinstance(result, dict) else {"messages": result}
 
     def close(self):
         """Clean up: kill subprocess or close HTTP session."""
@@ -695,7 +806,12 @@ class MCPClient:
         """
         req = urllib.request.Request(self._http_url, data=payload, method="POST")
         req.add_header("Content-Type", "application/json")
-        req.add_header("Accept", "application/json, text/event-stream")
+        # getattr default: an MCPClient built via __new__ (tests, unpickling)
+        # has no _http_transport attribute; fall back to the auto Accept.
+        req.add_header("Accept",
+                       TRANSPORT_PREF_ACCEPT.get(
+                           getattr(self, "_http_transport", "auto"),
+                           TRANSPORT_PREF_ACCEPT["auto"]))
         # Bot filters on public hosted endpoints 403 the default
         # "Python-urllib/3.x" signature (Cloudflare error 1010); announce
         # ourselves instead — unless the caller already set a User-Agent.
@@ -1065,6 +1181,7 @@ class MCPClientPool:
                 headers=cfg.get("headers", {}),
                 timeout=cfg.get("timeout", 30),
                 spec=cfg.get("spec", "auto"),
+                http_transport=cfg.get("http_transport") or _HTTP_TRANSPORT_DEFAULT,
             )
         else:
             raise MCPError("BAD_CONFIG", f"Unknown transport: {transport}")
@@ -1072,6 +1189,32 @@ class MCPClientPool:
     def list_tools(self, name: str) -> list[dict]:
         """List tools for a specific server."""
         return self._get_client(name).list_tools()
+
+    def list_resources(self, name: str) -> list[dict]:
+        """List resources for a specific server."""
+        return self._get_client(name).list_resources()
+
+    def list_resource_templates(self, name: str) -> list[dict]:
+        """List resource templates for a specific server."""
+        return self._get_client(name).list_resource_templates()
+
+    def read_resource(self, name: str, uri: str) -> dict:
+        """Read one resource from a specific server."""
+        return self._get_client(name).read_resource(uri)
+
+    def list_prompts(self, name: str) -> list[dict]:
+        """List prompts for a specific server."""
+        return self._get_client(name).list_prompts()
+
+    def get_prompt(self, name: str, prompt: str,
+                   arguments: dict | None = None) -> dict:
+        """Render a prompt from a specific server."""
+        return self._get_client(name).get_prompt(prompt, arguments)
+
+    def complete(self, name: str, ref: str, argument: str, value: str,
+                 context: dict | None = None) -> dict:
+        """Ask a specific server to complete an argument value."""
+        return self._get_client(name).complete(ref, argument, value, context)
 
     def call(self, server: str, tool: str, arguments: dict | None = None,
              input_responses: dict | None = None,

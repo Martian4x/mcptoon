@@ -23,3 +23,12 @@ the standard TOON spec. If you implement SLIM format, please:
 This project is inspired by the Model Context Protocol (MCP) specification
 by Anthropic (https://modelcontextprotocol.io/). mcptoon is an independent
 implementation and is not affiliated with or endorsed by Anthropic.
+
+=== OpenAPI adapter — design inspiration ===
+The `mcptoon openapi` adapter (src/mcptoon/openapi.py) is an independent,
+stdlib-only implementation. Its design conventions — operation naming from
+operationId, path-item parameter inheritance, Optional[T] union collapsing,
+and request-body content negotiation — follow the approach popularised by
+knowsuchagency/mcp2cli (https://github.com/knowsuchagency/mcp2cli),
+Copyright (c) 2026 Stephan Fitzpatrick, licensed under the MIT License.
+No mcp2cli source code is included; this notice records the design lineage.

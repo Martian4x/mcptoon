@@ -57,7 +57,7 @@ COVERED = ("README.md", "README.zh-CN.md", "DEVELOPERS.md", "docs/comparison.md"
 RETIRED_KB = ("50KB", "250KB", "206KB", "232KB", "233KB", "189KB", "128KB",
               "146KB", "180KB", "156KB", "179KB", "190KB", "227KB", "297KB", "301KB",
               "304KB", "306KB", "307KB", "308KB", "322KB", "327KB", "332KB", "334KB",
-              "337KB", "339KB", "341KB", "342KB", "346KB", "350KB", "362KB")
+              "337KB", "339KB", "341KB", "342KB", "346KB", "350KB", "362KB", "363KB")
 
 # Surfaces that state the suite total but were outside the badge guard.
 # 2026-09-17: the landing pages, DEVELOPERS.md and ROADMAP.md still advertised
@@ -195,7 +195,7 @@ SUITE_PROSE = re.compile(r"(\d[\d,]{2,6})\s*(?:tests?\b|个测试)")
 # value shipped in the CHANGELOG and on every surface. The authoritative method is
 # to measure `git archive <tag>` — the tree that actually publishes — never the
 # working tree. 362KB joins RETIRED_KB.
-WHEEL_KB = "363KB"
+WHEEL_KB = "534KB"
 
 
 def modules() -> list[Path]:

@@ -18,7 +18,7 @@
   <a href="https://pypi.org/project/mcptoon/"><img src="https://img.shields.io/pypi/v/mcptoon?style=flat-square&color=238636&logo=pypi&logoColor=white" alt="PyPI 版本"></a>
   <a href="https://github.com/activeing123/mcptoon/stargazers"><img src="https://img.shields.io/github/stars/activeing123/mcptoon?style=flat-square&logo=github&color=58a6ff" alt="GitHub Stars"></a>
   <a href="https://github.com/activeing123/mcptoon/actions"><img src="https://img.shields.io/github/actions/workflow/status/activeing123/mcptoon/ci.yml?branch=main&style=flat-square&logo=githubactions&logoColor=white" alt="CI 构建"></a>
-  <a href="#贡献指南"><img src="https://img.shields.io/badge/tests-2672%20passed-success?style=flat-square&logo=pytest&logoColor=white" alt="测试"></a>
+  <a href="#贡献指南"><img src="https://img.shields.io/badge/tests-2866%20passed-success?style=flat-square&logo=pytest&logoColor=white" alt="测试"></a>
   <a href="https://github.com/activeing123/mcptoon"><img src="https://img.shields.io/badge/dependencies-0%20(stdlib%20only)-blue?style=flat-square" alt="零第三方依赖"></a>
   <a href="https://github.com/activeing123/mcptoon/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-informational?style=flat-square" alt="许可证"></a>
 </p>
@@ -48,21 +48,35 @@
      则不会被改写，Chrome 会拒绝那个会 302 跳转的 github.com 原始地址。 -->
 https://github.com/user-attachments/assets/a40bff9a-7f47-4bd2-84ec-04508e5b2a81
 
+<table>
+<tr>
+<td align="center" width="33%" valign="top">
+<br><b>① 💥 工具、技能、文档太吃 token，不敢多装？</b><br><br>
+装再多也不怕。工具 schema <b>7.2 万 → 581 token</b>。<br>
+<sub>工具 −99.2% · 技能 −99.99% · 文档 4 万→1.7 万/次</sub>
+</td>
+<td align="center" width="33%" valign="top">
+<br><b>② 🧩 装了好几个 Agent，配置 JSON 和技能两头都繁琐？</b><br><br>
+它是<b>原生 CLI</b>：只要 Agent 能跑 shell 命令，就支持<b>全部功能</b>——不用起 MCP 服务、不用配置。<code>sync</code> 再帮 GUI 客户端写好 JSON（共 <b>103+ 款</b>）。<br>
+<sub>不改 JSON、不重启</sub>
+</td>
+<td align="center" width="33%" valign="top">
+<br><b>③ 🔍 知道有 17,000+ 个，却不知道哪个好用？</b><br><br>
+先<b>自动捡起你已装的</b>（无需重装），再白话搜剩下的，当场装、当场调。<br>
+<sub><code>mcptoon discover</code> → <code>search</code> → <code>call</code></sub>
+</td>
+</tr>
+</table>
+
+<p align="center">
+  <sub>还内置：OpenAPI / GraphQL 直通 · OAuth · MCP 资源与提示词 · 连接存名 · 代码沙箱 — <a href="#all-commands">详见 All commands</a>。</sub>
+</p>
+
+<p align="center">
+  <b><code>pip install mcptoon &amp;&amp; mcptoon quickstart</code></b> — 534KB，零依赖，零配置。
+</p>
+
 </div>
-
-### ⚡ 全能力全景速览
-
-| 💰 Token 极致压缩与成本节流 | 🛠️ MCP 工具统一纳管与调度 |
-| :--- | :--- |
-| • ✅ **Schema 极致瘦身 (-99.2%)**：7.1 万 Token 缩减至 581 Token 极简名字索引<br>• ✅ **结果智能无损压缩 (CCR)**：自动裁剪冗余输出，原件支持 100% 句柄取回 (`retrieve`)<br>• ✅ **会话级重复结果过滤**：同一次对话相同输出自动转引用，杜绝重复扣费<br>• ✅ **真实数据度量 (`bench`)**：内置 `tiktoken` 精确核算本机真实节省 Token 数 | • ✅ **17,000+ 社区工具发现**：支持大白话自然语言检索工具注册表 (`search`)<br>• ✅ **统一命令行执行 (`call`)**：无论目标服务用何种语言编写，均可直接驱动<br>• ✅ **按需参数拉取 (`inspect`)**：仅在 Agent 决定调用时才毫秒级拉取 Schema<br>• ✅ **健康体检自愈 (`doctor`)**：一键排查 stdio 管道、网络连通性与配置冲突 |
-
-| 🧠 技能统一分发与离线治理 | 📚 长文档与开发规范零税路由 (`mcptoon docs`) |
-| :--- | :--- |
-| • ✅ **一套技能，多端共享 (`sync`)**：软链分发给 Claude, Cursor, Roo, OpenCode<br>• ✅ **自带官方内置技能**：安装即自带 `/mcptoon` 技能手册，Agent 自动学习<br>• ✅ **本地离线 BM25 路由 (`resolve`)**：5 毫秒锁定匹配手册，0 模型 API 成本<br>• ✅ **严格版本门禁 (`--version-gate`)**：改动内容但未升版本号时自动拦截<br>• ✅ **防复活墓碑机制 (`--tombstone`)**：永久下线废弃技能，防 Git 拉取复活 | • ✅ **长文档目录树自动索引 (`index`)**：为大型规范与文档目录生成极简索引<br>• ✅ **按需章节投喂 (`resolve`)**：Agent 提问只返回对应单篇路径，免读全书<br>• ✅ **无外部依赖与向量库**：纯本地毫秒级 BM25 关键词匹配引擎<br>• ✅ **上下文税强力护盾**：实测将 4 万 Token 规范文档查询压减至 1.7 万 |
-
-| 🔌 覆盖 103+ 款 AI 客户端 | 🛡️ 极致轻量与工程纪律 |
-| :--- | :--- |
-| • ✅ **103 款客户端开箱即用**：Claude Code, Cursor, Windsurf, Zed, Cline...<br>• ✅ **CLI 原生 + 标准 MCP 双模**：42 款命令行直通 + 61 款 serve 代理回退<br>• ✅ **会话末尾透明播报 (`footer`)**：每轮对话直观展示当前省下的 Token 真实数字 | • ✅ **绝对零第三方依赖**：100% 纯 Python 标准库编写，依赖项为空<br>• ✅ **极致轻巧 (363KB)**：一条命令 2 秒安装完毕，卸载干干净净<br>• ✅ **100% 离线与隐私保护**：所有算法与索引完全单机运行，数据绝不上云<br>• ✅ **严格遵守 XDG 规范**：无缝支持沙盒、自定义 `--dir` 与环境隔离 |
 
 ---
 
@@ -92,7 +106,7 @@ mcptoon 安装后**会自动将官方技能（`/mcptoon`）注入到所有检测
 <h4>⚡ 终端极客方式：30 秒搞定</h4>
 
 ```bash
-# 1. 一键安装（零依赖，363KB）
+# 1. 一键安装（零依赖，534KB）
 pip install mcptoon
 
 # 2. 一键检测并自动配置已安装的 Agent
@@ -113,8 +127,23 @@ mcptoon docs resolve "版本发布门禁怎么运作"
 
 **它到底在不在帮你省？** 新装后 mcptoon 可能停在 **直连** 状态——装了但没接进 Agent，一分不省。看 [哪种模式最省？](#哪种模式最省)，或直接跑 `mcptoon mode`。
 
----
+### ⚡ 全能力全景速览
 
+| 💥 省 token（为什么 ①） | 🧩 配一次，全 Agent 通用（为什么 ②） |
+| :--- | :--- |
+| • ✅ **名字索引瘦身 (−99.2%)**：255 个工具 → **581 token**，完整 schema 用时才拉<br>• ✅ **结果无损压缩**：可逆，任何句柄都能 `retrieve` 取回原文<br>• ✅ **会话内去重**：同一轮里一模一样的输出自动变引用<br>• ✅ **技能同样处理**：一个 39 token 指针 + 一次查询，替掉每个 `SKILL.md`<br>• ✅ **文档也压**：`docs` 投喂 1 章而非 19 章 —— **每次查询 4 万 → 1.7 万 token**<br>• ✅ **数字不虚标**：`bench` 用真 `tiktoken` 核算 | • ✅ **原生 CLI**：只要 Agent 能跑 shell，跑 `mcptoon` 就拿到**全部功能** —— 不用起服务、不用配置<br>• ✅ **GUI 客户端也行**：`sync` 帮你写好 JSON —— Claude、Cursor、Cline、Windsurf、VS Code、Claude Code，**本机 6 个，共支持 103+ 款**<br>• ✅ **已核实清单**：42 款直接跑 CLI，61 款挂一个 `mcptoon serve` 入口<br>• ✅ **技能也同步**：一套目录分发到每个 Agent 的文件夹（`skills sync`）<br>• ✅ **已有的直接导入**：从 Claude / Cursor / Cline / Windsurf 拉服务器<br>• ✅ **一条命令起步**：`quickstart` = 发现 + 配置 + 列出工具<br>• ✅ **细粒度控制**：`toggle` 开关、`policy` 定每个工具的输出档、技能用 `--version-gate` / `--tombstone` |
+
+| 🔍 发现与调用（为什么 ③） | 🔌 不只是 MCP：直通任意 API |
+| :--- | :--- |
+| • ✅ **17,000+ 注册表**：大白话 `search` 跨服务器搜<br>• ✅ **先捡已装的**：`discover` 扫现有客户端配置 —— **无需重装**<br>• ✅ **调什么都行**：`call` 直调，或 `call --auto` 自动找服务器<br>• ✅ **参数按需拉**：`inspect` 只在真要调时拉 schema<br>• ✅ **按任务挑**：`select "<任务>"` 只回最相关的几个<br>• ✅ **随处导出**：`manifest --format openai\|openapi\|mcp` | • ✅ **OpenAPI / Swagger**：任意 REST API 变命令（`openapi list\|call`）<br>• ✅ **GraphQL**：任意端点变命令（`graphql list\|call`）<br>• ✅ **内置 OAuth**：PKCE 登录、客户端凭证、动态客户端注册<br>• ✅ **MCP 资源与提示词**：`resources`、`prompts`、`complete`<br>• ✅ **连接存名**：`bake` —— 密钥只按引用存（`env:` / `file:`）<br>• ✅ **代码沙箱**：`exec` —— 只有 stdout 进上下文 |
+
+| 🛡️ 安全、轻量、隐私 | 📚 文档与体检 |
+| :--- | :--- |
+| • ✅ **零第三方依赖**：纯标准库，`pyproject.toml` 干净<br>• ✅ **534KB，2 秒装完**<br>• ✅ **100% 本地**：不上云、无遥测、可断网<br>• ✅ **三道闸**：每次调用查危险操作 + 提示注入 + 凭据泄露<br>• ✅ **XDG 规范**：沙箱友好，`--dir` 隔离 | • ✅ **文档路由**：`docs` 给 Markdown 树建索引，投喂 1 章而非 19 章（4 万 → 1.7 万 token）<br>• ✅ **文档内检索**：`kb` 只回段落不回整篇（95KB → 3 段）<br>• ✅ **自愈体检**：`doctor` 修 stdio 管道与环境，`health` 探每个服务器<br>• ✅ **当场证明**：`bench` / `demo` 在本机跑真实数字<br>• ✅ **透明播报**：`footer-facts` 每轮打印实时节省 |
+
+<sub>全部命令与参数见 [All commands](#all-commands)。</sub>
+
+---
 
 ## 为什么要用 mcptoon
 
@@ -125,14 +154,14 @@ mcptoon docs resolve "版本发布门禁怎么运作"
 mcptoon 把这些描述**留在磁盘上、不放进上下文**，只交给 Agent 一份紧凑视图：
 
 - **给名字索引，不给完整 schema。** 挑工具只需要名字——255 个工具压成 **581 tokens（−99.2%）**。完整 schema 用 `mcptoon inspect` 按需取，只在真正调用某个工具时才取。
-- **技能同理。** 常驻一条指针（**39 tokens**）+ 一次查询（**501 tokens**），取代加载每一份 `SKILL.md` 全文——**926,232 → 39 + 501（−99.9%）**。
+- **技能同理。** 常驻一条指针（**39 tokens**）+ 一次查询（**791 tokens**），取代加载每一份 `SKILL.md` 全文——**1,572,330 → 39 + 791（−99.99%）**。
 - **结果也一样。** `--toon` 把工具*结果*重新编码成标准 TOON。混合样本实测比 JSON 小
   **5.7%**，按结果形状在 **1.8%–48.6%** 之间——记录列表几乎不变，单条记录能减半。
   不是稳定的 34%，见 `assets/benchmark_results.json`。
 
 什么都不丢：完整 schema 和完整技能全文，永远只差一条命令。省下的只有上下文窗口。
 
-mcptoon 是一个 **363KB、零依赖的原生 CLI**，管理你电脑上的每个 MCP 工具和 Agent 技能——并让它们在你所有 Agent 之间共享，而你一行配置都不用写。
+mcptoon 是一个 **534KB、零依赖的原生 CLI**，管理你电脑上的每个 MCP 工具和 Agent 技能——并让它们在你所有 Agent 之间共享，而你一行配置都不用写。
 
 ## 不只我们一家这么说
 
@@ -182,7 +211,7 @@ mcptoon 是今天就能用的那个：能跑 shell 的 Agent 全都覆盖，认�
 | **去哪找工具和技能** | 手动翻 GitHub | `install --search`（**17,000+ 个 MCP 服务器**）+ `skills search` |
 | **从零开始** | 一个工具一个工具地接 | 4 个内置起步包——一条命令搭出可用组合 |
 
-技能同理：**926,232 tokens** 的 `SKILL.md` 全文 → 常驻 **39** + 每次查询 **501**（−99.9%）。调用结果加 `--toon` 再省 **~6%**（随形状 1.8%–48.6%）。
+技能同理：**1,572,330 tokens** 的 `SKILL.md` 全文 → 常驻 **39** + 每次查询 **791**（−99.99%）。调用结果加 `--toon` 再省 **~6%**（随形状 1.8%–48.6%）。
 
 ---
 
@@ -220,6 +249,7 @@ mcptoon 是一个纯 CLI，输出可脚本化；需要时还能起一个 MCP 端
 ```bash
 mcptoon manifest --format json      # 机器可读的工具索引
 mcptoon call <server> <tool> '{}'   # 调任意工具，JSON 或 --toon 输出
+mcptoon call <server> <tool> ... --transport sse|streamable  # HTTP 传输偏好（默认 auto）
 mcptoon serve                       # 把所有已配置的服务器收在同一个 MCP 端点后
 ```
 
@@ -258,7 +288,7 @@ mcptoon serve                       # 把所有已配置的服务器收在同一
 ## 30 秒上手
 
 ```bash
-pip install mcptoon                          # 纯标准库，363KB，零依赖
+pip install mcptoon                          # 纯标准库，534KB，零依赖
 
 # 一条命令：扫出你的 MCP 服务器、写好配置、把网关登记进你所有 Agent，并告诉它发现了什么：
 mcptoon quickstart
@@ -297,7 +327,7 @@ uvx mcptoon demo --quick
 
 ### 技能：常驻一份指针
 
-不再全量加载。常驻一行指针（39 token），一次查询返回最相关的技能（501 token）。视图是**链接**（Windows 上是 junction，不需要管理员），所以改一处，处处生效，没有第二份副本会走样。
+不再全量加载。常驻一行指针（39 token），一次查询返回最相关的技能（791 token）。视图是**链接**（Windows 上是 junction，不需要管理员），所以改一处，处处生效，没有第二份副本会走样。
 
 ### 一次安装，全部共享
 
@@ -379,23 +409,23 @@ mcptoon 省下的 token 分三处，混在一起比数字没有意义。
 
 这笔账在工具返回结果**之后**到期。`mcptoon call` 默认输出 JSON，**默认不省**。想省就加 `--toon`。
 
-### 第三笔 · 技能目录（`skills`）：926,232 → 常驻 39 + 每次查询 501
+### 第三笔 · 技能目录（`skills`）：1,572,330 → 常驻 39 + 每次查询 791
 
 ```bash
 mcptoon skills manifest                      # 39 token，常驻
-mcptoon skills resolve "做个 PDF" --k 5      # 501 token，返回最相关的 5 个
+mcptoon skills resolve "做个 PDF" --k 5      # 791 token，返回最相关的 5 个
 ```
 
 **一张表，三笔全在里面（写这份 README 的机器上实测）：**
 
 | 路径 | Agent 加载什么 | token | 对比全量 |
 |---|---|---:|---:|
-| 工具 schema（1109） | 每份完整 schema | 139,863 | — |
-| | `manifest`（名字索引） | 5,406 | 96.1% |
-| | `manifest --slim` | 16,396 | 88.3% |
-| 技能文件（371） | 每个 `SKILL.md` 全文 | 926,232 | — |
-| | `skills manifest`（指针） | 39 | 100.0% |
-| | `skills resolve --k 5` | 501 | 99.9% |
+| 工具 schema（212） | 每份完整 schema | 640,787 | — |
+| | `manifest`（名字索引） | 914 | 99.85% |
+| | `manifest --slim` | 3,056 | 99.52% |
+| 技能文件（480） | 每个 `SKILL.md` 全文 | 1,572,330 | — |
+| | `skills manifest`（指针） | 39 | 99.99% |
+| | `skills resolve --k 5` | 791 | 99.94% |
 
 固定口径的头条基准——一份**合成样本**（255 个工具、50 个服务器，`tiktoken cl100k_base`）。它不是你的目录；你自己的数看 `mcptoon status`：
 
@@ -575,7 +605,8 @@ mcptoon import                  # 从 Claude Desktop / Cursor / Cline / Windsurf
 mcptoon init                    # 生成示例配置（--auto 自动发现并填好）
 mcptoon list                    # 列出已配置的服务器
 mcptoon manifest                # 所有工具名（默认 compact；255 个工具 = 581 token）
-mcptoon manifest --slim         # 名字 + 参数类型（8,282 vs 71,929 = −88.5%）
+mcptoon manifest --sort alpha|usage|recent       # 排序（usage = 你最常调用的排前面）
+mcptoon manifest --top 3 --verbose              # 每个服务器只列 N 个；--verbose 附带描述
 mcptoon inspect <server> <tool> # 查看某个工具的真实参数
 mcptoon search <query>          # 跨服务器搜工具
 mcptoon select "<任务>"          # 为某个任务挑最该用的 3 个工具（工具超 ~40 个模型就开始选错）
@@ -583,6 +614,25 @@ mcptoon call <server> <tool> '{"args":"here"}'   # 调工具
 mcptoon exec python "print(len(open('big.log').readlines()))"  # 跑代码，只有 stdout 进上下文
 mcptoon exec python --file analyze.py            # 同上，从脚本文件跑
 mcptoon exec --langs                             # 本机到底能跑哪几种语言
+mcptoon openapi list <spec>                      # 把任意 OpenAPI/Swagger REST API 变成命令
+mcptoon openapi call <spec> <cmd> pet-id=2       # 调一个接口（参数写 name=value）
+mcptoon openapi call <spec> <cmd> --base-url U   # 覆盖服务器地址（生产/测试切换）
+mcptoon openapi call <spec> <cmd> --cache-ttl 0 --cache-key v2  # 重新拉 spec；不同版本分开缓存
+mcptoon graphql list <endpoint>                  # 把任意 GraphQL 端点变成命令
+mcptoon graphql call <endpoint> <cmd> --fields "name id"  # 调一个查询/mutation
+mcptoon auth login <name> --auth-url U --token-url U --client-id ID  # OAuth 登录（PKCE）
+mcptoon auth creds <name> --token-url U --client-id ID  # OAuth 客户端凭证
+mcptoon auth login <name> ... --register REG_URL --client-name mine  # 动态客户端注册（RFC 7591）——不用手填 client-id
+mcptoon openapi call <spec> <cmd> --auth oauth:<name>   # 用已存的 token
+mcptoon resources list [server]                  # 列服务器的 MCP 资源
+mcptoon resources read <server> <uri>            # 按 URI 读一个资源
+mcptoon prompts list [server]                    # 列服务器的提示词模板
+mcptoon prompts get <server> <name> a=1          # 带参数渲染一个提示词
+mcptoon complete <server> <ref>:<arg>=<prefix>   # 让服务器补全参数值
+mcptoon bake create <name> --openapi <spec>      # 把连接存成一个名字
+mcptoon bake create <name> --openapi <spec> --auth-header 'K: env:VAR'  # 密钥只按引用存（env:/file:）
+mcptoon bake run <name> <action> ...             # 复用存好的连接
+mcptoon bake install <name> --bin ~/.local/bin   # 生成启动脚本（只带 bake 名字，不带 URL/密钥）
 mcptoon add <name> --stdio|--http <cmd|url>     # 添加任意 MCP 服务器
 mcptoon remove <name>           # 删除一个服务器
 mcptoon install <name> --npm|--pip|--url <pkg>  # 安装 + 自动生成 handler
@@ -650,7 +700,7 @@ mcptoon uninstall               # 完整清理——先打印计划（--dry 预�
 
 ## 信任与安全
 
-**它只是一个 363KB 的原生 CLI——不喜欢，随时删掉；留着它，你永远不必再为任何 Agent 的工具和技能配置操心。** mcptoon 确实会碰你的 Agent 配置，所以它从设计上就做到透明——也让你随时能干净地离开。
+**它只是一个 534KB 的原生 CLI——不喜欢，随时删掉；留着它，你永远不必再为任何 Agent 的工具和技能配置操心。** mcptoon 确实会碰你的 Agent 配置，所以它从设计上就做到透明——也让你随时能干净地离开。
 
 每个工具结果在进入你 Agent 之前，都要过三道防护：
 
@@ -688,12 +738,12 @@ git clone https://github.com/activeing123/mcptoon.git
 cd mcptoon
 pip install -e . --no-build-isolation
 pip install pytest pytest-cov
-python -m pytest tests/ -v   # 2672 passed, 2 skipped
+python -m pytest tests/ -v   # 2866 passed, 2 skipped
 ```
 
 三条硬规则：零依赖（CI 强制）、新功能必须带测试、Windows 是一等目标。新手可以先看 [CONTRIBUTING.md](https://github.com/activeing123/mcptoon/blob/main/CONTRIBUTING.md) 和 [DEVELOPERS.md](https://github.com/activeing123/mcptoon/blob/main/DEVELOPERS.md)。
 
-代码规模：**50 个模块、35,186 行 Python**，零第三方依赖。
+代码规模：**55 个模块、39,364 行 Python**，零第三方依赖。
 
 ---
 

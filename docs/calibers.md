@@ -122,7 +122,7 @@ smaller one, and a live call counter that moves.** That is the intended state.
 | footer / broadcast | `96→9`, `省 88%`, `≈省 82M·4,407次`; skills `1,033,948→39（省 99.99%）`; compression state | #1 + skills + compression | ✅ fixed 2026-09-26 (≤80-col redesign; raw pair + slim % + per-turn moved to `report`) |
 | `status` | 89% headline, 24% secondary | #1 + #2 | ✅ fixed 2026-09-26 |
 | `stats` | 89.1% gateway, 24.3% slim, per-server "slim only" | #1 + #2 | ✅ fixed 2026-09-26 |
-| skills claims | "926,232 tokens → 39 + 501" | skills-only | ✅ separate feature, separately measured |
+| skills claims | "1,572,330 tokens → 39 + 791" | skills-only | ✅ separate feature, separately measured |
 
 **✅ Closed 2026-10-02.** README line 11 used to say "saves 99.2% of tokens" in the hero
 sentence with no qualifier, so a reader who stopped there took 99.2% away as *their*

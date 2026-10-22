@@ -56,37 +56,37 @@ The result-side number is `toon_save` in `assets/benchmark_results.json` (5.7% m
 **One line to remember: 99.2% is what you save seeing which tools exist; ~6% is what
 you can further save on results, and that second figure swings with the result's shape.**
 
-### Bill 3 — Skill catalog (`skills`): 926,232 to 39 resident + 501 per lookup
+### Bill 3 — Skill catalog (`skills`): 1,572,330 to 39 resident + 791 per lookup
 
 The same bill, charged for the other half of the toolbox. An agent that reads its skill
 catalog pays for every `SKILL.md` it loads. These are the real numbers from the catalog
-on the machine this document was written on: 371 skill files, same tiktoken
-`cl100k_base` encoding as above.
+on the machine this document was written on: 480 skill files (six agent roots, de-
+duplicated by real path), same tiktoken `cl100k_base` encoding as above.
 
 | What the agent loads | Tokens | vs loading everything |
 |---|---:|---:|
-| Every `SKILL.md`, full text | **926,232** | — |
-| Every skill's `description` only | 27,292 | −97.1% |
-| Every skill *name* only (a names-only index) | 1,413 | −99.85% |
-| `mcptoon skills resolve "<task>" --k 5` (returns the 5 that matter) | **501** | **−99.95%** |
-| `mcptoon skills manifest` (the pointer that stays resident) | **39** | **−99.996%** |
+| Every `SKILL.md`, full text | **1,572,330** | — |
+| Every skill's `description` only | 46,461 | −97.05% |
+| Every skill *name* only (a names-only index) | 1,907 | −99.88% |
+| `mcptoon skills resolve "<task>" --k 5` (returns the 5 that matter) | **791** | **−99.95%** |
+| `mcptoon skills manifest` (the pointer that stays resident) | **39** | **−99.997%** |
 
-Read the top row again: **926,232 tokens is 7.07 full 128K context windows.** The
+Read the top row again: **1,572,330 tokens is 12.00 full 128K context windows.** The
 catalog does not fit in the window, which is why agents silently drop skills and then
 "forget" a capability you installed months ago. The fix is the same as Bill 1: fetch on
 demand, never preload.
 
 ```bash
 mcptoon skills manifest                      # 39 tokens, stays resident
-mcptoon skills resolve "make a PDF" --k 5    # 501 tokens, returns the 5 that matter
+mcptoon skills resolve "make a PDF" --k 5    # 791 tokens, returns the 5 that matter
 ```
 
 **Read the two bottom rows as different jobs, because they are.** The **39-token**
 `manifest` is a *pointer*: it tells the agent how to ask, and holds no skill names. The
-**501-token** `resolve` is the actual work: it returns the five skills that matter for
+**791-token** `resolve` is the actual work: it returns the five skills that matter for
 your request. If you want a skills-as-tool manifest instead (every name resident), that
-costs **1,413 tokens**, still −99.85% against loading the catalog. Either way you never
-pay the 926,232.
+costs **1,907 tokens**, still −99.88% against loading the catalog. Either way you never
+pay the 1,572,330.
 
 *Measured, not estimated. `mcptoon bench` reproduces both rows from your own catalog,
 the same way it reproduces Bill 1's tool rows, in the same table. Full method, caliber
@@ -96,7 +96,7 @@ ratio will not.*
 
 *Scale check: indexing and routing a 1,000-skill catalog takes under half a second
 (`index` 0.49s, `list` 0.32s, `resolve` 0.33s, measured on a synthetic 1,000-skill
-catalog, real bodies). The 371 above is just the catalog on this machine.*
+catalog, real bodies). The 480 above is just the catalog on this machine.*
 
 ### Side by side (Bill 1, made visible)
 
@@ -153,9 +153,9 @@ on:
                 manifest (name index)                        5,406       96.1%
                 manifest --slim                             16,396       88.3%
 
-  Agent skills (371) native: every SKILL.md, full text          926,232           -
+  Agent skills (480) native: every SKILL.md, full text        1,572,330           -
                 skills manifest (pointer)                       39      100.0%
-                skills resolve --k 5 (one lookup)              501       99.9%
+                skills resolve --k 5 (one lookup)              791       99.9%
 ```
 
 *(The footer, meaning the query used, the caliber, and the 128K-window count, is
@@ -163,8 +163,8 @@ elided. `query` matters: the resolve row is measured against `make a PDF`.)*
 
 **Watch what it replaces.** Ask an agent to find the right skill without mcptoon and it
 has no index. It reads `SKILL.md` files until it finds one. On this catalog the whole
-set is 926,232 tokens: it does not fit in a 128K window, so it gets truncated, and the
-skill that falls off is the one you wanted. With mcptoon the same question costs **501
+set is 1,572,330 tokens: it does not fit in a 128K window, so it gets truncated, and the
+skill that falls off is the one you wanted. With mcptoon the same question costs **791
 tokens**, and `mcptoon bench` points at your own folders to check that yourself.
 
 Two calibers in one table, on purpose: the tool rows are *your* cached schemas, while
@@ -277,14 +277,14 @@ Both halves of the toolbox share one engine, one config and one index format.
 |---|---|---|
 | **Unit** | one tool = one JSON Schema | one skill = one `SKILL.md` (YAML frontmatter + body) |
 | **Source of truth** | `~/.mcptoon/config.json` (servers) | one skills root (default `~/.claude/skills`, `~/.agents/skills`, `~/.codex/skills`, `~/.cursor/skills`) |
-| **Kept out of context by** | names-only manifest (581 tokens @ 255 tools) | BM25 index + a 39-token pointer (501 tokens per lookup) |
+| **Kept out of context by** | names-only manifest (581 tokens @ 255 tools) | BM25 index + a 39-token pointer (791 tokens per lookup) |
 | **Discovery** | `mcptoon manifest` · `inspect` · `search` | `mcptoon skills resolve` · `route` |
 | **Distribution** | `mcptoon sync` (native JSON per agent) | `mcptoon skills sync` (links per agent) |
 | **Add / remove** | `install` · `add` · `remove` | `skills add` · `skills remove --tombstone` |
 | **Health** | `mcptoon health` | `mcptoon skills stats` |
 
-**Runtime.** Python ≥ 3.10 (CI: 3.10–3.13 × Linux, Windows, macOS). 50 modules, 35,186
-lines of Python, a **363KB** wheel, **zero third-party dependencies**, standard library
+**Runtime.** Python ≥ 3.10 (CI: 3.10–3.13 × Linux, Windows, macOS). 55 modules, 39,364
+lines of Python, a **534KB** wheel, **zero third-party dependencies**, standard library
 only, enforced in CI by `scripts/check_zero_deps.py`. No daemon, no listening port, no
 telemetry, no stored credentials.
 
