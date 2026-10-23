@@ -63,24 +63,131 @@ def register(server_name: str, *aliases: str):
 
 # ─── Tool annotations: dangerous operations ───
 
+# Name-substring fallback for servers that ship no MCP `annotations` (most do
+# not). Ordered loosely by specificity; `run_` is last so a tool named
+# `run_query` is caught while `runtime_info` is not (`run_` needs the trailing
+# underscore). Added `truncate`/`overwrite`/`execute`/`run_` on 2026-10-23 after
+# an external report: a `truncate_table` tool slipped through the old list.
 _DANGEROUS_PATTERNS = [
     "delete", "remove", "drop", "destroy", "purge", "wipe",
     "rm_", "del_", "clear", "reset", "force", "kill",
+    "truncate", "overwrite", "execute", "run_",
+]
+
+# Arguments whose *value* can carry a destructive statement even when the tool
+# name is neutral (the `run_query {"sql": "DROP TABLE customers"}` case).
+_DANGEROUS_ARG_KEYS = ("sql", "query", "statement", "command", "cmd", "script", "shell")
+_DANGEROUS_ARG_PATTERNS = [
+    r"\bdrop\s+(table|database|schema|index|view)\b",
+    r"\btruncate\s+(table\s+)?\w",
+    r"\bdelete\s+from\b",
+    r"\bupdate\s+\w+\s+set\b",
+    r"\b(insert\s+into|alter\s+table|create\s+table)\b",
+    r"\brm\s+-[rf]", r"\bmkfs\b", r"\bdd\s+if=",
+    r"\b(shutdown|reboot|halt)\b", r">\s*/dev/sd",
 ]
 
 
-def _check_dangerous(server: str, tool: str, args: dict | None = None) -> str | None:
-    """Check if operation is dangerous. Returns reason string or None."""
+def _coerce_bool(value: Any) -> bool | None:
+    """True/False for a real bool or the usual JSON string spellings, else None."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        low = value.strip().lower()
+        if low in ("true", "1", "yes", "y"):
+            return True
+        if low in ("false", "0", "no", "n"):
+            return False
+    if isinstance(value, int):
+        return bool(value)
+    return None
+
+
+def _tool_annotations(server: str, tool: str) -> dict | None:
+    """The MCP `annotations` dict for a tool, from cache only.
+
+    Cache-only on purpose (same rule the CLI's `_cached_tool_schema` follows):
+    the safety screen must never spawn a server, and an uncached server simply
+    falls back to the name-substring check. `get_cached_tools_any_age` is used
+    rather than `get_cached_tools` so a TTL-expired entry still contributes its
+    annotations — a stale annotation is better than none for a *pre*-call check.
+    """
+    try:
+        from . import cache as _cache
+        cached, _age = _cache.get_cached_tools_any_age(server)
+    except Exception:
+        return None
+    if not cached:
+        return None
+    for t in cached:
+        if isinstance(t, dict) and t.get("name") == tool:
+            ann = t.get("annotations")
+            return ann if isinstance(ann, dict) else None
+    return None
+
+
+def _check_dangerous(server: str, tool: str, args: dict | None = None,
+                     annotations: dict | None = None) -> str | None:
+    """Check if operation is dangerous. Returns reason string or None.
+
+    Resolution order, so an explicit MCP annotation beats a guessed name:
+
+      1. ``readOnlyHint: true``  → safe, skip the name check entirely. That is
+         the field's whole purpose: it clears a *false positive* such as a
+         cache-flush tool whose name happens to contain ``clear``.
+      2. ``destructiveHint: true`` → dangerous even when the name looks harmless
+         (a `truncate_table` carrying the spec annotation). The old name-only
+         screen waved this straight through.
+      3. Name-substring fallback in ``_DANGEROUS_PATTERNS`` for servers that ship
+         no annotations.
+      4. Argument inspection: an explicit ``force``/``confirm`` true, or a
+         destructive statement (DROP TABLE, rm -rf, …) inside a sql/shell-ish
+         argument.
+
+    ``annotations`` is the MCP ``tool.annotations`` dict when the caller already
+    has it (`serve` keeps it in memory); otherwise it is read from the cache.
+    """
     if not tool:
         return None
     tool_lower = tool.lower()
+
+    if annotations is None:
+        annotations = _tool_annotations(server, tool)
+
+    # 1. readOnlyHint clears the name check (fixes the clear_cache false positive)
+    if isinstance(annotations, dict):
+        if _coerce_bool(annotations.get("readOnlyHint")) is True:
+            # Still honour an explicit force/confirm argument — a read-only tool
+            # has no business taking one, and if it does the caller is asserting
+            # an intent we should not silently drop.
+            if args and isinstance(args, dict):
+                for key in ("force", "confirm"):
+                    if key in args and args[key] is True:
+                        return f"argument contains dangerous flag: {key}=true"
+            return None
+        # 2. destructiveHint flags a dangerous op the name does not advertise
+        if _coerce_bool(annotations.get("destructiveHint")) is True:
+            return "tool annotations declare destructiveHint: true"
+
+    # 3. Name-substring fallback
     for pattern in _DANGEROUS_PATTERNS:
         if pattern in tool_lower:
             return f"tool name matches dangerous pattern: '{pattern}'"
+
+    # 4a. Explicit force/confirm flags
     if args and isinstance(args, dict):
         for key in ("force", "confirm"):
             if key in args and args[key] is True:
                 return f"argument contains dangerous flag: {key}=true"
+        # 4b. Destructive statement hidden in a sql/shell-style argument
+        for key in _DANGEROUS_ARG_KEYS:
+            val = args.get(key)
+            if not isinstance(val, str):
+                continue
+            low = val.lower()
+            for pat in _DANGEROUS_ARG_PATTERNS:
+                if re.search(pat, low):
+                    return f"argument '{key}' contains a destructive statement"
     return None
 
 

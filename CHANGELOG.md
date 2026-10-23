@@ -5,7 +5,7 @@ All notable changes to mcptoon will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.8.27] - 2026-10-23
 
 ### Fixed
 
@@ -30,6 +30,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   including on a routed error, so the declared schema is always satisfied. A
   side effect of the #22 fix; reported as #33. Workaround until release:
   `mcptoon config set exposure full`.
+
+- **The destructive-op guard now honours MCP `annotations` and inspects
+  arguments.** `_check_dangerous` matched only the tool *name* against a
+  substring list and never read the `annotations` object it exists to consume,
+  so it was both too loose and too strict at once: a `truncate_table` tool that
+  declared `destructiveHint: true` ran with no confirmation, a neutral
+  `run_query` carrying `{"sql": "DROP TABLE customers"}` passed untouched, and a
+  `clear_cache` annotated `readOnlyHint: true` was refused for containing
+  `clear`. The screen now reads `readOnlyHint: true` first and lets it clear the
+  name check, treats `destructiveHint: true` as dangerous regardless of the
+  name, keeps the substring list as a fallback for the many servers that ship no
+  annotations (now also catching `truncate`/`overwrite`/`execute`/`run_`), and
+  inspects `sql`/`command`-style arguments for destructive statements. The
+  gateway path passes the in-memory annotations straight in; the CLI path reads
+  them from the tool cache (never spawning a server). Reported by an external
+  tester on 0.8.26 with a minimal repro and the fix location.
 
 ## [0.8.26] - 2026-10-22
 

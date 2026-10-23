@@ -56,6 +56,68 @@ class TestCheckDangerous:
         assert _check_dangerous("srv", "", None) is None
 
 
+class TestCheckDangerousAnnotations:
+    """MCP `annotations` must beat the name heuristic (external report 2026-10-23).
+
+    Three defects were reported by a third party against 0.8.26:
+      - `destructiveHint: true` on a neutral name was ignored (truncate_table ran).
+      - a destructive statement in an argument (`{"sql": "DROP TABLE ..."}`) was
+        never inspected.
+      - `readOnlyHint: true` did not clear a name false positive (clear_cache was
+        refused). These pin the fixes plus the fallback for annotation-less servers.
+    """
+
+    def test_readonly_hint_clears_name_false_positive(self):
+        # clear_cache: name contains 'clear', but it is readOnly -> must pass.
+        ann = {"readOnlyHint": True, "destructiveHint": False}
+        assert _check_dangerous("db", "clear_cache", {}, ann) is None
+
+    def test_destructive_hint_blocks_neutral_name(self):
+        # truncate_table with the spec annotation -> must be blocked even though
+        # the caller passed no confirm flag.
+        ann = {"destructiveHint": True, "readOnlyHint": False}
+        result = _check_dangerous("db", "truncate_table", {"table": "customers"}, ann)
+        assert result is not None
+        assert "destructiveHint" in result
+
+    def test_destructive_statement_in_sql_arg(self):
+        # Neutral tool name that dodges every name pattern, DROP TABLE hidden in
+        # the sql argument -> must be caught by argument inspection.
+        result = _check_dangerous("db", "db_exec", {"sql": "DROP TABLE customers"}, {})
+        assert result is not None
+        assert "sql" in result or "destructive" in result.lower()
+
+    def test_select_statement_is_safe(self):
+        assert _check_dangerous("db", "db_exec", {"sql": "SELECT * FROM t"}, {}) is None
+
+    def test_rm_rf_in_command_arg(self):
+        result = _check_dangerous("ops", "deploy", {"command": "rm -rf /data"}, {})
+        assert result is not None
+
+    def test_truncate_now_caught_by_name_fallback(self):
+        # No annotations shipped: the new 'truncate' pattern must catch it.
+        result = _check_dangerous("db", "truncate_table", {}, {})
+        assert result is not None
+        assert "truncate" in result
+
+    def test_run_underscore_pattern(self):
+        assert _check_dangerous("ops", "run_query", {}, {}) is not None
+        # 'runtime_info' must NOT match 'run_' (needs the trailing underscore).
+        assert _check_dangerous("ops", "runtime_info", {}, {}) is None
+
+    def test_readonly_still_respects_explicit_force(self):
+        ann = {"readOnlyHint": True}
+        assert _check_dangerous("db", "clear_cache", {"force": True}, ann) is not None
+
+    def test_annotation_string_spellings(self):
+        assert _check_dangerous("db", "clear_cache", {}, {"readOnlyHint": "true"}) is None
+        assert _check_dangerous("db", "truncate_table", {}, {"destructiveHint": "true"}) is not None
+
+    def test_no_annotations_falls_back_to_name(self):
+        assert _check_dangerous("db", "delete_record", {}, None) is not None
+        assert _check_dangerous("db", "list_items", {}, None) is None
+
+
 class TestCallTool:
     def test_unknown_server(self):
         with patch("mcptoon.router.load_config", return_value={}):

@@ -894,16 +894,23 @@ class MCPServerBridge:
         # Validate args against full schema
         with self._tool_index_lock:
             info = self._tool_index.get(name)
+        annotations = None
         if info:
             full_schema = info.get("full_schema", {})
+            full_def = info.get("full_def") or {}
+            if isinstance(full_def, dict):
+                ann = full_def.get("annotations")
+                if isinstance(ann, dict):
+                    annotations = ann
             errors = validate_args(arguments, full_schema)
             if errors:
                 return _make_tool_error(
                     f"Parameter validation failed: {'; '.join(errors)}"
                 )
 
-        # Safety checks via router
-        danger = router_mod._check_dangerous(server, tool, arguments)
+        # Safety checks via router (pass in-memory annotations so a readOnlyHint
+        # clears a name false-positive and a destructiveHint blocks a neutral name)
+        danger = router_mod._check_dangerous(server, tool, arguments, annotations)
         if danger:
             return _make_tool_error(
                 f"Blocked: {danger}. Use CLI with --destructive to override."
