@@ -5,6 +5,46 @@ All notable changes to mcptoon will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.30] - 2026-10-25
+
+### Added
+
+- **Zero-config demo on the empty-state card.** A machine with no MCP servers used
+  to be told "next: `mcptoon quickstart`" — but quickstart discovers servers and
+  there are none to find, a dead end. The first-run card now leads with
+  `mcptoon demo` (it spins up its own 22-tool server and shows the before/after in
+  ~10s, zero config), then offers quickstart as the discovery step.
+- **`docs/real-world-benchmark.md`** — 7 real public MCP servers / 209 tools measured
+  on a real machine: 640,606 → 905 tokens (−99.86%), reproducible with `mcptoon
+  bench`. Answers the "the 99.2% is a synthetic 255-tool sample" objection; linked
+  from both READMEs.
+
+### Fixed
+
+- **Commands no longer crash on a non-UTF-8 (GBK) console.** mcptoon prints glyphs
+  (`✓ 🎉 ⚠ ❌ →`). On a default Chinese Windows console (cp936/GBK, Python's legacy
+  mode), `status`, `doctor`, `footer-facts`, `quickstart`, `demo`, `sync` and `off`
+  raised `UnicodeEncodeError: 'gbk' codec can't encode character` — a raw traceback
+  and exit 1. A startup guard now reconfigures stdout/stderr: on a tty it keeps the
+  console's encoding but adds `errors="replace"` (localized text stays readable);
+  when piped or redirected it switches to UTF-8 with `errors="replace"`. Either way
+  a glyph the codec lacks becomes a placeholder instead of a crash.
+- **`mcptoon add --stdio` catches a command that can never launch.** A path the user
+  wrote that does not exist (`add broken --stdio C:\no\such.exe`) used to print
+  "Added server 'broken'" and exit 0; the breakage surfaced only on the next command
+  as an opaque `[WinError 2]` that never named the file. It now hard-errors on a
+  missing explicit path (with `--force` to override) and warns when a bare command
+  name is not on PATH (still added — it may be installed later).
+- **`serve --http <addr>` honours the address.** `serve --background --http :18099`
+  silently kept the `:8080` shorthand and then failed "8080 is already in use",
+  never mentioning the requested port. `--http` now takes a following address (or
+  `--http=<addr>`); the bare `--http` shorthand is still `:8080`.
+
+### Changed
+
+- **README (en + zh): one line under the install command** noting the built-in
+  "new version available" hint and `mcptoon upgrade`.
+
 ## [0.8.29] - 2026-10-25
 
 ### Added

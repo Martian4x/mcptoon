@@ -780,6 +780,50 @@ def _apply_dir_flag(argv: list) -> None:
             return
 
 
+def _harden_stream_encoding() -> None:
+    """Keep every command from crashing on a non-UTF-8 console.
+
+    mcptoon prints box-drawing and status glyphs (`✓ 🎉 ⚠ ❌ →`). A plain Chinese
+    Windows console is cp936/GBK by default (Python's *legacy* mode, `utf8_mode`
+    off), and `print("✓ ...")` there raises `UnicodeEncodeError: 'gbk' codec can't
+    encode character '\\u2713'` — a raw traceback, exit 1. Measured on 0.8.29: with
+    `PYTHONUTF8=0 PYTHONIOENCODING=gbk`, `status`, `doctor`, `footer-facts`,
+    `quickstart`, `demo`, `sync` and `off` all crashed this way; only pure-ASCII
+    commands survived. The CI `cp936` job only exercised stdin decoding, so it never
+    saw the stdout side.
+
+    The fix is one seam at startup: for each of stdout/stderr, *keep the console's
+    own encoding* (so Chinese text stays readable in the user's terminal) but add
+    `errors="replace"`, and when the stream is NOT a tty (piped into an agent,
+    redirected to a file — mcptoon's main use) switch to UTF-8 with
+    `errors="replace"`. Either way a glyph that the codec cannot represent becomes
+    a placeholder instead of a crash, and nothing a command prints can kill it.
+
+    Never raises: a stream that cannot be reconfigured (already detached, a
+    wrapper) is left as-is; this is a safety net, not a dependency.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            reconfigure = getattr(stream, "reconfigure", None)
+            if reconfigure is None:
+                continue
+            is_tty = False
+            try:
+                is_tty = stream.isatty()
+            except Exception:
+                is_tty = False
+            if is_tty:
+                # Keep the console's encoding (localized text readable); only stop
+                # it from raising on a glyph the codec lacks.
+                reconfigure(errors="replace")
+            else:
+                # Piped / redirected: a byte stream with no console to render into.
+                # UTF-8 is what agents, files and downstream tools expect.
+                reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
+
 def main() -> None:
     """Entry point: run the CLI, then emit the savings footer.
 
@@ -799,6 +843,9 @@ def main() -> None:
     failure.
     """
     state: dict = {}
+    # Make printing glyph-safe before any command can emit one (GBK console crash —
+    # see _harden_stream_encoding). Runs on the raw process streams, once.
+    _harden_stream_encoding()
     # `--dir` must land before any command reads a path, and it has to survive
     # the 41 `sys.exit()` paths inside `_run` — so it is applied here, once, on
     # the raw argv. See config.apply_home for why the flag cannot simply set an
@@ -2912,6 +2959,32 @@ def _http_url_problem(url: str) -> str:
     return ""
 
 
+def _command_check(cmd: str) -> str:
+    """Classify whether `cmd` can be launched as-is. Returns one of:
+
+    - ``"ok"``           — an existing file, or a name found on PATH.
+    - ``"missing_path"`` — the user wrote an explicit path (absolute, or with a
+      separator) that does not exist. Unambiguously a typo → caller hard-errors.
+    - ``"missing_name"`` — a bare command name not found on PATH. It might be
+      installed later or live outside PATH, so the caller only warns.
+
+    `add --stdio <cmd>` stores `cmd` and spawns it directly (no shell) at start
+    time, resolving bare names against PATH. 0.8.29 printed "Added server 'broken'"
+    and exited 0 for a non-existent exe, surfacing the breakage only on the next
+    `manifest` as `[WinError 2] 系统找不到指定的文件` (which does not name the file).
+    Checking now turns a silent later failure into an immediate, named message.
+    """
+    import shutil
+
+    if not cmd:
+        return "missing_path"
+    has_sep = os.sep in cmd or (os.altsep is not None and os.altsep in cmd)
+    if os.path.isabs(cmd) or has_sep:
+        return "ok" if Path(cmd).exists() else "missing_path"
+    # Bare name: resolve against PATH (honours PATHEXT on Windows, so `npx` → npx.cmd).
+    return "ok" if shutil.which(cmd) is not None else "missing_name"
+
+
 def _cmd_add(rest):
     """Add a server to config."""
     if not rest:
@@ -2940,6 +3013,22 @@ def _cmd_add(rest):
         if not cmd_parts:
             _err("Error: --stdio requires a command")
             sys.exit(1)
+        # Catch "added, but can never launch" at the keyboard. A path the user wrote
+        # that does not exist is an unambiguous typo → hard error. A bare name not
+        # on PATH might still be valid (installed later, or outside PATH), so only
+        # warn — the server is still added. Either way the failure is named here
+        # instead of surfacing later as an opaque WinError 2 that never names it.
+        if not force:
+            _check = _command_check(cmd_parts[0])
+            if _check == "missing_path":
+                _err(f"Error: '{cmd_parts[0]}' does not exist.")
+                _err("  The server would be added but could never start.")
+                _err("  Fix the path, or pass --force to add it anyway.")
+                sys.exit(1)
+            if _check == "missing_name":
+                print(f"  ⚠ '{cmd_parts[0]}' is not on PATH right now — the server was "
+                      f"added but may not start until it is installed.",
+                      file=sys.stderr)
         # First part is command, rest are args
         server_cfg = {
             "transport": "stdio",

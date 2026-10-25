@@ -431,3 +431,26 @@ class TestRunServeRouting:
         code, out = _capture(serve.run_serve, ["--background"])
         # stdio + background has no reader — refuse with exit 2 (message on stderr).
         assert code == 2
+
+
+class TestParseServeArgs:
+    """`--http` used to ignore a following address: `serve --background --http :18099`
+    silently kept :8080 and then failed "8080 is already in use", never mentioning the
+    requested port (measured 0.8.29). It must now honour `--http <addr>` and
+    `--http=<addr>`, while the bare `--http` shorthand stays :8080."""
+
+    def test_http_takes_a_following_address(self):
+        assert serve._parse_serve_args(["--background", "--http", ":18099"])[1] == ":18099"
+        assert serve._parse_serve_args(["--http", "127.0.0.1:9000"])[1] == "127.0.0.1:9000"
+
+    def test_bare_http_is_still_the_8080_shorthand(self):
+        assert serve._parse_serve_args(["--http"])[1] == ":8080"
+        # A following flag is not mistaken for an address.
+        assert serve._parse_serve_args(["--http", "--auth", "x"])[1] == ":8080"
+
+    def test_http_equals_form(self):
+        assert serve._parse_serve_args(["--http=:1234"])[1] == ":1234"
+
+    def test_listen_unchanged(self):
+        assert serve._parse_serve_args(["--listen", ":9"])[1] == ":9"
+        assert serve._parse_serve_args(["--listen=:9"])[1] == ":9"

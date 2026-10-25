@@ -140,3 +140,75 @@ def test_utf8_payload_survives_a_real_gbk_console():
     )
     assert proc.returncode == 0, proc.stderr.decode("utf-8", "replace")
     assert proc.stdout.decode("utf-8") == PAYLOAD
+
+
+# ── the *stdout* side: a GBK console must not crash a command that prints glyphs ──
+def _run_under_gbk(args, home):
+    """Run `python -m mcptoon <args>` in a child whose stdout is cp936/GBK.
+
+    UTF-8 mode off + PYTHONIOENCODING=gbk binds stdout to cp936, exactly like a
+    default Chinese Windows console — the environment where 0.8.29 raised
+    `UnicodeEncodeError` on `✓ 🎉 ⚠ ❌`. MCPTOON_HOME points at an empty temp dir so
+    the command stays fast and never touches a real config.
+    """
+    env = os.environ.copy()
+    env["PYTHONUTF8"] = "0"
+    env["PYTHONIOENCODING"] = "gbk"
+    env["MCPTOON_HOME"] = str(home)
+    env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
+    env.pop("PYTHONIOENCODING_OVERRIDE", None)
+    return subprocess.run(
+        [sys.executable, "-m", "mcptoon", *args],
+        capture_output=True, env=env, timeout=120,
+    )
+
+
+def test_glyph_printing_commands_do_not_crash_on_a_gbk_console(tmp_path):
+    """`status`, `footer-facts` and `doctor` print ✓/⚠/🎉/✗ — on cp936 they used to
+    raise `UnicodeEncodeError` and exit with a raw traceback. After the startup
+    encoding guard they must complete without a traceback."""
+    for args in (["status"], ["footer-facts"], ["doctor"]):
+        proc = _run_under_gbk(args, tmp_path)
+        err = proc.stderr.decode("utf-8", "replace")
+        assert "UnicodeEncodeError" not in err, f"{args} crashed on GBK: {err}"
+        assert "Traceback" not in err, f"{args} raised on GBK: {err}"
+        # doctor legitimately exits 1 with no config; a crash would exit 1 too, so
+        # the traceback check above is what distinguishes them. status/footer exit 0.
+        if args[0] in ("status", "footer-facts"):
+            assert proc.returncode == 0, err
+
+
+def test_glyph_survives_to_a_piped_gbk_console(tmp_path):
+    """Piped (not a tty) output is switched to UTF-8, so a glyph reaches downstream
+    intact instead of being dropped or crashing."""
+    proc = _run_under_gbk(["footer-facts"], tmp_path)
+    assert proc.returncode == 0, proc.stderr.decode("utf-8", "replace")
+    # footer-facts prints the 🎉 mark; in a pipe we force utf-8, so its bytes survive.
+    assert "🎉".encode() in proc.stdout
+
+
+def test_harden_stream_encoding_never_raises():
+    """The guard is a safety net: a stream without `reconfigure`, or one that raises
+    when reconfigured, must be skipped silently — never fail the command."""
+    from mcptoon import cli
+
+    class NoReconfigure:
+        def write(self, _):
+            pass
+
+        def flush(self):
+            pass
+
+    class RaisingStream:
+        def reconfigure(self, **_):
+            raise OSError("cannot reconfigure")
+
+        def isatty(self):
+            return False
+
+    saved_out, saved_err = sys.stdout, sys.stderr
+    try:
+        sys.stdout, sys.stderr = NoReconfigure(), RaisingStream()
+        cli._harden_stream_encoding()  # must not raise
+    finally:
+        sys.stdout, sys.stderr = saved_out, saved_err

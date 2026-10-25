@@ -1888,7 +1888,20 @@ def _parse_serve_args(args: list[str]) -> tuple[str, str | None, str | None]:
         elif a.startswith("--listen="):
             listen_addr = a.split("=", 1)[1]
         elif a == "--http":
-            listen_addr = ":8080"
+            # `--http` is the shorthand for `--listen :8080`. But it used to ignore a
+            # following address: `serve --background --http :18099` silently kept
+            # :8080, then failed with "8080 is already in use" — never mentioning the
+            # port the user actually asked for (measured 0.8.29). If the next token
+            # looks like an address (":port" or "host:port"), consume it; otherwise
+            # it is the documented bare shorthand.
+            nxt = args[i + 1] if i + 1 < len(args) else None
+            if nxt is not None and not nxt.startswith("-") and ":" in nxt:
+                listen_addr = nxt
+                i += 1
+            else:
+                listen_addr = ":8080"
+        elif a.startswith("--http="):
+            listen_addr = a.split("=", 1)[1]
         elif a == "--auth":
             # v0.7.3: bare `--auth` (or followed by another flag) generates
             # a random token; `--auth <value>` sets it explicitly.
