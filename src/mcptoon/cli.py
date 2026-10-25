@@ -3938,6 +3938,16 @@ def _cmd_footer_facts(_rest, fmt, max_chars=0):
     credit = footer_mod.cli_credit_line(f)
     if credit:
         print(credit)
+    # Newer-release hint — reads a cache file only (never the network), so it stays
+    # footer-safe and instant. When there is no fresh record, or we are current, it
+    # prints nothing and the footer is byte-identical to before. `maybe_refresh_cache`
+    # is throttled (once per TTL) and spawns a *detached* `upgrade --check --quiet`;
+    # it never blocks this process and never opens a connection inline.
+    from . import upgrade as upgrade_mod
+    hint = upgrade_mod.footer_hint()
+    if hint:
+        print(hint)
+    upgrade_mod.maybe_refresh_cache()
 
 
 def _cmd_credit(_rest, fmt, head_n=0, max_chars=0, full=False):

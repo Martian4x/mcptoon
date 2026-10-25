@@ -18,7 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   exit 1 when a newer release exists, 0 when current, 2 when PyPI is unreachable, so a
   shell profile or CI job can surface it. `--yes` skips the prompt; `--json` is
   machine-readable. Zero dependencies — a single `urllib` GET and a hand-rolled
-  version compare (no `packaging`).
+  version compare (no `packaging`). The footer picks it up too: `upgrade --check`
+  records its result to a cache, and `footer-facts` appends a one-line "new version
+  available" hint read straight from that cache — never the network — while a
+  throttled, detached refresh keeps the cache current without ever blocking the turn.
 - **`mcptoon serve --background` — a server that outlives the terminal.** The
   foreground server dies when the shell closes, which is why a one-off trial rarely
   becomes a daily install. `--background` detaches the HTTP server (pid + log under the

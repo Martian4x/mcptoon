@@ -42,6 +42,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 import urllib.request
 
 __all__ = [
@@ -50,10 +51,14 @@ __all__ = [
     "is_newer",
     "fetch_latest",
     "upgrade_command",
+    "read_cache",
+    "footer_hint",
+    "maybe_refresh_cache",
     "run",
 ]
 
 PYPI_JSON = "https://pypi.org/pypi/mcptoon/json"
+CACHE_NAME = "upgrade-check.json"
 
 
 def current_version() -> str:
@@ -169,6 +174,98 @@ def upgrade_command(installer: str, version: str) -> list[str]:
     return [sys.executable, "-m", "pip", "install", "--upgrade", "mcptoon"]
 
 
+def _cache_path():
+    """Where the last `upgrade --check` result is remembered (read by the footer)."""
+    from . import config
+    return config.STATE_DIR / CACHE_NAME
+
+
+def write_cache(latest, err, *, checked_at=None) -> None:
+    """Persist the last check so `footer-facts` can hint without a network call.
+
+    Skipped under pytest unless a test opts in with ``MCPTOON_UPGRADE_CACHE`` — a
+    normal test run must not leave a cache that later flips another footer test's
+    output. Production is unaffected.
+    """
+    if os.environ.get("PYTEST_CURRENT_TEST") and not os.environ.get("MCPTOON_UPGRADE_CACHE"):
+        return
+    try:
+        p = _cache_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "installed": current_version(),
+            "latest": latest,
+            "error": err,
+            "checked_at": time.time() if checked_at is None else checked_at,
+        }
+        p.write_text(json.dumps(payload), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def read_cache():
+    """Return the cached check dict, or None if absent/unreadable."""
+    try:
+        return json.loads(_cache_path().read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def footer_hint(*, max_age_hours: float = 48.0) -> str | None:
+    """A one-line 'new version available' hint for the footer, or None.
+
+    Reads only the cache written by `upgrade --check` — never the network, so it is
+    safe in the per-turn footer. Returns None when there is no fresh-enough record,
+    the last check errored, or the installed version is already current.
+    """
+    c = read_cache()
+    if not c or c.get("error") or not c.get("latest"):
+        return None
+    try:
+        age = time.time() - float(c.get("checked_at") or 0)
+    except (TypeError, ValueError):
+        return None
+    if age > max_age_hours * 3600:
+        return None
+    installed = current_version()
+    if str(c.get("installed")) != installed:
+        return None  # we upgraded since the check; the record is about the old install
+    if not is_newer(str(c["latest"]), installed):
+        return None
+    return (f"  新版 mcptoon {c['latest']} 可用（当前 {installed}）"
+            f" · mcptoon upgrade")
+
+
+def maybe_refresh_cache(*, ttl_hours: float = 24.0) -> None:
+    """If the cache is stale, spawn a detached `upgrade --check --quiet` to refresh.
+
+    Fire-and-forget: never blocks the caller, never touches the network inline, and
+    silently does nothing when a recent record already exists. The child is
+    detached so a slow or offline PyPI can never delay the footer.
+    """
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        return  # never spawn a background check from inside the test suite
+    c = read_cache()
+    if c and (time.time() - float(c.get("checked_at") or 0)) < ttl_hours * 3600:
+        return
+    try:
+        kw = {}
+        if os.name == "nt":
+            kw["creationflags"] = 0x00000008 | 0x00000200  # DETACHED | NEW_GROUP
+        else:
+            kw["start_new_session"] = True
+        subprocess.Popen(
+            [sys.executable, "-m", "mcptoon", "upgrade", "--check", "--quiet"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            close_fds=True,
+            **kw,
+        )
+    except Exception:
+        pass
+
+
 def _render_gap(current: str, latest: str, *, checked: bool) -> str:
     return (
         f"  installed  {current}\n"
@@ -193,9 +290,14 @@ def run(rest: list, fmt: str = "auto") -> None:
     """
     check = any(a in ("--check", "--dry", "--dry-run") for a in rest)
     assume_yes = any(a in ("--yes", "-y") for a in rest)
+    quiet = any(a in ("--quiet", "-q") for a in rest)
 
     current = current_version()
     latest, err = fetch_latest()
+
+    # Every explicit check updates the cache the footer reads. A --quiet run is the
+    # detached refresher, so it is the most important writer; a normal run writes too.
+    write_cache(latest, err)
 
     if fmt == "json":
         payload = {
@@ -209,7 +311,7 @@ def run(rest: list, fmt: str = "auto") -> None:
     if err:
         if fmt == "json":
             print(json.dumps(payload, indent=2, ensure_ascii=False))
-        else:
+        elif not quiet:
             print(f"  could not check PyPI for the latest mcptoon: {err}")
             print("  (this is a network problem, not an 'up to date' result)")
         sys.exit(2)
@@ -219,14 +321,14 @@ def run(rest: list, fmt: str = "auto") -> None:
     if not newer:
         if fmt == "json":
             print(json.dumps(payload, indent=2, ensure_ascii=False))
-        else:
+        elif not quiet:
             print(f"  mcptoon {current} is up to date (latest on PyPI: {latest}).")
         return
 
     if check:
         if fmt == "json":
             print(json.dumps(payload, indent=2, ensure_ascii=False))
-        else:
+        elif not quiet:
             print(_render_gap(current, latest, checked=True))
         sys.exit(1)
 

@@ -117,16 +117,28 @@ def test_current_version_matches_package():
 # ─── run(): exit codes and messages ───
 
 def _run(rest, fmt="auto"):
-    """Run upgrade.run and return (exit_code, stdout)."""
+    """Run upgrade.run and return (exit_code, stdout).
+
+    The cache file is redirected to a throwaway dir so a test's `--check` never
+    leaves a record that could flip a later `footer-facts` test's output.
+    """
     import io
     import contextlib
+    import tempfile
+    from pathlib import Path
+    tmp = tempfile.mkdtemp(prefix="mcptoon-upg-cache-")
+    old = upgrade_mod._cache_path
+    upgrade_mod._cache_path = lambda: Path(tmp) / "upgrade-check.json"
     buf = io.StringIO()
     code = 0
-    with contextlib.redirect_stdout(buf):
-        try:
-            upgrade_mod.run(rest, fmt)
-        except SystemExit as e:
-            code = e.code if isinstance(e.code, int) else 0
+    try:
+        with contextlib.redirect_stdout(buf):
+            try:
+                upgrade_mod.run(rest, fmt)
+            except SystemExit as e:
+                code = e.code if isinstance(e.code, int) else 0
+    finally:
+        upgrade_mod._cache_path = old
     return code, buf.getvalue()
 
 
@@ -207,3 +219,113 @@ class TestRun:
         assert data["installed"] == "0.8.28"
         assert data["latest"] == "0.8.29"
         assert data["newer_available"] is True
+
+
+# ─── footer cache: hint + throttled refresh ───
+
+class TestFooterCache:
+    def _cache(self, tmp_path, monkeypatch, **rec):
+        p = tmp_path / "upgrade-check.json"
+        monkeypatch.setattr(upgrade_mod, "_cache_path", lambda: p)
+        return p
+
+    def test_hint_shown_when_newer_and_fresh(self, tmp_path, monkeypatch):
+        p = self._cache(tmp_path, monkeypatch)
+        import time as _t
+        p.write_text(json.dumps({
+            "installed": "0.8.28", "latest": "0.8.29",
+            "error": None, "checked_at": _t.time(),
+        }), encoding="utf-8")
+        monkeypatch.setattr(upgrade_mod, "current_version", lambda: "0.8.28")
+        hint = upgrade_mod.footer_hint()
+        assert hint and "0.8.29" in hint
+
+    def test_no_hint_when_up_to_date(self, tmp_path, monkeypatch):
+        p = self._cache(tmp_path, monkeypatch)
+        import time as _t
+        p.write_text(json.dumps({
+            "installed": "0.8.28", "latest": "0.8.28",
+            "error": None, "checked_at": _t.time(),
+        }), encoding="utf-8")
+        monkeypatch.setattr(upgrade_mod, "current_version", lambda: "0.8.28")
+        assert upgrade_mod.footer_hint() is None
+
+    def test_no_hint_when_stale(self, tmp_path, monkeypatch):
+        p = self._cache(tmp_path, monkeypatch)
+        import time as _t
+        p.write_text(json.dumps({
+            "installed": "0.8.28", "latest": "0.9.0",
+            "error": None, "checked_at": _t.time() - 100 * 3600,
+        }), encoding="utf-8")
+        monkeypatch.setattr(upgrade_mod, "current_version", lambda: "0.8.28")
+        assert upgrade_mod.footer_hint() is None
+
+    def test_no_hint_when_errored(self, tmp_path, monkeypatch):
+        p = self._cache(tmp_path, monkeypatch)
+        import time as _t
+        p.write_text(json.dumps({
+            "installed": "0.8.28", "latest": None,
+            "error": "URLError", "checked_at": _t.time(),
+        }), encoding="utf-8")
+        assert upgrade_mod.footer_hint() is None
+
+    def test_no_hint_after_we_upgraded(self, tmp_path, monkeypatch):
+        """Cache recorded the OLD install; after upgrading it must not nag."""
+        p = self._cache(tmp_path, monkeypatch)
+        import time as _t
+        p.write_text(json.dumps({
+            "installed": "0.8.27", "latest": "0.8.28",
+            "error": None, "checked_at": _t.time(),
+        }), encoding="utf-8")
+        monkeypatch.setattr(upgrade_mod, "current_version", lambda: "0.8.28")
+        assert upgrade_mod.footer_hint() is None
+
+    def test_no_cache_no_hint(self, tmp_path, monkeypatch):
+        self._cache(tmp_path, monkeypatch)  # path set, file absent
+        assert upgrade_mod.footer_hint() is None
+
+    def test_refresh_is_skipped_under_pytest(self, monkeypatch):
+        """maybe_refresh_cache must never spawn a child during the test suite."""
+        monkeypatch.setenv("PYTEST_CURRENT_TEST", "x")
+
+        def boom(*a, **k):
+            raise AssertionError("must not spawn a background check under pytest")
+
+        monkeypatch.setattr(upgrade_mod.subprocess, "Popen", boom)
+        upgrade_mod.maybe_refresh_cache()  # no raise
+
+    def test_refresh_throttled_when_fresh(self, tmp_path, monkeypatch):
+        p = self._cache(tmp_path, monkeypatch)
+        import time as _t
+        p.write_text(json.dumps({
+            "installed": "0.8.28", "latest": "0.8.28",
+            "error": None, "checked_at": _t.time(),
+        }), encoding="utf-8")
+        monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+
+        def boom(*a, **k):
+            raise AssertionError("fresh cache ⇒ no refresh spawn")
+
+        monkeypatch.setattr(upgrade_mod.subprocess, "Popen", boom)
+        upgrade_mod.maybe_refresh_cache()  # no raise
+
+    def test_refresh_spawns_when_stale(self, tmp_path, monkeypatch):
+        p = self._cache(tmp_path, monkeypatch)
+        p.write_text(json.dumps({
+            "installed": "0.8.28", "latest": "0.8.28",
+            "error": None, "checked_at": 0,
+        }), encoding="utf-8")
+        monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+        seen = {}
+
+        class P:
+            pass
+
+        def fake_popen(cmd, **kw):
+            seen["cmd"] = cmd
+            return P()
+
+        monkeypatch.setattr(upgrade_mod.subprocess, "Popen", fake_popen)
+        upgrade_mod.maybe_refresh_cache()
+        assert seen["cmd"][:4] == [sys.executable, "-m", "mcptoon", "upgrade"]
+        assert "--check" in seen["cmd"] and "--quiet" in seen["cmd"]
