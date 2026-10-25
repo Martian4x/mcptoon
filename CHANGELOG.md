@@ -7,8 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`mcptoon upgrade` — update the installed CLI itself.** `mcptoon update` refreshes
+  the *tool surface* captured from your servers; nothing told you when the mcptoon
+  program on disk was behind. `upgrade` asks PyPI for the latest release, compares it
+  with the installed version, and — after a confirmation — upgrades in place using the
+  installer it detects (`uv` when the interpreter lives under a uv tool dir, else
+  `pip`; `MCPTOON_UPGRADE_CMD` overrides). `upgrade --check` is the scriptable probe:
+  exit 1 when a newer release exists, 0 when current, 2 when PyPI is unreachable, so a
+  shell profile or CI job can surface it. `--yes` skips the prompt; `--json` is
+  machine-readable. Zero dependencies — a single `urllib` GET and a hand-rolled
+  version compare (no `packaging`).
+- **`mcptoon serve --background` — a server that outlives the terminal.** The
+  foreground server dies when the shell closes, which is why a one-off trial rarely
+  becomes a daily install. `--background` detaches the HTTP server (pid + log under the
+  mcptoon state dir); `serve --status` reports the live instance and its last log lines,
+  `serve --stop` ends it. Auto-start at login is left to the OS — the exact command is
+  printed for a Startup shortcut / scheduled task (Windows) or a launchd/systemd unit.
+
 ### Security
 
+- **`mcptoon serve --stop` could kill an unrelated process (fixed before release).**
+  The background-instance bookkeeping trusted a bare pid and probed liveness with
+  `os.kill(pid, 0)` — but on Windows that call is **not** a probe: it invokes
+  `TerminateProcess` and ends the process, so even a `--status` liveness check could
+  terminate an unrelated process whose pid had been recycled (observed during
+  development: it took down an unrelated node process). `_pid_alive` now uses a
+  query-only handle (`OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION)` +
+  `GetExitCodeProcess`) on Windows and the harmless `kill(pid, 0)` only on POSIX, and
+  the pid file records the process **creation time** so `--stop` refuses to signal a
+  pid whose identity no longer matches the one it spawned.
 - **`mcptoon install` could write arbitrary code into a generated handler file.**
   `installer._generate_http_handler_file` and `_generate_handler_file` build a
   Python module that is later imported (`from router import register` at the top,

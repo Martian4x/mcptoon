@@ -96,6 +96,11 @@ KNOWN_FLAGS = frozenset(
         # `kb`-only. `--ttl` and `--source` name cache lifetime and an index
         # label; `--purge` is `session`'s destructive reset.
         "--ttl", "--source", "--purge",
+        # `serve --background` control surface. Registered so the central parser
+        # passes them through to run_serve; `--daemon`/`--start` are accepted
+        # aliases for `--background`. `--upgrade` is the upgrade command's alias
+        # of `--check`+`--yes` intent handled in upgrade.run.
+        "--background", "--status", "--stop", "--daemon", "--start", "--upgrade",
     }
 )
 
@@ -145,7 +150,7 @@ _COMPLETION_COMMANDS = (
     "init", "inspect", "install", "kb", "list", "manifest", "mode", "off", "openapi", "graphql", "auth", "resources", "prompts", "complete", "bake", "plugin",
     "policy", "quickstart", "remove", "report", "savings", "restore", "retrieve", "search",
     "select", "serve", "session", "skills", "stats", "status", "statusline", "sync", "toggle", "credit",
-    "uninstall", "update", "usage",
+    "uninstall", "update", "usage", "upgrade",
     # aliases the dispatch chain also accepts
     "servers", "tools", "qs", "brief",
 )
@@ -706,6 +711,9 @@ def _run(state: dict) -> None:
     elif command == "update":
         from . import update as update_mod
         update_mod.run(rest, fmt)
+    elif command == "upgrade":
+        from . import upgrade as upgrade_mod
+        upgrade_mod.run(rest, fmt)
     elif command == "completion":
         _cmd_completion(rest)
     elif command == "serve":
@@ -6774,6 +6782,9 @@ def _lazy_handler(command: str):
         if command == "update":
             from . import update as _update
             return _update.run
+        if command == "upgrade":
+            from . import upgrade as _upgrade
+            return _upgrade.run
         if command == "bench":
             from . import bench as _bench
             return _bench.run_bench
@@ -6874,6 +6885,8 @@ Usage:
     mcptoon install --remove <name>       Remove an installed server
     mcptoon update                        Refresh cached tool surface; report server drift
     mcptoon update --check                Report drift only, write nothing (exit 1 if moved)
+    mcptoon upgrade                       Update mcptoon itself to the latest PyPI release
+    mcptoon upgrade --check               Report only; exit 1 if a newer release exists
 
     mcptoon plugin scan <dir>             Validate an Agent Plugins 1.0.0 package
     mcptoon plugin install <dir>          Install a plugin into every agent
@@ -6882,6 +6895,8 @@ Usage:
 
     mcptoon serve                         Run as MCP server (stdio bridge for agents)
     mcptoon serve --http --auth           HTTP mode; bare --auth auto-generates a token
+    mcptoon serve --background --http     Detach: keep serving after the terminal closes
+    mcptoon serve --status                Check the background instance; --stop to end it
     mcptoon demo                          Zero-config one-command demo
     mcptoon demo --quick                  Results only, skip the step-by-step narration
     mcptoon demo --keep                   Leave the demo server in config afterwards

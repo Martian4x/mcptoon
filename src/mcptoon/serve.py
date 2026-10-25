@@ -50,6 +50,7 @@ import concurrent.futures
 import io
 import json
 import os
+import subprocess
 import sys
 import threading
 import time
@@ -1447,8 +1448,311 @@ def _get_call_timeout() -> int:
 
 
 # ═══════════════════════════════════════════════════
+# Background / persistent serve mode
+# ═══════════════════════════════════════════════════
+
+# `serve` in the foreground dies when the terminal closes, which is the single
+# biggest reason a "try it once" never becomes "runs on my machine every day".
+# `--background` detaches it: the process survives the shell, pid + log land under
+# the mcptoon state dir, and `--status`/`--stop` manage it. Auto-start on login is
+# left to the OS (Windows: a Startup shortcut; POSIX: launchd/systemd — the exact
+# command is printed so the user wires the one they use).
+
+_BG_PID = config.STATE_DIR / "serve.pid"
+_BG_LOG = config.LOG_DIR / "serve.log"
+
+
+def _bg_paths():
+    """(pid_file, log_file), resolved at call time so a --dir override is honoured."""
+    return config.STATE_DIR / "serve.pid", config.LOG_DIR / "serve.log"
+
+
+def _pid_alive(pid: int) -> bool:
+    """True if a process with this pid exists. Cross-platform, no psutil.
+
+    CRITICAL (Windows): ``os.kill(pid, 0)`` does NOT probe on Windows — its
+    Windows implementation calls ``TerminateProcess``, so a "liveness check"
+    would KILL the process. (This actually took down an unrelated node process
+    during development.) On Windows we open the handle with query-only rights
+    and read its exit code instead; only POSIX gets the harmless ``kill(pid, 0)``.
+    """
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        try:
+            import ctypes
+            from ctypes import wintypes
+            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+            STILL_ACTIVE = 259
+            kernel32 = ctypes.windll.kernel32
+            kernel32.OpenProcess.restype = wintypes.HANDLE
+            kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+            kernel32.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+            kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+            h = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+            if not h:
+                return False  # gone, or access denied (treat as not-ours)
+            try:
+                code = wintypes.DWORD()
+                if kernel32.GetExitCodeProcess(h, ctypes.byref(code)):
+                    return code.value == STILL_ACTIVE
+                return False
+            finally:
+                kernel32.CloseHandle(h)
+        except Exception:
+            return False
+    try:
+        os.kill(pid, 0)
+    except OSError as e:
+        return getattr(e, "errno", None) == 1  # EPERM = alive but not ours
+    except Exception:
+        return False
+    return True
+
+
+def _proc_create_time(pid: int):
+    """The process creation time (epoch seconds) as a float, or None.
+
+    The identity check that makes ``--stop`` safe: a pid alone is not unique over
+    time (Windows recycles them aggressively), so we record the creation time when
+    we spawn and refuse to kill a pid whose creation time no longer matches.
+    """
+    if pid <= 0:
+        return None
+    if os.name == "nt":
+        try:
+            import ctypes
+            from ctypes import wintypes
+            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+            kernel32 = ctypes.windll.kernel32
+            kernel32.OpenProcess.restype = wintypes.HANDLE
+            kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+            kernel32.GetProcessTimes.argtypes = [
+                wintypes.HANDLE, ctypes.POINTER(wintypes.FILETIME),
+                ctypes.POINTER(wintypes.FILETIME), ctypes.POINTER(wintypes.FILETIME),
+                ctypes.POINTER(wintypes.FILETIME)]
+            kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+            h = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+            if not h:
+                return None
+            try:
+                ft = wintypes.FILETIME()
+                if kernel32.GetProcessTimes(h, ctypes.byref(ft), ctypes.byref(wintypes.FILETIME()),
+                                            ctypes.byref(wintypes.FILETIME()),
+                                            ctypes.byref(wintypes.FILETIME())):
+                    ticks = (ft.dwHighDateTime << 32) | ft.dwLowDateTime
+                    return ticks / 1e7 - 11644473600.0  # FILETIME epoch → Unix epoch
+                return None
+            finally:
+                kernel32.CloseHandle(h)
+        except Exception:
+            return None
+    try:
+        import subprocess as _sp
+        out = _sp.run(["ps", "-o", "etimes=", "-p", str(pid)],
+                      capture_output=True, text=True, timeout=5).stdout.strip()
+        if out.isdigit():
+            return time.time() - int(out)
+    except Exception:
+        pass
+    return None
+
+
+def _write_pidfile(pid: int) -> None:
+    """Record the spawned pid together with its creation time (identity)."""
+    pid_file, _ = _bg_paths()
+    pid_file.parent.mkdir(parents=True, exist_ok=True)
+    rec = {"pid": pid, "created": _proc_create_time(pid)}
+    pid_file.write_text(json.dumps(rec), encoding="utf-8")
+
+
+def _read_pid():
+    """Return the running background serve pid, or None (also clears a stale file).
+
+    Only returns a pid we can still vouch for: it must be alive AND its creation
+    time must match the one recorded at spawn. A recycled pid, a crash, or a
+    reboot leaves a record we no longer trust, so we clear it and report None
+    rather than hand ``--stop`` a pid that now belongs to something else.
+    """
+    pid_file, _ = _bg_paths()
+    if not pid_file.exists():
+        return None
+    pid, created = -1, None
+    try:
+        raw = pid_file.read_text(encoding="utf-8").strip()
+        try:
+            rec = json.loads(raw)
+        except ValueError:
+            rec = raw  # not JSON at all; maybe a plain int or garbage
+        if isinstance(rec, dict):
+            pid = int(rec.get("pid", -1))
+            created = rec.get("created")
+        else:
+            pid = int(rec)  # tolerate an old plain-int file ("4321" or 4321)
+    except (ValueError, TypeError, OSError):
+        pid = -1
+
+    trusted = False
+    if pid > 0 and _pid_alive(pid):
+        if created is None:
+            trusted = True  # old format, no identity: accept a live pid (best effort)
+        else:
+            now_created = _proc_create_time(pid)
+            trusted = now_created is not None and abs(now_created - float(created)) < 2.0
+    if trusted:
+        return pid
+    try:
+        pid_file.unlink()
+    except OSError:
+        pass
+    return None
+
+
+def _tcp_probe(host: str, port: int, timeout: float = 0.25) -> bool:
+    """True if something accepts a TCP connection at host:port right now."""
+    import socket
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def _background_start(args: list[str], listen_addr: str | None) -> int:
+    """Spawn a detached `serve` and write its pid. Returns a shell exit code."""
+    pid_file, log_file = _bg_paths()
+    existing = _read_pid()
+    if existing:
+        print(f"  mcptoon serve is already running in the background (pid {existing}).")
+        print("  stop it first: mcptoon serve --stop")
+        return 1
+
+    pid_file.parent.mkdir(parents=True, exist_ok=True)
+    log_file.parent.mkdir(parents=True, exist_ok=True)
+
+    # Refuse early if the port is already taken. This is the common failure and,
+    # checked before spawning, it is unambiguous: afterwards a successful connect
+    # could be *someone else's* listener, not our child. (Windows lets a second
+    # binder share a port when both set SO_REUSEADDR, so we cannot rely on the
+    # child's own bind error being the first signal.)
+    host, port = _parse_listen_addr(listen_addr)
+    probe_host = "127.0.0.1" if host in ("0.0.0.0", "::", "") else host
+    if _tcp_probe(probe_host, port):
+        print(f"  cannot start: {listen_addr} is already in use.")
+        print("  pick another port with --listen host:port, or stop what is using it.")
+        return 1
+
+    # Re-run the same serve invocation in the child, minus the control flags, so
+    # the detached process is byte-identical to the foreground one.
+    child_args = [a for a in args
+                  if a not in ("--background", "--daemon", "--start")
+                  and not a.startswith("--install")]
+    cmd = [sys.executable, "-m", "mcptoon", "serve", *child_args]
+
+    popen_kw = {}
+    if os.name == "nt":
+        # DETACHED_PROCESS + CREATE_NEW_PROCESS_GROUP: no console, survives the shell.
+        popen_kw["creationflags"] = 0x00000008 | 0x00000200
+    else:
+        popen_kw["start_new_session"] = True  # setsid: survives the controlling terminal
+
+    with open(log_file, "ab") as log:
+        proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=log,
+                                stderr=log, close_fds=True, **popen_kw)
+
+    # The port was free a moment ago, so a connect now means *our* child bound it.
+    # Poll until it binds (fast) or dies / times out (fail) — never a hopeful guess.
+    deadline = time.time() + 10.0
+    ready = False
+    while time.time() < deadline:
+        if proc.poll() is not None:
+            break
+        if _tcp_probe(probe_host, port):
+            ready = True
+            break
+        time.sleep(0.1)
+    if not ready or proc.poll() is not None:
+        # Child exited, or never bound the port in time — the start failed.
+        try:
+            log_tail = log_file.read_text(encoding="utf-8", errors="replace").splitlines()[-6:]
+        except OSError:
+            log_tail = []
+        print("  mcptoon serve failed to start — it did not bind "
+              f"{listen_addr} (child exit code {proc.poll()}).")
+        if log_tail:
+            print(f"  last log lines ({log_file}):")
+            for line in log_tail:
+                print(f"    {line}")
+        print("  hint: the port may already be in use — pick another with --listen host:port.")
+        if proc.poll() is None:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+        return 1
+
+    _write_pidfile(proc.pid)
+    where = listen_addr or "stdio"
+    print(f"  mcptoon serve started in the background (pid {proc.pid}, {where}).")
+    print(f"  log: {log_file}")
+    print("  status: mcptoon serve --status   ·   stop: mcptoon serve --stop")
+    print()
+    print("  to auto-start at login, add a Startup shortcut / scheduled task that runs:")
+    print(f"    {sys.executable} -m mcptoon serve{' ' + ' '.join(child_args) if child_args else ''}")
+    return 0
+
+
+def _background_status() -> int:
+    pid_file, log_file = _bg_paths()
+    pid = _read_pid()
+    if not pid:
+        print("  mcptoon serve is not running in the background.")
+        return 0
+    print(f"  mcptoon serve is running (pid {pid}).")
+    if log_file.exists():
+        try:
+            tail = log_file.read_text(encoding="utf-8", errors="replace").splitlines()[-5:]
+        except OSError:
+            tail = []
+        if tail:
+            print(f"  last log lines ({log_file}):")
+            for line in tail:
+                print(f"    {line}")
+    return 0
+
+
+def _background_stop() -> int:
+    pid_file, _ = _bg_paths()
+    pid = _read_pid()
+    if not pid:
+        print("  mcptoon serve is not running in the background — nothing to stop.")
+        return 0
+    try:
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/PID", str(pid), "/F"],
+                           capture_output=True, check=False)
+        else:
+            os.kill(pid, 15)  # SIGTERM
+    except Exception as e:
+        print(f"  could not stop pid {pid}: {type(e).__name__}: {e}")
+        return 1
+    # Give it a moment, then clear the pid file regardless.
+    for _ in range(20):
+        if not _pid_alive(pid):
+            break
+        time.sleep(0.1)
+    try:
+        pid_file.unlink()
+    except OSError:
+        pass
+    print(f"  mcptoon serve stopped (pid {pid}).")
+    return 0
+
+
+# ═══════════════════════════════════════════════════
 # Entry point
 # ═══════════════════════════════════════════════════
+
 
 # Sentinel for `--auth` given without a value → token is generated at startup
 # and printed to stderr exactly once (Jupyter-style). Value is a placeholder
@@ -1529,8 +1833,26 @@ def run_serve(args: list[str]):
               --listen <addr>  HTTP mode: listen on addr (e.g. :8080)
               --http            Shorthand for --listen :8080 (binds 127.0.0.1)
               --auth [token]    Bearer token; bare --auth generates one
+              --background      Detach and run in the background (HTTP mode)
+              --status          Report the background instance, then exit
+              --stop            Stop the background instance, then exit
     """
+    # Control flags are handled before _parse_serve_args so its documented
+    # (format, listen, auth) contract stays exactly as tests pin it.
+    if any(a in ("--status",) for a in args):
+        sys.exit(_background_status())
+    if any(a in ("--stop",) for a in args):
+        sys.exit(_background_stop())
+
     output_format, listen_addr, auth_token = _parse_serve_args(args)
+
+    if any(a in ("--background", "--daemon", "--start") for a in args):
+        if not listen_addr:
+            # A detached stdio server has no reader — refuse rather than orphan it.
+            print("  --background needs an HTTP address: use --background --http "
+                  "(or --listen :8080).", file=sys.stderr)
+            sys.exit(2)
+        sys.exit(_background_start(args, listen_addr))
 
     bridge = MCPServerBridge(output_format=output_format)
 
@@ -1906,6 +2228,15 @@ Usage:
   mcptoon serve --http             # Shorthand for --listen :8080
   mcptoon serve --http --auth      # HTTP mode with auto-generated token
   mcptoon serve --listen 0.0.0.0:9090 --auth <token>  # LAN/remote (token required)
+  mcptoon serve --background --http   # detach: keep running after the terminal closes
+  mcptoon serve --status              # is the background instance alive? last log lines
+  mcptoon serve --stop                # stop the background instance
+
+Background mode:
+  --background detaches the HTTP server so it survives the shell. pid + log live
+  under the mcptoon state dir (~/.mcptoon). Auto-start at login is left to the OS:
+  add a Startup shortcut / scheduled task (Windows) or a launchd/systemd unit (POSIX)
+  that runs the same command. --background requires an HTTP address (--http/--listen).
 
 Security (v0.7.3):
   - Bare ':port' binds 127.0.0.1 (loopback) — never 0.0.0.0
