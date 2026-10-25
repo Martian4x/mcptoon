@@ -631,8 +631,23 @@ def _generate_http_handler_file(server_name, tools, url, transport, headers=None
     # able to break the generated file.
     headers_repr = repr({str(k): str(v) for k, v in (headers or {}).items()})
 
+    # SECURITY (code injection): `server_name`, `url` and `transport` reach this
+    # function from CLI input / a registry / an `--url` someone pasted, and the
+    # generated file is imported later (`from router import register` at the top,
+    # `@register(...)`). Interpolating them raw let a value like
+    #   http://x/sse";import os;os.system("id");_="
+    # produce a syntactically valid handler that runs arbitrary code on import —
+    # verified: such a file compiles. Emit each as a `repr()` literal (never raw
+    # f-string text), exactly like `headers_repr`, so no value can break out of
+    # its string into executable statements. The docstring gets a stripped
+    # display copy because a docstring cannot be a repr.
+    url_repr = repr(str(url))
+    transport_repr = repr(str(transport))
+    name_repr = repr(str(server_name))
+    display_name = re.sub(r"[^\w .:/@+()-]", "_", str(server_name))[:80]
+
     handler_code = f'''# -*- coding: utf-8 -*-
-"""Auto-generated HTTP/SSE handler for {server_name}"""
+"""Auto-generated HTTP/SSE handler for {display_name}"""
 import os, sys
 
 # ─── path setup for local execution ───
@@ -651,7 +666,7 @@ except ImportError:
     except ImportError:
         from mcptoon.router import register
 
-SERVER_NAME = "{server_name}"
+SERVER_NAME = {name_repr}
 ALIASES = ()
 
 SCHEMA = [
@@ -659,8 +674,8 @@ SCHEMA = [
 ]
 
 # HTTP/SSE config
-MCP_URL = "{url}"
-MCP_TRANSPORT = "{transport}"
+MCP_URL = {url_repr}
+MCP_TRANSPORT = {transport_repr}
 
 # Header templates. A value may name an environment variable as ${{NAME}}; the
 # client resolves it at request time (issue #24), so no token is ever written
@@ -776,14 +791,24 @@ def _generate_handler_file(server_name, tools, command, args_list, env_keys, sou
 
     schema_str = "\n".join(schema_lines) if schema_lines else "    # Tool list will be fetched from daemon on first call"
 
-    # Generate env keys
-    env_str = ", ".join(f'"{k}": ""' for k in env_keys) if env_keys else ""
+    # Generate env keys — json.dumps each key: an env var NAME reaching us from a
+    # registry/config could otherwise carry a quote and break out into code.
+    env_str = ", ".join(f'{json.dumps(str(k))}: ""' for k in env_keys) if env_keys else ""
 
-    # Generate args list
-    args_str = ", ".join(f'"{a}"' for a in args_list)
+    # Generate args list — json.dumps each arg for the same reason (an arg such as
+    # `x";import os;os.system("id");_="` must stay a string literal, not code).
+    args_str = ", ".join(json.dumps(str(a)) for a in args_list)
+
+    # SECURITY (code injection): same class as the HTTP handler below — this file
+    # is imported later, so `server_name`, `command` and every arg/env key must be
+    # emitted as repr/json literals, never raw f-string text.
+    name_repr = repr(str(server_name))
+    command_repr = repr(str(command))
+    display_name = re.sub(r"[^\w .:/@+()-]", "_", str(server_name))[:80]
+    display_source = re.sub(r"[^\w .:/@+()-]", "_", str(source))[:40]
 
     handler_code = f'''# -*- coding: utf-8 -*-
-"""Auto-generated handler for {server_name} (source: {source})"""
+"""Auto-generated handler for {display_name} (source: {display_source})"""
 import os, sys
 
 # ─── path setup for local execution ───
@@ -802,7 +827,7 @@ except ImportError:
     except ImportError:
         from mcptoon.router import register
 
-SERVER_NAME = "{server_name}"
+SERVER_NAME = {name_repr}
 ALIASES = ()
 
 SCHEMA = [
@@ -810,7 +835,7 @@ SCHEMA = [
 ]
 
 # MCP stdio launch config
-MCP_COMMAND = "{command}"
+MCP_COMMAND = {command_repr}
 MCP_ARGS = [{args_str}]
 MCP_ENV = {{{env_str}}}
 

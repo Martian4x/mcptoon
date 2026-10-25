@@ -5,6 +5,23 @@ All notable changes to mcptoon will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Security
+
+- **`mcptoon install` could write arbitrary code into a generated handler file.**
+  `installer._generate_http_handler_file` and `_generate_handler_file` build a
+  Python module that is later imported (`from router import register` at the top,
+  `@register(...)`), but interpolated `server_name`, `url`, `transport`, `command`
+  and each arg as *raw* f-string text inside `"..."` literals. A value like
+  `install --url 'http://x/sse";import os;os.system("id");_="'` therefore produced
+  a **syntactically valid** handler that ran the injected statement on import —
+  verified: such a file compiles. These inputs routinely arrive from a pasted
+  link, an issue, or an agent, so this was a code-execution primitive. Every one
+  of them is now emitted as a `repr()`/`json.dumps()` literal (like `headers` and
+  `SCHEMA` already were), so no value can escape its string. The docstring, which
+  cannot be a repr, gets a sanitised display copy.
+
 ## [0.8.28] - 2026-10-25
 
 ### Fixed

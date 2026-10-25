@@ -270,6 +270,81 @@ class TestHandlersDir(unittest.TestCase):
             self.assertTrue((target / "demo.py").is_file())
 
 
+class TestHandlerCodeInjection(unittest.TestCase):
+    """The generated handler is imported later, so a value that reaches it from a
+    pasted `--url`, an explicit `--name`, a registry row or an arg must never be
+    able to break out of its string literal into executable code. The payload below
+    raises SystemExit *only if it escapes into code* — a deterministic probe that
+    fails loudly on the old raw-f-string interpolation."""
+
+    PAYLOAD = '";raise SystemExit("INJECTED");_="'
+
+    def _exec_generated(self, src):
+        """Import the generated module in a throwaway namespace (no side effects)."""
+        ns = {"__name__": "not_main", "__file__": "handler.py",
+              "register": lambda *a, **k: (lambda f: f)}
+        exec(compile(src, "handler.py", "exec"), ns)
+        return ns
+
+    def _gen_http(self, name, url, transport="sse"):
+        import tempfile
+        from pathlib import Path
+        from mcptoon.installer import _generate_http_handler_file
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch("mcptoon.installer._handlers_dir", lambda: tmp):
+                _generate_http_handler_file(
+                    name, [{"name": "t", "description": "d", "inputSchema": {}}],
+                    url, transport, {})
+            f = next(Path(tmp).glob("*.py"))
+            return f.read_text(encoding="utf-8")
+
+    def _gen_stdio(self, name, command, args):
+        import tempfile
+        from pathlib import Path
+        from mcptoon.installer import _generate_handler_file
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch("mcptoon.installer._handlers_dir", lambda: tmp):
+                _generate_handler_file(
+                    name, [{"name": "t", "description": "d", "inputSchema": {}}],
+                    command, args, [], "custom")
+            f = next(Path(tmp).glob("*.py"))
+            return f.read_text(encoding="utf-8")
+
+    def test_http_url_cannot_inject_code(self):
+        bad_url = "https://api.example.com/sse" + self.PAYLOAD
+        src = self._gen_http("ok_name", bad_url)
+        ns = self._exec_generated(src)          # must NOT raise SystemExit
+        self.assertEqual(ns["MCP_URL"], bad_url)  # preserved verbatim as data
+
+    def test_http_name_cannot_inject_code(self):
+        src = self._gen_http("x" + self.PAYLOAD, "https://e/sse")
+        ns = self._exec_generated(src)
+        self.assertEqual(ns["SERVER_NAME"], "x" + self.PAYLOAD)
+
+    def test_http_transport_cannot_inject_code(self):
+        src = self._gen_http("ok", "https://e/sse", transport="sse" + self.PAYLOAD)
+        ns = self._exec_generated(src)
+        self.assertEqual(ns["MCP_TRANSPORT"], "sse" + self.PAYLOAD)
+
+    def test_stdio_command_cannot_inject_code(self):
+        src = self._gen_stdio("ok", "npx" + self.PAYLOAD, ["-y", "pkg"])
+        ns = self._exec_generated(src)
+        self.assertEqual(ns["MCP_COMMAND"], "npx" + self.PAYLOAD)
+
+    def test_stdio_arg_cannot_inject_code(self):
+        bad_arg = "--x" + self.PAYLOAD
+        src = self._gen_stdio("ok", "npx", ["-y", bad_arg])
+        ns = self._exec_generated(src)
+        self.assertEqual(ns["MCP_ARGS"], ["-y", bad_arg])
+
+    def test_normal_values_round_trip_exactly(self):
+        src = self._gen_stdio("my_srv", "npx", ["-y", "pkg@1.2", "--flag=a b"])
+        ns = self._exec_generated(src)
+        self.assertEqual(ns["SERVER_NAME"], "my_srv")
+        self.assertEqual(ns["MCP_COMMAND"], "npx")
+        self.assertEqual(ns["MCP_ARGS"], ["-y", "pkg@1.2", "--flag=a b"])
+
+
 class TestConfiguredHosts(unittest.TestCase):
     """Regression guard for the rot that silently killed this feature."""
 
