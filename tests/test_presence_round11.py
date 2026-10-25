@@ -69,7 +69,25 @@ def test_mode_empty_when_no_servers(monkeypatch):
 def test_mode_serve_when_gateway_wired(monkeypatch):
     monkeypatch.setattr("mcptoon.config.list_servers", lambda: ["a", "b"])
     monkeypatch.setattr(mode, "_gateway_registered", lambda: True)
+    # A wired gateway with nothing left to take over is plain `serve`; force an
+    # empty takeover plan so the test does not read this machine's real configs.
+    monkeypatch.setattr("mcptoon.sync.takeover_plan", lambda *a, **k: [])
     assert mode.detect()["mode"] == "serve"
+
+
+def test_mode_serve_alongside_when_gateway_wired_but_entries_remain(monkeypatch):
+    # Gateway registered, but host configs still list upstream entries it manages:
+    # those hosts keep loading every schema natively, so this is NOT `serve`.
+    monkeypatch.setattr("mcptoon.config.list_servers", lambda: ["a", "b"])
+    monkeypatch.setattr(mode, "_gateway_registered", lambda: True)
+    monkeypatch.setattr("mcptoon.sync.takeover_plan", lambda *a, **k: [
+        {"agent": "cursor", "agent_name": "Cursor", "path": "p", "servers": ["a", "b"]},
+        {"agent": "cline", "agent_name": "Cline", "path": "q", "servers": ["a"]},
+    ])
+    d = mode.detect()
+    assert d["mode"] == "serve-alongside"
+    assert d["alongside"] is True
+    assert d["direct_entries"] == 3
 
 
 def test_mode_cli_when_routed_calls_exist(monkeypatch):
@@ -117,6 +135,26 @@ def test_statusline_marks_direct_loudly(monkeypatch):
     monkeypatch.setattr(mode, "_figures", lambda: {})
     monkeypatch.setattr(mode, "_exposed", lambda: 9)
     assert "direct→sync" in mode.statusline(lng="en")
+
+
+def test_statusline_alongside_says_no_saving_not_99(monkeypatch):
+    # Gateway wired but direct entries remain: the badge must NOT credit a gateway
+    # saving the machine is not living. It must say "no saving" and name takeover.
+    monkeypatch.setattr(mode, "detect", lambda: {
+        "mode": "serve-alongside", "gateway_registered": True, "alongside": True,
+        "direct_entries": 48, "servers": 7, "calls": 3119, "routed": 3111,
+        "native": 8, "by_host": {}})
+    monkeypatch.setattr(mode, "_figures", lambda: {
+        "gateway_tokens": 2499, "tokens_full": 640606, "tools": 209,
+        "calls_recorded": 3119})
+    monkeypatch.setattr(mode, "_exposed", lambda: 9)
+    en = mode.statusline(lng="en")
+    zh = mode.statusline(lng="zh")
+    assert "99%" not in en and "省 99%" not in zh
+    assert "saved" not in en and "≈省" not in zh
+    assert "no saving" in en and "未省" in zh
+    assert "serve→takeover" in en and "serve→接管" in zh
+    assert len(en) <= 80, f"statusline is {len(en)} cols: {en!r}"
 
 
 # ─── 3. explain names CLI as cheapest and states the honest headline ─────────

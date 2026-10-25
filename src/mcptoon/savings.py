@@ -182,6 +182,18 @@ def render(data: dict, lng: str = "en") -> str:
              "⚠ 你现在是直连模式（装了没接）—— 此刻一分没省。下面的数字是接上后能省的量。"))
         a(L_("   → run `mcptoon sync --self` to wire serve, or use `mcptoon call`",
              "   → 跑 `mcptoon sync --self`（serve）或改用 `mcptoon call`（cli）"))
+    elif data.get("delivery_mode") == "serve-alongside":
+        # Gateway wired but the upstream entries still load directly, so the
+        # gateway saves nothing yet. Same "milestones are not a live tally" caveat
+        # as direct, with the takeover fix instead of wiring.
+        a("")
+        a(L_("⚠ You are in serve-alongside mode (gateway wired, but the direct "
+             "entries are not taken over) — right now you save 0. The figures below "
+             "are what you WOULD save after `mcptoon sync --takeover`.",
+             "⚠ 你现在是 serve（网关已接，但直连条目没被接管）—— 此刻一分没省。"
+             "下面的数字是接管后能省的量。"))
+        a(L_("   → run `mcptoon sync --takeover` to route them through the gateway",
+             "   → 跑 `mcptoon sync --takeover` 把直连条目改为走网关"))
     a("")
 
     # Milestones crossed.

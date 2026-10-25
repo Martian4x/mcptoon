@@ -1920,10 +1920,22 @@ def _load_version_ledger(path: Path) -> dict:
 def _save_version_ledger(path: Path, ledger: dict) -> None:
     """Atomic write (tmp + os.replace) — the discipline the ledger already had."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(ledger, ensure_ascii=False, indent=2, sort_keys=True),
-                   encoding="utf-8")
-    os.replace(tmp, path)
+    # Unique temp name: a fixed ".json.tmp" let two concurrent syncs race on the
+    # same temp file, so os.replace could swap in a partial/foreign file and
+    # corrupt the SHARED version ledger (wrong block/allow). pid + uuid makes each
+    # writer's temp private; os.replace is atomic on the same volume.
+    import uuid
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp")
+    try:
+        tmp.write_text(json.dumps(ledger, ensure_ascii=False, indent=2, sort_keys=True),
+                       encoding="utf-8")
+        os.replace(tmp, path)
+    finally:
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except OSError:
+            pass
 
 
 def _skill_content_hash(skill_dir: Path) -> str:

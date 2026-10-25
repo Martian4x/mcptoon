@@ -327,6 +327,42 @@ class TestPumpRouting(unittest.TestCase):
                          "late response must be parked in lost & found")
         self.assertEqual(c._late_queue[0][0].get("id"), 99)
 
+    def test_reconnect_isolates_generations(self):
+        """A new pump must get a FRESH queue dict, so the previous (dead) pump's
+        EOF sentinel cannot land in a new in-flight request's queue.
+
+        This is the reconnect race: on reconnect the old pump thread is still
+        blocked on the dead pipe; when it EOFs it puts None into every queue it
+        can see. If it shared the dict with the new pump, that stale None would
+        surface as a spurious "server process exited" on a healthy new request.
+        """
+        c = self._make_client()
+        # Generation 1: register an in-flight waiter the old pump can see.
+        c._response_queues = {1: queue.Queue(maxsize=1)}
+        old_dict = c._response_queues
+        # Reconnect: _start_response_pump must replace the dict object.
+        c._proc = type("P", (), {})()
+        c._proc.stdout = _FakeStdout([b""])  # immediate EOF
+        c._proc.stderr = None
+        c._start_response_pump()
+        new_dict = c._response_queues
+        self.assertIsNot(old_dict, new_dict,
+                         "a new generation must own a new queue dict")
+        self.assertEqual(new_dict, {}, "new generation starts with no waiters")
+        # The new request registers in the NEW dict.
+        q_new = queue.Queue(maxsize=1)
+        c._response_queues[2] = q_new
+        # Simulate the OLD pump firing its EOF sentinel against the OLD dict.
+        with c._response_queues_lock:
+            for q in list(old_dict.values()):
+                q.put(None)
+        # The new in-flight queue must be untouched.
+        self.assertTrue(q_new.empty(),
+                        "old pump's EOF sentinel leaked into a new request")
+        self.assertIsNone(old_dict[1].get(timeout=1),
+                          "old waiter still gets its sentinel (fail-fast preserved)")
+
+
     def test_non_json_lines_parked(self):
         c = self._make_client()
         fake_proc = type("P", (), {})()

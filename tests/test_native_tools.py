@@ -382,8 +382,11 @@ class TestCallBridge(unittest.TestCase):
 
 
 class TestServersAndHealth(unittest.TestCase):
-    def _payload(self, name: str, args: dict, servers: dict, index: dict | None = None):
+    def _payload(self, name: str, args: dict, servers: dict, index: dict | None = None,
+                 fetch_errors: dict | None = None):
         b = _bridge(servers=servers, index=index or {})
+        if fetch_errors is not None:
+            b._server_fetch_errors = dict(fetch_errors)
         res = b._handle_call_tool({"name": name, "arguments": args})
         self.assertFalse(res["isError"])
         return res["structuredContent"]
@@ -416,7 +419,9 @@ class TestServersAndHealth(unittest.TestCase):
         self.assertEqual(sorted(p["nativeTools"]), sorted(native_tools.NATIVE_NAMES))
 
     def test_health_status_is_error_when_every_server_published_nothing(self):
-        p = self._payload("mcptoon_health", {}, {"dead": {"command": "x"}})
+        # A configured server whose fetch raised → every server failed → error.
+        p = self._payload("mcptoon_health", {}, {"dead": {"command": "x"}},
+                          fetch_errors={"dead": "spawn failed"})
         self.assertEqual(p["status"], "error")
         self.assertEqual(p["failedServers"], 1)
 
@@ -424,10 +429,23 @@ class TestServersAndHealth(unittest.TestCase):
         index = {"live_x": {"server": "live", "tool": "x", "full_schema": {},
                             "full_def": {"name": "x", "description": "d"}}}
         p = self._payload("mcptoon_health", {}, {"live": {"command": "a"}, "dead": {"command": "b"}},
-                          index)
+                          index, fetch_errors={"dead": "boom"})
         self.assertEqual(p["status"], "degraded")
         self.assertEqual(p["failedServers"], 1)
         self.assertEqual(p["toolsIndexed"], 1)
+
+    def test_health_ok_when_server_alive_but_published_no_tools(self):
+        """A healthy server that exposes 0 tools is NOT a failure.
+
+        Regression: `failed` was inferred from "absent from tool_index", which is
+        also true of an alive-but-empty server, so such a server reported
+        status=error. It must be driven by fetch errors instead.
+        """
+        p = self._payload("mcptoon_health", {}, {"empty": {"command": "e"}},
+                          index={}, fetch_errors={})
+        self.assertEqual(p["status"], "ok")
+        self.assertEqual(p["failedServers"], 0)
+        self.assertEqual(p["toolsIndexed"], 0)
 
     def test_health_before_init_is_starting(self):
         """call_native used directly (the HTTP /health path) can see a cold bridge."""
@@ -585,6 +603,26 @@ class TestUsageTool(unittest.TestCase):
         self.assertGreater(payload["tokensSaved"], 0,
                            "compressing verbose schemas must show a saving")
         self.assertGreater(payload["savingsPct"], 0)
+
+    def test_token_numbers_use_the_shared_caliber(self):
+        """tokensSaved/savingsPct must match the tiktoken caliber, not len//4.
+
+        A len(json)//4 caliber diverges from tiktoken on CJK/code payloads and
+        would make the MCP tool disagree with `mcptoon stats` on the same machine.
+        """
+        from mcptoon.usage import count_tokens
+        from mcptoon.schema_simplifier import simplify_tool_def
+
+        index = self._index()
+        b = _bridge(index=index)
+        payload = b._handle_call_tool(
+            {"name": "mcptoon_usage", "arguments": {}})["structuredContent"]
+        full = sum(count_tokens(i["full_def"]) for i in index.values())
+        slim = sum(count_tokens(simplify_tool_def(i["full_def"])) for i in index.values())
+        expected_saved = max(0, full - slim)
+        expected_pct = round(expected_saved / full * 100, 1) if full else 0.0
+        self.assertEqual(payload["tokensSaved"], expected_saved)
+        self.assertEqual(payload["savingsPct"], expected_pct)
 
     def test_footer_state_is_reflected(self):
         b = _bridge(index=self._index())

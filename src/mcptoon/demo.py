@@ -219,6 +219,17 @@ def _extract_text(result) -> str:
     return str(result)
 
 
+def _pick_best_format(toon_tokens: int, slim_tokens: int, json_tokens: int):
+    """Return ``(tokens, name)`` for the smallest of the three, label intact.
+
+    Built as a single min() over (tokens, name) pairs so a tie on token count
+    resolves by argument order and still names a format that actually produced
+    that count — the previous value→name dict silently kept the last write on a
+    tie and could label the winning size with the wrong format.
+    """
+    return min((toon_tokens, "TOON"), (slim_tokens, "SLIM"), (json_tokens, "JSON"))
+
+
 def _show_token_comparison(text: str):
     """Show side-by-side token comparison: JSON vs TOON vs SLIM.
 
@@ -262,8 +273,9 @@ def _show_token_comparison(text: str):
         slim_savings = 0
 
     print()
-    best_tokens = min(toon_tokens, slim_tokens, json_tokens)
-    best_name = {toon_tokens: "TOON", slim_tokens: "SLIM", json_tokens: "JSON"}[best_tokens]
+    # Pick the label from the same comparison that produced the min — a value→name
+    # dict collided when two formats tied on token count and named the wrong one.
+    best_tokens, best_name = _pick_best_format(toon_tokens, slim_tokens, json_tokens)
     total_savings = round((1 - best_tokens / max(json_tokens, 1)) * 100)
     print(f"  📊  SAME data, {total_savings}% fewer tokens:")
     print(f"      {json_tokens:>10,}  →  {best_tokens:>10,}   ({best_name})")

@@ -635,7 +635,16 @@ class MCPClient:
         blocking ``readline()`` — the fix for infinite hangs on servers
         that never answer some RPCs (e.g. old servers that stay silent on
         the 2026-07-28 ``server/discover`` probe).
+
+        Each spawn gets its OWN response-queue dict (a new generation). This
+        is what makes reconnect safe: the previous pump thread is still alive,
+        blocked on the dead process's ``readline()``, and when that pipe EOFs
+        it injects a ``None`` sentinel into every queue it can see. If it shared
+        one dict with the new pump, that stale sentinel would land in a NEW
+        in-flight request's queue and surface as a spurious "server process
+        exited". A per-generation dict isolates the two.
         """
+        self._response_queues = {}
         self._pump_thread = threading.Thread(
             target=_stdio_pump,
             args=(self._proc, self._response_queues,

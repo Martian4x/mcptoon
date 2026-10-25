@@ -114,6 +114,20 @@ class TestStorage(_Isolated):
     def test_missing_token_returns_none(self):
         self.assertIsNone(oauth.load_token("nope"))
 
+    def test_save_token_leaves_no_fixed_tmp_sibling(self):
+        """save_token uses a unique temp name, so concurrent refreshes don't race.
+
+        A fixed "<token>.tmp" meant two simultaneous `auth refresh` for the same
+        name shared one scratch file. After the fix, no ".tmp" with the old fixed
+        name is left behind and the saved file parses.
+        """
+        oauth.save_token("svc", oauth.TokenSet(access_token="AT"))
+        path = oauth._token_path("svc")
+        # The legacy fixed temp name would be "<name>.tmp"; it must not exist.
+        legacy_tmp = path.with_suffix(".tmp")
+        self.assertFalse(legacy_tmp.exists(), "a fixed-name temp must not linger")
+        self.assertEqual(oauth.load_token("svc").access_token, "AT")
+
     def test_corrupt_token_file_returns_none(self):
         oauth.save_token("svc", oauth.TokenSet(access_token="AT"))
         path = oauth._token_path("svc")

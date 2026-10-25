@@ -37,6 +37,14 @@ deliver it; ``direct`` does not. Result-side compression is a rounding error by
 comparison (measured 0.1–0.5%), so it must never be quoted as the reason to
 install.
 
+There is a fourth state, ``serve-alongside``, that looks like ``serve`` but is
+not: the gateway is registered in *some* host while *other* host configs still
+list the upstream servers mcptoon manages. Those hosts keep loading every full
+schema natively, so the gateway saves nothing there — the machine is loading
+*catalog + gateway*, i.e. slightly MORE than before install. Reporting "saves
+99%" here credits mcptoon for a saving it is not delivering. The honest reading
+is "wired but not taken over — run `mcptoon sync --takeover`".
+
 Everything here is read-only and cache-only: no server is spawned, so it is safe
 to call from `status`, the footer, or a statusline that runs every prompt.
 """
@@ -88,9 +96,10 @@ def _gateway_registered() -> bool:
 def detect() -> dict:
     """Classify the current delivery mode from read-only, cache-only signals.
 
-    Returns a dict with ``mode`` in ``{"serve", "cli", "direct", "empty"}`` plus
-    the figures the explanation needs. Never raises: a broken cache or ledger
-    degrades to zeros rather than breaking `status`.
+    Returns a dict with ``mode`` in
+    ``{"serve", "serve-alongside", "cli", "direct", "empty"}`` plus the figures
+    the explanation needs. Never raises: a broken cache or ledger degrades to
+    zeros rather than breaking `status`.
     """
     try:
         from . import config as cfg
@@ -111,10 +120,32 @@ def detect() -> dict:
 
     wired = _gateway_registered()
 
+    # `wired` alone is not the whole story. A gateway can be registered in one
+    # agent while OTHER agent configs still hold the upstream server entries
+    # mcptoon manages — so those hosts keep loading every full schema directly and
+    # the gateway saves nothing there. `serve` claims the big definition-side
+    # saving; `serve-alongside` is the state where the gateway is present but has
+    # not taken those entries over, so the honest reading is "installed, gateway
+    # wired, but NOT saving yet — run `mcptoon sync --takeover`". Without this
+    # state the footer/status/statusline broadcast "saves 99%" on a machine that
+    # is actually loading MORE than before (catalog + gateway), which is the
+    # "credit points the wrong way" defect. `takeover_plan()` is read-only and
+    # ~1.7 ms; it never raises (falls back to plain serve).
+    alongside = False
+    direct_entries = 0
+    if wired:
+        try:
+            from . import sync as sync_mod
+            _plan = sync_mod.takeover_plan()
+            direct_entries = sum(len(r.get("servers") or []) for r in _plan)
+            alongside = direct_entries > 0
+        except Exception:
+            alongside, direct_entries = False, 0
+
     if servers == 0:
         mode = "empty"
     elif wired:
-        mode = "serve"
+        mode = "serve-alongside" if alongside else "serve"
     elif routed > 0 or native > 0:
         mode = "cli"
     else:
@@ -123,6 +154,11 @@ def detect() -> dict:
     return {
         "mode": mode,
         "gateway_registered": wired,
+        # The alongside detail travels with the mode so every surface can say the
+        # concrete number ("48 direct entries in 6 hosts") and the one fix without
+        # re-walking the configs.
+        "alongside": alongside,
+        "direct_entries": direct_entries,
         "servers": servers,
         "calls": calls,
         "routed": routed,
@@ -187,14 +223,17 @@ def _human(n) -> str:
             return str(n)
 
 
-_MODE_TAG = {"serve": "serve", "cli": "cli", "direct": "direct→sync",
-             "empty": "no servers"}
+_MODE_TAG = {"serve": "serve", "serve-alongside": "serve→takeover",
+             "cli": "cli", "direct": "direct→sync", "empty": "no servers"}
 # The Chinese tags are short on purpose: a status bar counts a CJK glyph as two
 # columns, so these must stay tiny to keep the whole line within 80 columns.
 # `direct→sync` / `直连→sync` turns the bare "!" warning into the fix: a direct
 # machine is not saving, and the arrow names the one command that starts it.
-_MODE_TAG_ZH = {"serve": "serve", "cli": "CLI", "direct": "直连→sync",
-                "empty": "无服务器"}
+# `serve→takeover` / `serve→接管` is the same idea for the alongside state: the
+# gateway is wired but has not taken the upstream entries over, so it is not
+# saving yet and the fix is `mcptoon sync --takeover`.
+_MODE_TAG_ZH = {"serve": "serve", "serve-alongside": "serve→接管",
+                "cli": "CLI", "direct": "直连→sync", "empty": "无服务器"}
 
 
 def statusline(lng: str | None = None) -> str:
@@ -251,15 +290,24 @@ def statusline(lng: str | None = None) -> str:
     # story, which is exactly the serve figure a direct user is not living — and it
     # reads as "you're saving 99%" when the truth is the opposite. Say it plainly.
     is_direct = d["mode"] == "direct"
+    # serve-alongside = gateway wired in one host, but other hosts still list the
+    # upstream entries — so those keep loading the full catalog and the gateway
+    # saves nothing yet. Same "not saving" truth as direct, different fix
+    # (`sync --takeover`), so it must not fall through to the "省 N%" gateway line.
+    is_alongside = d["mode"] == "serve-alongside"
+    _no_saving = is_direct or is_alongside
     if zh:
         if cli_credit:
             tool_bit = f"0 常驻·全量{_human(full)}没进上下文"
+        elif is_alongside:
+            tool_bit = (f"未接管·全量{_human(full)}仍直连·未省" if full
+                        else "未接管·未省")
         elif is_direct:
             tool_bit = (f"未接线·全量{_human(full)}常驻·未省" if full
                         else "未接线·未省")
         else:
             tool_bit = f"{exposed} 工具（省 {pct}%）" if (exposed and pct) else None
-        if is_direct:
+        if _no_saving:
             saved_bit = f"{_human(calls)} 次·未省" if calls else None
         else:
             saved_bit = f"≈省{_human(est[1])} · {_human(est[0])}次" if est else (
@@ -268,12 +316,15 @@ def statusline(lng: str | None = None) -> str:
     else:
         if cli_credit:
             tool_bit = f"0 resident·{_human(full)} kept out"
+        elif is_alongside:
+            tool_bit = (f"not taken over·full {_human(full)} still direct·no saving"
+                        if full else "not taken over·no saving")
         elif is_direct:
             tool_bit = (f"not wired·full {_human(full)} resident·no saving" if full
                         else "not wired·no saving")
         else:
             tool_bit = f"{exposed} tools ({pct}% less)" if (exposed and pct) else None
-        if is_direct:
+        if _no_saving:
             saved_bit = f"{_human(calls)} calls·no saving" if calls else None
         else:
             saved_bit = f"≈{_human(est[1])} saved · {_human(est[0])} calls" if est else (
@@ -302,6 +353,7 @@ def _mode_zh(mode: str) -> str:
     return {
         "cli": "CLI 模式（最省 · 零常驻）",
         "serve": "serve 模式（原生集成 · 每轮小固定开销）",
+        "serve-alongside": "serve 模式（网关已接 · 但没接管直连条目 · 还没省）",
         "direct": "直连模式（最贵 · 装了没接）",
         "empty": "未配置任何 MCP 服务器",
     }.get(mode, mode)
@@ -360,6 +412,12 @@ def explain(lng: str | None = None) -> str:
         if d["mode"] == "direct":
             a("")
             a("  ⚠ 你现在是直连模式：mcptoon 没在帮你省。接 serve 或改用 CLI。")
+        elif d["mode"] == "serve-alongside":
+            a("")
+            a(f"  ⚠ 你现在是 serve（网关已接），但宿主里还有 {d.get('direct_entries', 0):,} "
+              "个直连条目没被接管——")
+            a("    这些宿主导航还在每轮加载全部 schema，网关没替你省。跑 "
+              "`mcptoon sync --takeover` 接管后，才真正省。")
         elif d["mode"] == "cli":
             a("")
             a("  ✓ 你现在是 CLI 模式：已经是最省，前提是 agent 真在敲命令。")
@@ -410,6 +468,12 @@ def explain(lng: str | None = None) -> str:
             if full and _routed > 0:
                 a(f"    Your own saving so far: {_routed:,} calls, each of which did")
                 a(f"    NOT load the full {full:,}-token schema set into context.")
+        elif d["mode"] == "serve-alongside":
+            a("")
+            a("  ⚠ You are on serve, but the gateway has NOT taken over the direct")
+            a(f"    entries: {d.get('direct_entries', 0):,} of them still load every")
+            a("    schema natively, so the gateway saves nothing yet.")
+            a("    → `mcptoon sync --takeover` routes them through the gateway.")
     return "\n".join(L)
 
 
@@ -509,6 +573,23 @@ def recommend(lng: str | None = None, host: dict | None = None) -> dict:
                       "You are in direct mode (saving nothing); run `mcptoon sync --self` to wire serve (zero-config, saves now)")
         one_action = ("mcptoon call <server> <tool> '{...}'" if (shell and not needs_confirm)
                       else "mcptoon sync --self")
+    elif mode == "serve-alongside":
+        # Gateway is wired, but the upstream entries it manages are still listed
+        # in some host configs, so those hosts keep loading every full schema and
+        # the gateway saves nothing there. This is NOT "keep serve" — the user is
+        # paying for a gateway that has not taken over yet. The one fix is
+        # `sync --takeover`, which drops the direct entries so the gateway is the
+        # only path. A shell host could still switch to CLI, but takeover is the
+        # smaller, in-place fix, so it is the default action regardless of shell.
+        needs_confirm = False
+        recommended = "serve"
+        reason = ("网关已接，但宿主里还有直连条目没被接管——那些宿主导航还在每轮加载全部 "
+                  "schema，网关没替你省。跑 `mcptoon sync --takeover` 接管后才真省"
+                  if zh else
+                  "The gateway is wired, but the hosts still list the upstream entries "
+                  "it manages, so they load every schema natively and the gateway saves "
+                  "nothing yet. Run `mcptoon sync --takeover` to route them through it")
+        one_action = "mcptoon sync --takeover"
     else:  # serve
         needs_confirm = False
         recommended = "serve"

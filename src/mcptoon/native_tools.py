@@ -751,8 +751,19 @@ def _health(arguments: dict, state: dict) -> dict:  # noqa: ARG001 - uniform sig
 
     configured = state["servers"]
     index = state["tool_index"]
-    loaded = {info.get("server") for info in index.values()}
-    failed = sum(1 for name in configured if name not in loaded)
+    # "Failed" means the fetch raised (``fetch_errors``), NOT "absent from the
+    # index" — that is also true of a healthy server that legitimately exposes no
+    # tools, so index-absence made one alive-but-empty server report an error.
+    # This mirrors ``serve.MCPServerBridge._handle_health`` (serve.py:612-616).
+    fetch_errors = state.get("fetch_errors")
+    if fetch_errors is None:
+        # Legacy callers that build a state dict without the field: fall back to
+        # index-absence, which is a *superset* (can over-report) but never hides a
+        # real failure.
+        loaded = {info.get("server") for info in index.values()}
+        failed = sum(1 for name in configured if name not in loaded)
+    else:
+        failed = sum(1 for name in configured if name in fetch_errors)
 
     if not state.get("initialized"):
         status = "starting"
@@ -805,8 +816,12 @@ def _usage(arguments: dict, state: dict) -> dict:  # noqa: ARG001 - uniform sign
         full_def = info.get("full_def") or {}
         if not full_def or "error" in full_def:
             continue
-        full_tokens += len(json.dumps(full_def, ensure_ascii=False)) // 4
-        slim_tokens += len(json.dumps(simplify_tool_def(full_def), ensure_ascii=False)) // 4
+        # Same caliber as `mcptoon stats`/`status`/the footer (tiktoken via
+        # usage.count_tokens), NOT len(json)//4 — otherwise an agent reading this
+        # tool's savingsPct sees a different number than the CLI on CJK/code data,
+        # contradicting the docstring's "the CLI and the footer can never disagree".
+        full_tokens += usage_mod.count_tokens(full_def)
+        slim_tokens += usage_mod.count_tokens(simplify_tool_def(full_def))
 
     saved = max(0, full_tokens - slim_tokens)
     pct = round(saved / full_tokens * 100, 1) if full_tokens else 0.0

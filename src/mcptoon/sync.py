@@ -1276,8 +1276,19 @@ def _write_json_safe(path: Path, data: dict) -> bool:
         if path.exists():
             try:
                 old_text = path.read_text(encoding="utf-8")
-            except OSError:
-                old_text = None
+            except OSError as e:
+                # The file exists but we cannot read it. Writing now would clobber
+                # content we never saw — and the .bak write below also needs
+                # old_text, so there would be NO backup either. Treat an unreadable
+                # file exactly like an unparseable one: refuse and report, never
+                # overwrite blind.
+                print(
+                    f"warning: {path} exists but could not be read ({e}); leaving it "
+                    f"unchanged rather than overwrite a config mcptoon cannot read. "
+                    f"Check its permissions or repair it by hand.",
+                    file=sys.stderr,
+                )
+                return False
             # Refuse to overwrite a file we could not parse, or whose top level is
             # not a JSON object (JSONC with comments, a hand-edited file with a
             # trailing comma, a partial write, a bare list). The caller merged into

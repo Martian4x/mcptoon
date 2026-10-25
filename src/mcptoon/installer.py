@@ -65,6 +65,30 @@ _INSTALLED_FILE = os.environ.get(
     "MCPTOON_INSTALLED_FILE", os.path.expanduser("~/.mcp-cli/pro_installed.json"))
 
 
+def _write_text_atomic(path, text: str) -> None:
+    """Write text to `path` atomically (unique temp + os.replace).
+
+    Generated handler files are regenerable, but a crash mid-write would leave a
+    truncated .py that fails to import until the next install. Temp+replace keeps
+    the on-disk handler always whole.
+    """
+    import tempfile
+
+    d = os.path.dirname(str(path)) or "."
+    os.makedirs(d, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=d, prefix=".handler-", suffix=".py")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+        os.replace(tmp, str(path))
+    except OSError:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
 def _load_installed():
     """Load installed MCP servers list."""
     try:
@@ -75,10 +99,28 @@ def _load_installed():
 
 
 def _save_installed(data):
-    """Save installed MCP servers list."""
+    """Save installed MCP servers list — atomically.
+
+    A plain open("w") truncates first, so a crash/disk-full mid-write leaves a
+    truncated pro_installed.json that `_load_installed` silently reads back as
+    {} — total, silent loss of every installed-server record. Write to a unique
+    temp file and os.replace instead (same discipline as cache._atomic_write).
+    """
+    import tempfile
+
     os.makedirs(os.path.dirname(_INSTALLED_FILE), exist_ok=True)
-    with open(_INSTALLED_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(_INSTALLED_FILE) or ".",
+                               prefix=".installed-", suffix=".json")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, _INSTALLED_FILE)
+    except OSError:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 class RegistryError(Exception):
@@ -641,8 +683,7 @@ def handle(tool, args):
     return result
 '''
 
-    with open(handler_file, "w", encoding="utf-8") as f:
-        f.write(handler_code)
+    _write_text_atomic(handler_file, handler_code)
 
     log.info("installer", f"Generated HTTP handler: {handler_file}")
 
@@ -795,8 +836,7 @@ def handle(tool, args):
     return result
 '''
 
-    with open(handler_file, "w", encoding="utf-8") as f:
-        f.write(handler_code)
+    _write_text_atomic(handler_file, handler_code)
 
     log.info("installer", f"Generated handler: {handler_file}")
 

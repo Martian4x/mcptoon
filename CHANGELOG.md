@@ -5,6 +5,149 @@ All notable changes to mcptoon will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.28] - 2026-10-25
+
+### Fixed
+
+- **The savings headline no longer credits mcptoon for a saving it is not
+  delivering.** Delivery mode had one "gateway is wired" state, `serve`, and
+  every surface quoted it as "saves 99%". But a gateway can be registered in one
+  agent while *other* host configs still list the upstream servers mcptoon
+  manages — so those hosts keep loading every full schema natively and the
+  machine is actually loading *catalog + gateway* (measured here: 640,787 + 3,303
+  tokens/turn, i.e. ~0.5% MORE than before install) while the footer, statusline,
+  `status`, `credit`, `report`, `savings` and `bench` all reported "省 99%" /
+  "≈省 2B · 3,119 次". That is the credit pointing the wrong way: the user is told
+  they are saving when they are paying a little extra.
+
+  `mode.detect()` now returns a fifth state, `serve-alongside`, when the gateway
+  is registered **and** `sync.takeover_plan()` finds direct server entries it
+  would remove (`alongside` / `direct_entries` travel with the mode). Every
+  surface branches on it and says the honest thing instead — "wired but not taken
+  over, saving nothing yet" — with the one fix, `mcptoon sync --takeover`, and
+  the statusline tag `serve→takeover`. `mode recommend` and the JSON `one_action`
+  carry the same command. `takeover_plan()` is read-only and ~1.7 ms, and
+  `detect()` swallows any failure back to plain `serve`, so a broken config can
+  never turn this into a crash.
+
+- **The first-run card (`welcome`) never checked the delivery mode.** It showed
+  "上下文本钱 640,787 → 3,303（省 99%）" on a `direct` machine (installed, not
+  wired) that saves nothing, and would have shown the same on the new
+  `serve-alongside` state. `welcome.render()` now takes the mode from
+  `footer.current_mode()` and, on either not-yet-saving state, replaces the saving
+  row with the truth ("full N tokens load · not wired/not taken over, no saving
+  yet") plus a "First" row naming `mcptoon sync --self` / `--takeover`. A
+  genuinely saving `serve`/`cli` machine keeps its saving row unchanged, and a
+  bare `render()` with no mode argument (tests, older callers) still renders the
+  plain row.
+
+- **`serve --http` was single-threaded despite promising concurrency.**
+  `_build_http_server` built a plain `http.server.HTTPServer`, which handles one
+  request at a time, so a single slow upstream call blocked every other agent —
+  a self-inflicted denial of service — even though `_run_http`'s own docstring
+  says "Supports multiple concurrent agents". It now builds a
+  `ThreadingHTTPServer` with `daemon_threads = True`.
+
+- **`serve` never forced UTF-8 on its stdio pipes.** On Windows a piped stdout
+  defaults to the ANSI code page (cp1252/cp936), so a response carrying a Chinese
+  tool result raised `UnicodeEncodeError` inside `_send_response`'s try/except,
+  was swallowed, and left the client waiting for a reply that never came. `run()`
+  now reconfigures `sys.stdin`/`sys.stdout` to UTF-8 up front (the same guard the
+  bundled demo bridge already had).
+
+- **`serve`'s startup timeout was defeated by `shutdown(wait=True)`.** The
+  parallel manifest fetch wrapped `ThreadPoolExecutor` in a `with` block and
+  capped `as_completed(timeout=60)`; on timeout the `with` exit still waited for
+  every hung worker (up to `MCPTOON_CALL_TIMEOUT`, 900s) while holding
+  `_ensure_initialized`'s lock. It now cancels pending futures and shuts down
+  with `wait=False`, so startup is actually bounded at 60s.
+
+- **A reconnect could inject a spurious "server process exited" into a new
+  request.** The stdio response pump signals every registered queue with a `None`
+  sentinel on EOF. After `_reconnect_if_dead` spawned a new process, the *old*
+  pump thread (still blocked on the dead pipe) could fire that sentinel into the
+  shared queue dict and fail a brand-new in-flight request. Each spawn now owns a
+  fresh per-generation queue dict, so a dead pump can only fail its own waiters.
+
+- **An unreadable agent config was overwritten with no backup.** In
+  `sync._write_json_safe`, if `path.read_text()` raised `OSError`, `old_text`
+  became `None`, which skipped both the "refuse to overwrite an unparseable file"
+  guard and the `.bak` write — then wrote over a config mcptoon never read,
+  irreversibly. An unreadable existing file is now treated like an unparseable
+  one: refuse and report.
+
+- **`mcptoon sync --watch --dry` silently wrote configs.** The `--watch` branch
+  in `_cmd_sync` returned into `watch.main()` before `sync` parsed `--dry`/
+  `--self`/`--takeover`, and `watch.main` dropped them, so every watch cycle
+  called `sync_to_all()` with no arguments (a real write). The flags are now
+  threaded through `watch.main` → `watch()` → `sync_to_all(...)`.
+
+- **`call --auto` ignored the per-tool output policy and lost the receipt's
+  server/tool.** The explicit `call <server> <tool>` path rendered through
+  `_effective_fmt()` and passed `server`/`tool`, but `--auto` did neither — so a
+  `policy set <tool> raw` was honoured for one path and ignored for the other,
+  and smart compression's retrieve handle lost its `server:tool` identity.
+  `call_tool_auto` now returns the chosen server and `--auto` renders through the
+  same policy path.
+
+- **`mcptoon_health` counted an alive-but-empty server as failed.** The native
+  health tool inferred failure from "absent from the tool index", which is also
+  true of a healthy server that exposes zero tools — reintroducing a bug
+  `serve._handle_health` had already fixed. It now uses the bridge's authoritative
+  `fetch_errors` map.
+
+- **Bad numeric/enum arguments exited 0.** `manifest --sort bogus`,
+  `manifest --top xyz` and `health --timeout abc` printed an error but returned
+  from the handler, so `mcptoon ... && next` ran `next`. All three now `exit 1`.
+
+- **`--raw --full` silently truncated at 50,000 chars.** `--full` sets the
+  effective limit to 0, so the normal truncation notice never fired and the user
+  got a cut raw body with no warning. The raw hard cap is kept (an unbounded dump
+  can wedge a terminal) but now announces the cut.
+
+- **`plugin install --force` deleted the old version before copying the new
+  one.** A copy failure then left no plugin at all while the registry still listed
+  it installed. The upgrade now copies to a temp dir first and swaps, so a failed
+  upgrade leaves the working install intact.
+
+- **Two writers raced on a fixed temp filename.** `skills._save_version_ledger`
+  and `bake._save_bakes` both wrote to a fixed `.tmp` sibling, so two concurrent
+  runs could clobber each other's temp and `os.replace` could swap in a partial
+  file (corrupting the shared skill version ledger). Both now use a unique
+  pid+uuid temp name.
+
+- **`installer._save_installed` could silently lose the whole installed-server
+  registry.** It wrote `pro_installed.json` with a plain `open("w")` (truncate
+  first), so a crash or disk-full mid-write left a truncated file that
+  `_load_installed` reads back as `{}` — total, silent loss. It now writes to a
+  unique temp file and `os.replace`s. Generated HTTP handler files are likewise
+  written atomically.
+
+- **`mcptoon_usage` (the MCP tool) measured tokens with `len(json)//4` while the
+  CLI/footer use tiktoken.** On CJK or code-heavy schemas the two diverge, so an
+  agent reading the tool's `savingsPct` saw a different number than `mcptoon
+  stats` on the same machine — directly contradicting the tool's own docstring.
+  It now uses the shared `usage.count_tokens` caliber, as does
+  `schema_simplifier.compute_token_stats`.
+
+- **Two more fixed-temp writers raced under concurrency.** `footer._save_token_totals`
+  (runs after nearly every command) and `oauth.save_token` (a credential file)
+  both used a fixed `.tmp` name; concurrent processes shared one scratch file, so
+  one `os.replace` won and the loser raised `FileNotFoundError`, or an interleaved
+  write left a torn cache/token. Both now use `tempfile.mkstemp`.
+
+- **`discover` leaked an HTTP socket on every probe.** `_probe_endpoint` and
+  `_probe_http_mcp` read the response but never closed it (every other urllib
+  call in the repo uses `with ... as resp:`). They now close it too.
+
+- **`_human_tokens` printed `1000M` instead of `1B`.** Values from 999,500,000 to
+  999,999,999 rounded to a whole number of millions *before* the billion check, so
+  they rendered as the unreadable "1000M". It now promotes to `1B`.
+
+- **`demo` could label the winning format wrong on a token tie.** The best format
+  was looked up through a value→name dict, which kept the last write on a tie. It
+  is now a single `min()` over `(tokens, name)` pairs.
+
 ## [0.8.27] - 2026-10-23
 
 ### Fixed

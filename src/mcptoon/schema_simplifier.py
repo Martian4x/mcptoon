@@ -457,9 +457,19 @@ def split_namespaced(name: str, known_servers: list[str]) -> tuple[str, str]:
 
 
 def compute_token_stats(full_json: str, simplified_json: str) -> dict:
-    """Compute token statistics for display."""
-    full_tokens = max(len(full_json) // 4, 1)
-    slim_tokens = max(len(simplified_json) // 4, 1)
+    """Compute token statistics for display.
+
+    Uses the single codebase caliber (tiktoken via ``usage.count_tokens``), not
+    ``len//4``, so the number matches ``bench``/``footer``/``stats`` for the same
+    payload instead of drifting on CJK or code-heavy schemas.
+    """
+    try:
+        from .usage import count_tokens
+        full_tokens = max(count_tokens(full_json), 1)
+        slim_tokens = max(count_tokens(simplified_json), 1)
+    except Exception:  # pragma: no cover - never let a measurement crash display
+        full_tokens = max(len(full_json) // 4, 1)
+        slim_tokens = max(len(simplified_json) // 4, 1)
     reduction = (1 - slim_tokens / full_tokens) * 100
     return {
         "full_tokens": full_tokens,

@@ -181,6 +181,18 @@ def test_doctor_reports_cli_zero_resident(tmp_path):
     assert code == 0
 
 
+def test_doctor_warns_on_alongside_with_takeover(tmp_path):
+    with patch.object(mode_mod, "detect", return_value={
+            "mode": "serve-alongside", "gateway_registered": True,
+            "alongside": True, "direct_entries": 48, "servers": 7,
+            "calls": 0, "routed": 0, "native": 0, "by_host": {}}):
+        out, code = _run_doctor(tmp_path, "serve-alongside")
+    assert "Mode: serve-alongside" in out
+    assert "sync --takeover" in out
+    assert "48 direct" in out
+    assert code == 0        # wired-but-not-taken-over is a choice, not a fault
+
+
 # ── 4. bench shows the CLI caliber row (CLI only) ───────────────────────────
 
 _TOOL_ROWS = [
@@ -245,6 +257,27 @@ def test_status_json_cli_credit_shape_on_cli(isolated):
     assert data["cli_credit"]["resident_avoided"] == 640606
 
 
+def test_status_json_alongside_carries_direct_entries(isolated):
+    """A script reading `status --json` on a serve-alongside machine gets the mode
+    AND the count of direct entries takeover would remove — not just a mode name."""
+    tool = {"name": "t1", "description": "d", "inputSchema": {"type": "object"}}
+    with patch.object(manifest_mod, "get_manifest", return_value={"srv": [tool]}), \
+            patch.object(footer_mod, "current_mode", return_value="serve-alongside"), \
+            patch.object(footer_mod, "facts", return_value=_FACTS), \
+            patch.object(mode_mod, "detect", return_value={
+                "mode": "serve-alongside", "gateway_registered": True,
+                "alongside": True, "direct_entries": 48, "calls": 0,
+                "routed": 0, "native": 0, "servers": 1, "by_host": {}}), \
+            patch.object(cli, "_gateway_wired_in", return_value=True), \
+            patch.object(usage_mod, "get_usage_stats", return_value={
+                "total_calls": 0, "success_rate": "", "by_server": {},
+                "top_tools": {}, "routed_calls": 0, "native_calls": 0}):
+        out, _err, _code = _run(["status", "--json"])
+    data = json.loads(out)
+    assert data["delivery_mode"] == "serve-alongside"
+    assert data["direct_entries"] == 48
+
+
 # ── Phase 2 ─────────────────────────────────────────────────────────────────
 
 # 6. footer.line: direct must not broadcast the gateway rate / cumulative saving.
@@ -260,6 +293,18 @@ def test_footer_line_direct_says_no_saving():
     assert "no saving" in en and "未接线·未省" in zh
     assert "saves" not in en and "≈省" not in zh   # no gateway rate/cumulative
     assert "99%" not in en and "省 99%" not in zh
+
+
+def test_footer_line_alongside_says_not_taken_over_not_99():
+    """serve-alongside (gateway wired, entries not taken over) must not broadcast
+    the gateway 99% either — it is not saving yet. Same honesty rule as direct."""
+    en = _footer_line("serve-alongside", "en")
+    zh = _footer_line("serve-alongside", "zh")
+    assert "not taken over·no saving" in en
+    assert "未接管·未省" in zh
+    assert "saves" not in en and "≈省" not in zh
+    assert "99%" not in en and "省 99%" not in zh
+    assert "640,606" in en   # the full catalog still loads — name it
 
 
 def test_footer_line_cli_keeps_gateway_headline():
@@ -334,6 +379,13 @@ def test_bench_direct_warns_no_saving():
     assert "sync --self" in out
 
 
+def test_bench_alongside_warns_no_saving():
+    with patch.object(footer_mod, "current_mode", return_value="serve-alongside"):
+        out = bench._render("tiktoken", True, _TOOL_ROWS, 209, [], 0, 0, "", "q", [])
+    assert "serve-alongside" in out and "right now you save 0" in out
+    assert "sync --takeover" in out
+
+
 # ── Phase 4 ─────────────────────────────────────────────────────────────────
 
 # 11. savings: direct machine warns "you save 0" instead of a bare milestone list.
@@ -345,6 +397,15 @@ def test_savings_direct_warns_no_saving():
             "delivery_mode": "direct"}
     out = savings.render(data, lng="en")
     assert "save 0" in out and "sync --self" in out
+
+
+def test_savings_alongside_warns_no_saving():
+    from mcptoon import savings
+    data = {"caliber": "tiktoken", "total_tokens": 1_900_000_000, "calls": 2966,
+            "milestones_hit": [], "next": None, "cli_credit": None,
+            "delivery_mode": "serve-alongside"}
+    out = savings.render(data, lng="en")
+    assert "save 0" in out and "sync --takeover" in out
 
 
 def test_savings_cli_does_not_show_direct_warning():
@@ -445,6 +506,16 @@ def test_credit_direct_says_saves_zero(isolated):
     assert "saves 0" in out and "sync --self" in out
 
 
+def test_credit_alongside_says_saves_zero_and_takeover(isolated):
+    with patch.object(footer_mod, "current_mode", return_value="serve-alongside"), \
+            patch.object(footer_mod, "facts", return_value=_FACTS), \
+            patch.object(mode_mod, "recommend", return_value={
+                "recommended": "serve", "one_action": "mcptoon sync --takeover"}):
+        out, _e, _c = _run(["credit"])
+    assert "saves 0" in out and "sync --takeover" in out
+    assert "99%" not in out   # must not credit the gateway saving it is not living
+
+
 def test_credit_json_contract(isolated):
     with patch.object(footer_mod, "current_mode", return_value="cli"), \
             patch.object(footer_mod, "facts", return_value=_FACTS), \
@@ -542,6 +613,26 @@ def test_report_direct_warns_at_top():
     out = report.render(data, lng="en")
     assert "you save 0 right now" in out
     # And the warning is above section ①.
+    assert out.index("save 0") < out.index("① MCP tools")
+
+
+def test_report_alongside_warns_at_top_and_names_takeover():
+    from mcptoon import report
+    data = {"caliber": "tiktoken",
+            "mode": {"current": "serve-alongside", "cheapest": "cli",
+                     "gateway_registered": True},
+            "tools": {"count": 1, "servers": 1, "full_tokens": 100, "slim_tokens": 50,
+                      "gateway_tokens": 0}, "tools_exposed": 0,
+            "skills": {"count": 0, "full_tokens": 0, "pointer_tokens": 0,
+                       "resolve_tokens": 0, "resolve_note": ""},
+            "cli_credit": None, "cumulative": {"calls": 0, "gateway_equiv": 0},
+            "per_turn": {"native_tokens": 100, "after_tokens": 50,
+                         "saved_tokens": 50, "saved_pct": 50.0},
+            "calls": {"total": 0, "window": 0, "success_rate": "",
+                      "result_tokens_lifetime": 0, "first_call_ts": None}}
+    out = report.render(data, lng="en")
+    assert "you save 0 right now" in out
+    assert "sync --takeover" in out
     assert out.index("save 0") < out.index("① MCP tools")
 
 

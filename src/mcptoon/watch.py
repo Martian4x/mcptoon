@@ -90,6 +90,9 @@ def watch(interval: float = DEFAULT_INTERVAL,
           paths: list | None = None,
           max_cycles: int | None = None,
           sync_fn=None,
+          dry_run: bool = False,
+          include_self: bool = False,
+          takeover: bool = False,
           _sleep=time.sleep,
           _out=print) -> int:
     """Poll watched paths; re-sync on any change.
@@ -103,6 +106,12 @@ def watch(interval: float = DEFAULT_INTERVAL,
         paths: override the full watch list (for tests).
         max_cycles: stop after N polls (for tests); None = forever.
         sync_fn: replacement for sync_to_all (for tests).
+        dry_run: forward to sync_to_all so a watch cycle previews instead of
+            writing. Previously `mcptoon sync --watch --dry` silently WROTE
+            configs, because watch.main dropped the flag and the loop called
+            sync_to_all() with no arguments.
+        include_self: forward to sync_to_all — register the gateway itself.
+        takeover: forward to sync_to_all — route managed servers through it.
         _sleep: injectable sleep (tests avoid real waiting).
         _out: injectable print.
 
@@ -112,6 +121,14 @@ def watch(interval: float = DEFAULT_INTERVAL,
         raise ValueError(f"unknown watch mode: {mode!r} (use 'merge' or 'strict')")
     if sync_fn is None:
         sync_fn = sync_to_all
+
+    def _sync_once():
+        # Only the real sync_to_all takes the flags; a test-injected sync_fn has
+        # the bare signature.
+        if sync_fn is sync_to_all:
+            return sync_to_all(dry_run=dry_run, include_self=include_self,
+                               takeover=takeover)
+        return sync_fn()
 
     watch_paths = list(paths) if paths is not None else collect_watch_paths(config_path)
     canonical = Path(config_path) if config_path else (
@@ -156,7 +173,7 @@ def watch(interval: float = DEFAULT_INTERVAL,
                     _sleep(DEBOUNCE)
                     current = {p: fingerprint(p) for p in watch_paths}
                     last = current  # absorb burst saves into the baseline
-                    results = sync_to_all() if sync_fn is sync_to_all else sync_fn()
+                    results = _sync_once()
                     errs = sum(1 for r in results if r.get("error"))
                     written = sum(1 for r in results if r.get("written"))
                     servers = sum(r.get("servers_synced", 0) for r in results)
@@ -178,7 +195,7 @@ def watch(interval: float = DEFAULT_INTERVAL,
                             warn(f"[{_ts()}] drift detected (strict): {p} was "
                                  f"modified outside mcptoon - leaving it alone")
                     else:
-                        results = sync_to_all() if sync_fn is sync_to_all else sync_fn()
+                        results = _sync_once()
                         errs = sum(1 for r in results if r.get("error"))
                         if errs:
                             failures += 1
@@ -210,6 +227,13 @@ def main(argv=None) -> int:
     interval = DEFAULT_INTERVAL
     mode = "merge"
     quiet = False
+    # These mirror `mcptoon sync`'s flags and MUST be threaded through: the
+    # `--watch` branch in cli._cmd_sync returns before sync parses them, so
+    # dropping them here meant `sync --watch --dry` silently wrote configs and
+    # `--self`/`--takeover` never took effect.
+    dry_run = False
+    include_self = False
+    takeover = False
     i = 0
     while i < len(argv):
         a = argv[i]
@@ -237,8 +261,16 @@ def main(argv=None) -> int:
             continue
         if a == "--quiet":
             quiet = True
+        elif a in ("--dry", "--dry-run"):
+            dry_run = True
+        elif a == "--self":
+            include_self = True
+        elif a == "--takeover":
+            takeover = True
+            include_self = True  # takeover implies registering the gateway
         i += 1
-    return watch(interval=interval, mode=mode, quiet=quiet)
+    return watch(interval=interval, mode=mode, quiet=quiet,
+                 dry_run=dry_run, include_self=include_self, takeover=takeover)
 
 
 if __name__ == "__main__":

@@ -166,13 +166,18 @@ def test_auto_call_also_honours_raw():
 
     def fake_auto(tool, args, **kwargs):
         captured.update(kwargs)
-        return {"ok": True}
+        return ({"ok": True}, "srv")
 
     with mock.patch("mcptoon.router.call_tool_auto", side_effect=fake_auto), \
-            mock.patch.object(cli, "_render_result"):
+            mock.patch.object(cli, "_render_result") as render:
         cli._cmd_call(["--auto", "tool", "{}"], fmt="raw", head_n=0, max_chars=0, full=False)
 
     assert captured.get("skip_poisoning_check") is True
+    # The --auto path must also route through the per-tool policy and carry the
+    # resolved server into the renderer (so `policy set <tool> raw` is honoured).
+    assert captured.get("return_server") is True
+    assert render.call_args.kwargs.get("server") == "srv"
+    assert render.call_args.kwargs.get("tool") == "tool"
 
 
 def test_the_hint_and_the_wiring_name_the_same_flag():

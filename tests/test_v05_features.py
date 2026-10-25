@@ -63,6 +63,26 @@ class TestInstalledFile(unittest.TestCase):
                 loaded = _load_installed()
                 self.assertEqual(loaded, data)
 
+    def test_save_installed_is_atomic_no_partial_file_on_failure(self):
+        """A failed write must leave the OLD registry intact, never a truncation.
+
+        The old code open("w") truncated first; a crash mid-dump left a truncated
+        file that _load_installed silently reads as {}. With temp+replace, a
+        failure in the dump leaves the previous file whole.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fpath = os.path.join(tmpdir, "installed.json")
+            good = {"srv": {"tools": ["ping"]}}
+            with patch("mcptoon.installer._INSTALLED_FILE", fpath):
+                _save_installed(good)
+                # Now make json.dump blow up mid-write.
+                import mcptoon.installer as inst
+                with patch.object(inst.json, "dump", side_effect=OSError("disk full")):
+                    with self.assertRaises(OSError):
+                        _save_installed({"other": {}})
+                # The previous good registry survives, fully intact.
+                self.assertEqual(_load_installed(), good)
+
     def test_load_installed_corrupt(self):
         """_load_installed returns {} for corrupt JSON."""
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -684,6 +684,20 @@ class TestTokenStats:
         assert stats["full_tokens"] > stats["simplified_tokens"]
         assert stats["reduction_pct"] > 0
 
+    def test_compute_token_stats_uses_tiktoken_caliber(self):
+        """Same payload must match usage.count_tokens, not len//4.
+
+        On CJK payloads len//4 and tiktoken diverge sharply; the display stat must
+        use the one shared caliber so it agrees with bench/footer/stats.
+        """
+        from mcptoon.usage import count_tokens
+
+        full = '{"描述": "这是一个很长的中文工具描述，用来测试分词口径一致性"}'
+        slim = '{"描述": "短"}'
+        stats = compute_token_stats(full, slim)
+        assert stats["full_tokens"] == count_tokens(full)
+        assert stats["simplified_tokens"] == count_tokens(slim)
+
 
 # ═══════════════════════════════════════════════════
 # Serve Bridge Tests (integration)

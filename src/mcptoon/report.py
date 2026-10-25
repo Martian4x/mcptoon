@@ -215,10 +215,17 @@ def render(data: dict, lng: str = "en") -> str:
     # A direct machine (installed, not wired) saves nothing yet. Section ⑥ at the
     # bottom says so, but a reader who stops at the big numbers never reaches it —
     # put the caveat up top too, so the report is not read as a live tally.
-    if (data.get("mode") or {}).get("current") == "direct":
-        a(L_("⚠ direct mode (installed, not wired): you save 0 right now — the "
-             "figures below are what you WOULD save once wired.",
-             "⚠ 直连模式（装了没接）：此刻一分没省 —— 下面的数字是接上后能省的量。"))
+    if (data.get("mode") or {}).get("current") in ("direct", "serve-alongside"):
+        if (data.get("mode") or {}).get("current") == "serve-alongside":
+            a(L_("⚠ serve-alongside (gateway wired, direct entries not taken over): "
+                 "you save 0 right now — the hosts still load every schema directly. "
+                 "The figures below are what you WOULD save after `mcptoon sync --takeover`.",
+                 "⚠ serve（网关已接，但直连条目没被接管）：此刻一分没省 —— 宿主还在每轮"
+                 "直接加载全部 schema。下面的数字是接管后能省的量。"))
+        else:
+            a(L_("⚠ direct mode (installed, not wired): you save 0 right now — the "
+                 "figures below are what you WOULD save once wired.",
+                 "⚠ 直连模式（装了没接）：此刻一分没省 —— 下面的数字是接上后能省的量。"))
         a("")
 
     # ① tools
@@ -324,6 +331,9 @@ def render(data: dict, lng: str = "en") -> str:
                       "CLI 模式（最省 · 零常驻）"),
             "serve": L_("serve (MCP gateway) — small fixed per-turn cost",
                         "serve 模式（原生集成 · 每轮小固定开销）"),
+            "serve-alongside": L_("serve-alongside (gateway wired, direct entries not "
+                                  "taken over) — saves nothing yet",
+                                  "serve 模式（网关已接 · 未接管直连条目 · 还没省）"),
             "direct": L_("direct (not wired) — most expensive, saves nothing yet",
                          "直连模式（最贵 · 装了没接）"),
             "empty": L_("no servers configured yet", "未配置任何 MCP 服务器"),
@@ -332,6 +342,9 @@ def render(data: dict, lng: str = "en") -> str:
         if cur == "direct":
             a("     " + L_("→ run `mcptoon sync --self` (serve) or use `mcptoon call` (cli); see `mcptoon mode`",
                            "→ 跑 `mcptoon sync --self`（serve）或改用 `mcptoon call`（cli）；详见 `mcptoon mode`"))
+        elif cur == "serve-alongside":
+            a("     " + L_("→ run `mcptoon sync --takeover` to route the direct entries through the gateway; see `mcptoon mode`",
+                           "→ 跑 `mcptoon sync --takeover` 把直连条目改为走网关；详见 `mcptoon mode`"))
         elif cur == "cli":
             a("     " + L_("CLI: idle 0 tokens; the ⑤ 'CLI' row is your real, counted saving",
                            "CLI：闲置 0 token；⑤ 里那行『CLI』才是你的真实可计数省量"))

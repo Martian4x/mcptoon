@@ -162,6 +162,13 @@ class TestHumanTokens(unittest.TestCase):
         self.assertEqual(footer_mod._human_tokens(4_273_042_784), "4.3B")
         self.assertEqual(footer_mod._human_tokens(12_345), "12,345")
 
+    def test_it_promotes_999_5m_to_1b_not_1000m(self):
+        """Rounding to whole millions must not yield the unreadable "1000M"."""
+        self.assertEqual(footer_mod._human_tokens(999_400_000), "999M")
+        self.assertEqual(footer_mod._human_tokens(999_500_000), "1B")
+        self.assertEqual(footer_mod._human_tokens(999_999_999), "1B")
+        self.assertEqual(footer_mod._human_tokens(1_000_000_000), "1B")
+
 
 class TestFloorPct(unittest.TestCase):
     def test_it_floors_rather_than_rounds(self):
@@ -320,6 +327,29 @@ class TestCatalogTokenCache(_IsolatedState):
         self.assertFalse(cdir.exists())
         f._save_token_totals("k", (1, 2, 3))
         self.assertFalse(cdir.exists(), "saving the sidecar must not recreate the dir")
+
+    def test_token_totals_write_is_atomic_and_concurrency_safe(self):
+        """The sidecar uses a unique temp name, so concurrent writers don't race.
+
+        A fixed ".tmp" meant two simultaneous CLI processes shared one scratch
+        file: one os.replace won and the loser raised FileNotFoundError. Pin the
+        sidecar to the mkstemp path by ensuring no stray ".tmp" sibling is left
+        behind and the final file parses.
+        """
+        import json
+        from mcptoon import footer as f
+
+        cdir = Path(os.environ["MCPTOON_CACHE_DIR"])
+        cdir.mkdir(parents=True, exist_ok=True)
+        f._save_token_totals("k1", (1, 2, 3))
+        f._save_token_totals("k1", (4, 5, 6))
+        target = f._token_totals_path()
+        data = json.loads(target.read_text(encoding="utf-8"))
+        self.assertEqual(data["totals"], [4, 5, 6])
+        # No leftover scratch files with the old fixed name.
+        leftovers = [p.name for p in cdir.iterdir() if p.name.endswith(".tmp")
+                     and not p.name.startswith(".toktot-")]
+        self.assertEqual(leftovers, [], f"stray fixed-name temp files: {leftovers}")
 
 
 class TestSkillTokenCache(_IsolatedState):

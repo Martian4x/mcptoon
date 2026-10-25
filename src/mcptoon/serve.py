@@ -337,10 +337,11 @@ class MCPServerBridge:
                     self._server_fetch_errors[srv] = str(e)[:200]
                 return srv, []
 
-        with concurrent.futures.ThreadPoolExecutor(
+        executor = concurrent.futures.ThreadPoolExecutor(
             max_workers=_MAX_MANIFEST_WORKERS,
             thread_name_prefix="mcptoon-manifest",
-        ) as executor:
+        )
+        try:
             fut_map = {executor.submit(_fetch_one, srv): srv for srv in server_names}
             for fut in concurrent.futures.as_completed(fut_map, timeout=60):
                 try:
@@ -363,6 +364,16 @@ class MCPServerBridge:
                     _log(f"  [{fut_map[fut]}] timed out ({_DEFAULT_MANIFEST_TIMEOUT}s)")
                 except Exception as e:
                     _log(f"  [{fut_map[fut]}] error: {e}")
+        except concurrent.futures.TimeoutError:
+            # as_completed hit its 60s wall clock. Do NOT wait for the stragglers:
+            # the `with` form would call shutdown(wait=True) here, blocking startup
+            # until each hung server reaches its own client timeout (30s, or up to
+            # MCPTOON_CALL_TIMEOUT=900s) — which defeats the 60s cap entirely while
+            # `_ensure_initialized`'s lock stays held. Cancel pending futures and
+            # proceed with whatever landed; late arrivals still index under the lock.
+            _log("  manifest refresh exceeded 60s — proceeding with a partial index")
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
 
     def close(self):
         """Clean up resources."""
@@ -382,6 +393,19 @@ class MCPServerBridge:
 
         This is the entry point for `mcptoon serve`.
         """
+        # Force UTF-8 on the stdio pipes. Windows picks the ANSI code page
+        # (cp1252/cp936) for a piped stdout unless UTF-8 mode is on; a response
+        # carrying a Chinese tool result would then raise UnicodeEncodeError inside
+        # `_send_response`'s try/except, get swallowed, and hang the client waiting
+        # for a reply that never comes. The bundled demo bridge already does
+        # exactly this — serve was the one path missing it. reconfigure is 3.7+.
+        for _stream in (sys.stdin, sys.stdout):
+            _reconf = getattr(_stream, "reconfigure", None)
+            if _reconf is not None:
+                try:
+                    _reconf(encoding="utf-8")
+                except (OSError, ValueError):
+                    pass
         _log(f"mcptoon serve started — stdio bridge mode (format={self._output_format})")
 
         try:
@@ -765,9 +789,15 @@ class MCPServerBridge:
         """Read-only snapshot of bridge state for the first-party tools."""
         with self._tool_index_lock:
             index = dict(self._tool_index)
+            fetch_errors = dict(getattr(self, "_server_fetch_errors", {}) or {})
         return {
             "servers": self._servers or {},
             "tool_index": index,
+            # The *authoritative* failure signal: a server whose fetch raised. The
+            # native health tool must use this, not "absent from tool_index" — that
+            # is also true of a healthy server that exposes no tools, and inferring
+            # failure from the index made one alive-but-empty server report error.
+            "fetch_errors": fetch_errors,
             "output_format": self._output_format,
             "initialized": self._initialized,
             "uptime": time.time() - getattr(self, "_start_time", time.time()),
@@ -1786,11 +1816,16 @@ class MCPHTTPHandler(BaseHTTPRequestHandler):
 
 
 def _build_http_server(bridge, listen_addr: str, auth_token: str | None = None):
-    """Construct the hardened HTTPServer (bind + auth + browser guard).
+    """Construct the hardened HTTP server (bind + auth + browser guard).
 
     Separated from _run_http so tests can build servers on ephemeral ports.
     """
-    from http.server import HTTPServer
+    # ThreadingHTTPServer, not the single-threaded HTTPServer: the docstring of
+    # `_run_http` promises "multiple concurrent agents", but a plain HTTPServer
+    # handles one request at a time, so a single slow upstream call blocks every
+    # other agent (a self-inflicted DoS). Each request runs in its own daemon
+    # thread; the bridge's shared state is already lock-guarded.
+    from http.server import ThreadingHTTPServer
 
     host, port = _parse_listen_addr(listen_addr)
 
@@ -1809,7 +1844,8 @@ def _build_http_server(bridge, listen_addr: str, auth_token: str | None = None):
         sys.stderr.write(f"mcptoon serve: {error}\n")
         raise SystemExit(2)
 
-    server = HTTPServer((host, port), MCPHTTPHandler)
+    server = ThreadingHTTPServer((host, port), MCPHTTPHandler)
+    server.daemon_threads = True
     server._mcptoon_auth_token = auth_token or None
     server._mcptoon_allowed_hosts = _allowed_browser_hosts(host)
     server._mcptoon_bridge = bridge

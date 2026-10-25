@@ -304,7 +304,12 @@ def _maybe_welcome(command: str, fmt: str) -> None:
         skills_count = None
 
     from . import welcome as welcome_mod
-    print(welcome_mod.render(facts, skills=skills_count, lng=cfg.resolve_lang()))
+    try:
+        _wmode = footer_mod.current_mode()
+    except Exception:
+        _wmode = None
+    print(welcome_mod.render(facts, skills=skills_count, lng=cfg.resolve_lang(),
+                             mode=_wmode))
 
     cfg.mark_welcome_seen()
 
@@ -342,7 +347,8 @@ def _bare_greeting() -> None:
             skills_count = len(skills_mod.load_index().get("skills") or []) or None
         except Exception:
             skills_count = None
-        print(welcome_mod.render(facts, skills=skills_count, lng=cfg.resolve_lang()))
+        print(welcome_mod.render(facts, skills=skills_count, lng=cfg.resolve_lang(),
+                                 mode=footer_mod.current_mode()))
         cfg.mark_welcome_seen()
     except Exception:
         return
@@ -1102,16 +1108,16 @@ def _cmd_manifest(rest, fmt, head_n, max_chars, full, export_format=""):
                 top_n = int(rest[i + 1])
             except ValueError:
                 _err(f"  --top needs a number, got {rest[i + 1]!r}")
-                return
+                sys.exit(1)
         elif a.startswith("--top="):
             try:
                 top_n = int(a.split("=", 1)[1])
             except ValueError:
                 _err(f"  --top needs a number, got {a.split('=', 1)[1]!r}")
-                return
+                sys.exit(1)
     if sort_order not in ("default", "alpha", "usage", "recent"):
         _err(f"  --sort must be one of default|alpha|usage|recent, got {sort_order!r}")
-        return
+        sys.exit(1)
 
     manifest = manifest_mod.get_manifest(use_cache=True)
     if not manifest:
@@ -1515,9 +1521,10 @@ def _cmd_call(rest, fmt, head_n, max_chars, full, use_stdin=False, fallback_json
 
         from .router import call_tool_auto
         _warn_missing_args("", tool, args)
-        result = call_tool_auto(tool, args, is_destructive=is_destructive,
-                                return_envelope=return_envelope,
-                                skip_poisoning_check=(fmt == "raw"))
+        result, _auto_server = call_tool_auto(tool, args, is_destructive=is_destructive,
+                                              return_envelope=return_envelope,
+                                              skip_poisoning_check=(fmt == "raw"),
+                                              return_server=True)
 
         if is_error(result):
             err = result["_error"]
@@ -1528,11 +1535,16 @@ def _cmd_call(rest, fmt, head_n, max_chars, full, use_stdin=False, fallback_json
                 print(f"  Try: mcptoon call <server> {tool} ...", file=sys.stderr)
             sys.exit(1)
 
-        # Render with fallback-json if needed
-        _render_result(result, fmt, head_n, max_chars, full, fallback_json)
+        # Render with fallback-json if needed. Route through the SAME per-tool
+        # policy path the explicit `call <server> <tool>` uses, and carry the
+        # server/tool keys so a `policy set <tool> raw` is honoured and the smart
+        # compressor's CCR handle keeps its `server:tool` identity.
+        _render_result(result, _effective_fmt(_auto_server, tool, fmt),
+                       head_n, max_chars, full, fallback_json,
+                       server=_auto_server, tool=tool)
         # Machine receipt on stderr for every machine format (json AND toon), so a
         # --toon script gets the same numbers a --json one does; stdout stays pure.
-        _emit_cli_receipt("", tool, result, machine=(fmt in ("json", "toon")))
+        _emit_cli_receipt(_auto_server, tool, result, machine=(fmt in ("json", "toon")))
         if _tool_result_failed(result):
             sys.exit(1)
         return
@@ -3960,6 +3972,12 @@ def _cmd_credit(_rest, fmt, head_n=0, max_chars=0, full=False):
                 if zh else
                 f"direct (installed, not wired) — saves 0 right now; the full "
                 f"{full:,} tokens load every turn")
+    elif cur == "serve-alongside":
+        line = (f"serve（网关已接，但直连条目没被接管）— 现在省 0；"
+                f"全量 {full:,} token 仍每轮直连加载"
+                if zh else
+                f"serve-alongside (gateway wired, direct entries not taken over) — "
+                f"saves 0 right now; the full {full:,} tokens still load every turn")
     elif cur == "cli":
         line = (f"CLI 模式 — 0 常驻；全量 {full:,} token 不进上下文；已转发 {calls:,} 次"
                 if zh else
@@ -4144,6 +4162,21 @@ def _cmd_stats(_rest, fmt, head_n=0, max_chars=0, full=False):
                   f"to pick one schema)")
             print(f"       the 'via the gateway' line above applies only if you "
                   f"wire serve")
+        elif footer_mod.current_mode() in ("direct", "serve-alongside"):
+            # Not saving yet: the gateway pair above is what you WOULD save once
+            # wired/taken over, not a saving happening now. Say so on the savings
+            # dashboard itself — otherwise the "Tokens SAVED: …" line reads as a
+            # live tally on a machine that is loading MORE than before install.
+            if footer_mod.current_mode() == "serve-alongside":
+                print("  NOTE: serve-alongside — the gateway is wired but the direct "
+                      "entries are not taken over, so right now you save 0.")
+                print("        → run `mcptoon sync --takeover` to route them through "
+                      "the gateway")
+            else:
+                print("  NOTE: direct — installed but not wired, so right now you "
+                      "save 0; the numbers above are what you WOULD save.")
+                print("        → run `mcptoon sync --self` to wire serve, or use "
+                      "`mcptoon call`")
         print(f"  Disabled tools:       {len(disabled)}")
         print(f"  Caliber:              {caliber}")
         print()
@@ -4319,6 +4352,9 @@ def _cmd_status(_rest, fmt):
             # simply reads resident_avoided alongside its gateway figure.
             "delivery_mode": mode_now,
             "resident_avoided": full_tokens if mode_now == "cli" else 0,
+            # The alongside detail (gateway wired but direct entries not taken
+            # over): a script needs the count, not just the mode name.
+            "direct_entries": _direct_entries_now(),
             "cli_credit": footer_mod.cli_credit(footer_mod.facts()),
             "recommended": _rec_now,
             "one_action": _rec_action,
@@ -4368,6 +4404,21 @@ def _cmd_status(_rest, fmt):
                   f"— nothing is saved yet  [{caliber}]")
             print(f"                       (direct = installed, not wired; run "
                   f"`mcptoon sync --self` to save, or use `mcptoon call`)")
+        elif mode_now == "serve-alongside":
+            # Gateway wired, but host configs still list the upstream entries it
+            # manages, so those hosts load the full catalog directly and the
+            # gateway saves nothing yet. Printing the "→ gw_tokens (saved 99%)"
+            # pair here would credit mcptoon for a saving it is not delivering.
+            _de = 0
+            try:
+                _de = int(mode_mod.detect().get("direct_entries") or 0)
+            except Exception:
+                _de = 0
+            print(f"  Tool definitions   : full {full_tokens:,} tokens still load "
+                  f"natively — nothing is saved yet  [{caliber}]")
+            print(f"                       (serve-alongside = gateway wired but "
+                  f"{_de:,} direct entr{'y' if _de == 1 else 'ies'} not taken over; "
+                  f"run `mcptoon sync --takeover`)")
         elif gw_tokens and gw_pct is not None and not wired:
             # CLI mode: the gateway is NOT wired into an agent, so the "→ gw_tokens
             # via the gateway" story is a serve fact this machine is not living.
@@ -4457,6 +4508,8 @@ def _cmd_status(_rest, fmt):
         _mode_label = {
             "cli": "CLI (shell) — cheapest, zero resident cost",
             "serve": "serve (MCP gateway) — small fixed per-turn cost",
+            "serve-alongside": "serve-alongside (gateway wired, direct entries not "
+                               "taken over) — saves nothing yet",
             "direct": "direct (not wired) — most expensive, saves nothing yet",
             "empty": "no servers configured yet",
         }.get(_m["mode"], _m["mode"])
@@ -4464,6 +4517,12 @@ def _cmd_status(_rest, fmt):
         if _m["mode"] == "direct":
             print("                       → run `mcptoon sync --self`, or use "
                   "`mcptoon call` — see `mcptoon mode`")
+        elif _m["mode"] == "serve-alongside":
+            _de = int(_m.get("direct_entries") or 0)
+            print(f"                       → {_de:,} direct entr"
+                  f"{'y' if _de == 1 else 'ies'} still load natively; run "
+                  "`mcptoon sync --takeover` to route them through the gateway "
+                  "— see `mcptoon mode`")
     except Exception:
         pass
     print(line)
@@ -4946,6 +5005,21 @@ def _installed_but_silent(act: dict) -> bool:
         return (time.time() - last_ts) > 24 * 3600
     except Exception:
         return False
+
+
+def _direct_entries_now() -> int:
+    """How many direct server entries `sync --takeover` would still remove (0 if none).
+
+    Read-only and cache-free (``takeover_plan`` walks the agent configs, ~1.7 ms,
+    never spawns a server). The `status --json` payload carries it so a script can
+    see the `serve-alongside` count without parsing the mode name. Best-effort: any
+    failure reads as 0 rather than breaking `status`.
+    """
+    try:
+        from . import mode as mode_mod
+        return int(mode_mod.detect().get("direct_entries") or 0)
+    except Exception:
+        return 0
 
 
 def _gateway_wired_in() -> bool:
@@ -5561,6 +5635,23 @@ def _cmd_doctor(rest, fmt="auto"):
              f"      → run `mcptoon sync --self` to save, or use `mcptoon call`\n"
              f"      → `mcptoon credit` shows your mode and the real saving in one line",
              mode=_dmode)
+    elif _dmode == "serve-alongside":
+        # Gateway wired but the upstream entries still load directly, so the
+        # gateway saves nothing yet. The plain "serve — gateway wired" OK line
+        # would declare a healthy saving that is not happening; name the gap and
+        # the takeover fix instead.
+        _de = 0
+        try:
+            from . import mode as mode_mod
+            _de = int(mode_mod.detect().get("direct_entries") or 0)
+        except Exception:
+            _de = 0
+        emit("warn", "mode", "serve-alongside — gateway wired but not taken over",
+             f"  ! Mode: serve-alongside — the gateway is wired, but {_de:,} direct "
+             f"entr{'y' if _de == 1 else 'ies'} still load the full {_dfull:,} tokens "
+             f"natively, so nothing is saved yet.\n"
+             f"      → run `mcptoon sync --takeover` to route them through the gateway",
+             mode=_dmode)
     elif _dmode == "cli":
         emit("ok", "mode", "cli — 0 resident, full catalog never loads",
              f"  ✓ Mode: cli — 0 resident, the full {_dfull:,} tokens never load",
@@ -5827,6 +5918,10 @@ def _post_install_mode_hint(fmt) -> None:
     if cur == "direct":
         _err("  ⚠ Mode: direct (not wired) — nothing is saved yet. "
              "`mcptoon sync --self` wires serve, or use `mcptoon call`.")
+    elif cur == "serve-alongside":
+        _err("  ⚠ Mode: serve-alongside — the gateway is wired but has not taken "
+             "over the direct entries, so nothing is saved yet. "
+             "`mcptoon sync --takeover` routes them through the gateway.")
     elif cur == "cli":
         _err("  ✓ Mode: cli — a call loads one schema on demand; the full catalog "
              "never loads.")
@@ -5849,6 +5944,9 @@ def _post_onboard_mode_hint(fmt) -> None:
     if cur == "direct":
         print("  ⚠ Mode: direct (not wired) — you are not saving yet. "
               "`mcptoon sync --self` wires serve.")
+    elif cur == "serve-alongside":
+        print("  ⚠ Mode: serve-alongside — gateway wired but direct entries not "
+              "taken over, so you are not saving yet. `mcptoon sync --takeover`.")
     elif cur:
         print(f"  ✓ Mode: {cur} — saving is on. See `mcptoon credit`.")
 
@@ -7025,7 +7123,8 @@ def _cmd_health(rest, fmt):
             try:
                 timeout = float(rest[i + 1])
             except ValueError:
-                pass
+                _err(f"  --timeout needs a number (seconds), got {rest[i + 1]!r}")
+                sys.exit(1)
             break
 
     # JSON output for CI/CD

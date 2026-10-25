@@ -199,7 +199,8 @@ def _clip(text: str, width: int, ell: str = "…") -> str:
     return out + ell
 
 
-def _rows_and_tail(facts: dict, skills: int | None, lng: str, stream) -> tuple[list, list]:
+def _rows_and_tail(facts: dict, skills: int | None, lng: str, stream,
+                   mode: str | None = None) -> tuple[list, list]:
     """The (label, value, hint) rows and the closing lines, for one language.
 
     `stream` is threaded through so every glyph — including the one on the
@@ -207,6 +208,15 @@ def _rows_and_tail(facts: dict, skills: int | None, lng: str, stream) -> tuple[l
     tail used to read `sys.stdout` directly, so a caller rendering for a
     different stream (a test, or a redirect) got box-drawing chosen for the
     terminal and emoji for the file.
+
+    `mode` is the delivery mode (`footer.current_mode()`), passed by the real
+    callers so the "in context" row tells the truth. On a `direct` machine
+    (installed, not wired) or a `serve-alongside` one (gateway wired but the
+    upstream entries still load directly) nothing is being saved yet — the full
+    catalog rides in every turn — so quoting "省 99%" there is the exact
+    "credit points the wrong way" defect. `None` (a bare `render` from a test or
+    an older caller) keeps the plain saving row, so the layout tests that never
+    cared about mode are unaffected.
     """
     zh = lng == "zh"
     g = _glyphs(stream)
@@ -243,7 +253,21 @@ def _rows_and_tail(facts: dict, skills: int | None, lng: str, stream) -> tuple[l
     # "省 100%" that reads as a typo and disagrees with the skills line on the same
     # screen (reported 2026-10-17). `display_pct` is the one shared rule.
     from . import footer as _footer
-    if full and gw_tok and gw_pct is not None:
+    _no_saving = mode in ("direct", "serve-alongside")
+    if _no_saving:
+        # Installed but not saving yet: the full catalog rides in every turn, so
+        # the "省 99%" row would be a lie. Say the truth and name the fix.
+        if not full:
+            context = ("尚未缓存" if zh else "catalog not cached yet")
+        elif mode == "serve-alongside":
+            context = (f"全量 {full:,} token 仍每轮加载 · 未接管，还没省"
+                       if zh else
+                       f"full {full:,} tokens load · not taken over, no saving yet")
+        else:
+            context = (f"全量 {full:,} token 每轮都在烧 · 未接线，还没省"
+                       if zh else
+                       f"full {full:,} tokens load · not wired, no saving yet")
+    elif full and gw_tok and gw_pct is not None:
         _gw = _footer.display_pct(full - gw_tok, full)
         _sl = _footer.display_pct(saved, full)
         context = (f"{full:,} {arrow} {gw_tok:,} tokens"
@@ -260,6 +284,20 @@ def _rows_and_tail(facts: dict, skills: int | None, lng: str, stream) -> tuple[l
         ("本机已有" if zh else "Found", found, ""),
         ("上下文本钱" if zh else "In context", context, ""),
     ]
+    # The single most important action on a not-yet-saving machine is the command
+    # that starts the saving — put it first, before "status", so a fresh install
+    # is not told to go look at numbers it is not earning yet.
+    if _no_saving and servers:
+        if mode == "serve-alongside":
+            rows.append((("先做这个" if zh else "First"),
+                         "mcptoon sync --takeover",
+                         ("接管直连条目，开始省" if zh
+                          else "take over, start saving")))
+        else:
+            rows.append((("先做这个" if zh else "First"),
+                         "mcptoon sync --self",
+                         ("接上网关，立刻开始省" if zh
+                          else "wire the gateway, start saving")))
     if servers:
         rows += [
             ("下一步" if zh else "Next", "mcptoon status",
@@ -295,12 +333,17 @@ def _rows_and_tail(facts: dict, skills: int | None, lng: str, stream) -> tuple[l
 
 
 def render(facts: dict, *, skills: int | None = None, lng: str = "en",
-           stream=None) -> str:
+           stream=None, mode: str | None = None) -> str:
     """The whole greeting as one string — built once, printed once.
 
     Returned rather than printed so the caller writes a single `os.write`-sized
     block: eight separate `print()` calls can interleave with a background
     process, and a half-drawn card looks like a bug.
+
+    `mode` is the delivery mode from `footer.current_mode()`; the real callers
+    pass it so the card does not quote a saving a not-yet-saving machine is not
+    earning. Defaults to None (the plain saving row) so a caller that does not
+    know the mode still renders.
     """
     stream = stream if stream is not None else sys.stdout
     g = _glyphs(stream)
@@ -335,7 +378,7 @@ def render(facts: dict, *, skills: int | None = None, lng: str = "en",
         g["bl"] + g["h"] * inner + g["br"],
     ]
 
-    rows, tail = _rows_and_tail(facts, skills, lng, stream)
+    rows, tail = _rows_and_tail(facts, skills, lng, stream, mode)
     label_w = max((display_width(label) for label, _, _ in rows), default=0)
     ell = "…" if _fits("…", stream) else "..."
     body = []

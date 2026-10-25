@@ -161,6 +161,22 @@ class TestBindDefaults(unittest.TestCase):
         self.assertNotEqual(s._mcptoon_auth_token, serve._AUTO_TOKEN)
         s.server_close()
 
+    def test_http_server_is_threaded(self):
+        """HTTP mode promises "multiple concurrent agents" — it must be threaded.
+
+        A single-threaded HTTPServer handles one request at a time, so one slow
+        upstream call blocks every other agent. This pins the ThreadingHTTPServer
+        choice and its daemon threads.
+        """
+        from http.server import ThreadingHTTPServer
+
+        s = serve._build_http_server(FakeBridge(), "127.0.0.1:0", auth_token="x")
+        try:
+            self.assertIsInstance(s, ThreadingHTTPServer)
+            self.assertTrue(s.daemon_threads)
+        finally:
+            s.server_close()
+
     def test_auth_with_value_kept_verbatim(self):
         fmt, listen, auth = serve._parse_serve_args(["serve", "--auth", "s3cret"])
         self.assertEqual(auth, "s3cret")

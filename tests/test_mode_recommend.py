@@ -66,6 +66,15 @@ def test_serve_without_shell_keeps_serve():
     assert r["needs_confirm"] is False
 
 
+def test_serve_alongside_recommends_takeover():
+    # Gateway wired but the direct entries are not taken over: the fix is takeover,
+    # not "keep serve" — nothing is being saved yet.
+    r = _rec("serve-alongside", SHELL)
+    assert r["one_action"] == "mcptoon sync --takeover"
+    assert r["needs_confirm"] is False
+    assert "takeover" in r["reason"].lower()
+
+
 def test_direct_with_shell_recommends_cli():
     r = _rec("direct", SHELL)
     assert r["recommended"] == "cli"

@@ -357,6 +357,14 @@ def _render(tokname, exact, tool_rows, n_tools,
                          "above are what you WOULD save; right now you save 0.")
             lines.append("          → `mcptoon sync --self` to wire serve, or use "
                          "`mcptoon call`")
+        elif tool_rows and _mode == "serve-alongside":
+            # Gateway wired but the upstream entries still load directly: the rows
+            # above are what takeover WOULD buy, not a saving happening now.
+            lines.append("  serve-alongside: the gateway is wired but has NOT taken "
+                         "over the direct entries — the numbers above are what you "
+                         "WOULD save; right now you save 0.")
+            lines.append("          → `mcptoon sync --takeover` to route them through "
+                         "the gateway")
     except Exception:
         pass
     lines.append("")
@@ -419,7 +427,7 @@ def run_bench(rest: list[str], fmt: str = "auto") -> None:
         # Direct machine: the table rows are what it WOULD save, so carry the fix
         # (recommended mode + one action) in the JSON, matching the human warning.
         _rec_now = _rec_action = None
-        if _mode == "direct":
+        if _mode in ("direct", "serve-alongside"):
             try:
                 from . import mode as _mode_mod
                 _rec = _mode_mod.recommend()

@@ -387,10 +387,21 @@ def _save_token_totals(key: str, totals) -> None:
         # 2026-10-19: this exact file recreated it and failed the uninstall test).
         if not path.parent.is_dir():
             return
-        tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps({"key": key, "totals": list(totals)}),
-                       encoding="utf-8")
-        os.replace(tmp, path)
+        # Unique temp: the footer writes this at the end of nearly every command,
+        # so two concurrent CLI processes shared a fixed ".tmp" and raced — one
+        # os.replace won, the loser raised FileNotFoundError (swallowed) and the
+        # cache could end up torn. mkstemp keeps each writer's scratch private.
+        import tempfile
+        fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".toktot-", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(json.dumps({"key": key, "totals": list(totals)}))
+            os.replace(tmp, path)
+        except OSError:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
     except OSError:
         pass
 
@@ -540,7 +551,13 @@ def _human_tokens(n: int) -> str:
     if n >= 1_000_000_000:
         return f"{n / 1_000_000_000:.1f}B".replace(".0B", "B")
     if n >= 1_000_000:
-        return f"{n / 1_000_000:.0f}M"
+        # Round to whole millions FIRST, then promote if rounding tipped it to
+        # 1000 — otherwise 999,500,000 printed as "1000M" (a unit nobody reads as
+        # ~1B) instead of "1B".
+        millions = round(n / 1_000_000)
+        if millions >= 1000:
+            return f"{millions / 1000:.1f}B".replace(".0B", "B")
+        return f"{millions}M"
     return f"{n:,}"
 
 
@@ -746,20 +763,40 @@ def line(f: dict | None = None, lng: str | None = None) -> str:
     # that machine does not have, so the per-turn line must say so plainly rather
     # than broadcast "saves 88% · ≈1.9B". Same rule as the statusline fix; this is
     # the surface that fires every single turn, so it matters most.
-    if current_mode() == "direct":
+    #
+    # `serve-alongside` is the same "no saving yet" truth wearing a gateway badge:
+    # the gateway is registered, but host configs still list the upstream entries
+    # it manages, so those hosts load the full catalog directly and the gateway
+    # saves nothing. Broadcasting the gateway rate here would credit mcptoon for a
+    # saving it is not delivering — the exact "credit points the wrong way" defect.
+    _cmode = current_mode()
+    if _cmode in ("direct", "serve-alongside"):
+        _along = _cmode == "serve-alongside"
         _dfull = d.get("tokens_full") or 0
         _dtools = int(d.get("tools") or 0)
         _dcalls = int(d.get("calls_recorded") or 0) if "calls_recorded" in d else 0
         if lng == "zh":
-            body = (f"{MARK} mcptoon: 工具 {_dtools:,}"
-                    + (f"（全量 {_human_tokens(_dfull)} 常驻）" if _dfull else "")
-                    + " · 未接线·未省"
-                    + (f" · {_dcalls:,} 次" if _dcalls else ""))
+            if _along:
+                body = (f"{MARK} mcptoon: 工具 {_dtools:,}"
+                        + (f"（全量 {_human_tokens(_dfull)} 仍直连）" if _dfull else "")
+                        + " · 未接管·未省"
+                        + (f" · {_dcalls:,} 次" if _dcalls else ""))
+            else:
+                body = (f"{MARK} mcptoon: 工具 {_dtools:,}"
+                        + (f"（全量 {_human_tokens(_dfull)} 常驻）" if _dfull else "")
+                        + " · 未接线·未省"
+                        + (f" · {_dcalls:,} 次" if _dcalls else ""))
         else:
-            body = (f"{MARK} mcptoon: tools {_dtools:,}"
-                    + (f" (full {_human_tokens(_dfull)} resident)" if _dfull else "")
-                    + " · not wired·no saving"
-                    + (f" · {_dcalls:,} calls" if _dcalls else ""))
+            if _along:
+                body = (f"{MARK} mcptoon: tools {_dtools:,}"
+                        + (f" (full {_human_tokens(_dfull)} still direct)" if _dfull else "")
+                        + " · not taken over·no saving"
+                        + (f" · {_dcalls:,} calls" if _dcalls else ""))
+            else:
+                body = (f"{MARK} mcptoon: tools {_dtools:,}"
+                        + (f" (full {_human_tokens(_dfull)} resident)" if _dfull else "")
+                        + " · not wired·no saving"
+                        + (f" · {_dcalls:,} calls" if _dcalls else ""))
         return f"{body} [{d.get('token_caliber') or ''}]"
     gw_pct = d.get("gateway_pct") if "gateway_pct" in d else None
     gw_tok = d.get("gateway_tokens") if "gateway_tokens" in d else None

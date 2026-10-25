@@ -69,9 +69,29 @@ def test_call_payload_with_error_field_is_not_a_failure():
 
 def test_call_auto_tool_error_exits_nonzero():
     fake = {"error": True, "message": "boom"}
-    with patch("mcptoon.router.call_tool_auto", return_value=fake):
+    with patch("mcptoon.router.call_tool_auto", return_value=(fake, "")):
         out, err, code = _run(["call", "--auto", "tool", "{}"])
     assert code == 1
+
+
+# ── bad numeric / enum args must be a non-zero exit, not a silent 0 ─────────
+
+def test_manifest_bad_sort_exits_nonzero():
+    out, err, code = _run(["manifest", "--sort", "bogus"])
+    assert code == 1, "a bad --sort must not exit 0"
+    assert "--sort must be one of" in err
+
+
+def test_manifest_bad_top_exits_nonzero():
+    out, err, code = _run(["manifest", "--top", "xyz"])
+    assert code == 1, "a bad --top must not exit 0"
+    assert "--top needs a number" in err
+
+
+def test_health_bad_timeout_exits_nonzero():
+    out, err, code = _run(["health", "--timeout", "abc"])
+    assert code == 1, "a bad --timeout must not silently fall back to 10s"
+    assert "--timeout needs a number" in err
 
 
 # ── add: a malformed --header is refused, not dropped ────────────────────────

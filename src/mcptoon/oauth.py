@@ -135,10 +135,23 @@ def _restrict(path: Path) -> None:
 def save_token(name: str, ts: TokenSet) -> None:
     path = _token_path(name)
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(asdict(ts), ensure_ascii=False), encoding="utf-8")
-    _restrict(tmp)
-    os.replace(tmp, path)
+    # Unique temp name: a fixed ".tmp" meant two concurrent `auth refresh`/`login`
+    # for the same name shared one scratch file — the loser's os.replace raised
+    # FileNotFoundError, or an interleaved write stored a corrupt token set.
+    import tempfile
+    fd, _tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".tok-", suffix=".tmp")
+    tmp = Path(_tmp)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(json.dumps(asdict(ts), ensure_ascii=False))
+        _restrict(tmp)
+        os.replace(tmp, path)
+    except OSError:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        raise
 
 
 def load_token(name: str) -> Optional[TokenSet]:

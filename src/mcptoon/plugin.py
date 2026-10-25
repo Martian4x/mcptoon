@@ -777,12 +777,36 @@ def install_plugin(source: str, force: bool = False,
                 "message": f'plugin "{name}" is already installed '
                            f"at {dest} — use --force to upgrade",
             }
-        shutil.rmtree(dest)
-
-    try:
-        shutil.copytree(source_path, dest)
-    except (shutil.Error, OSError) as e:
-        return {"ok": False, "stage": "copy", "message": f"copy failed: {e}"}
+        # Upgrade: copy the NEW version to a sibling temp dir FIRST, then swap.
+        # The old code `rmtree(dest)` before `copytree`, so a copy failure left
+        # the user with NO plugin (old deleted, new not created) while the
+        # registry still listed it installed — unrecoverable and inconsistent.
+        tmp_dest = dest.parent / f".{name}.installing-{os.getpid()}"
+        try:
+            if tmp_dest.exists():
+                shutil.rmtree(tmp_dest, ignore_errors=True)
+            shutil.copytree(source_path, tmp_dest)
+        except (shutil.Error, OSError) as e:
+            shutil.rmtree(tmp_dest, ignore_errors=True)
+            return {"ok": False, "stage": "copy",
+                    "message": f"copy failed (existing install left intact): {e}"}
+        try:
+            shutil.rmtree(dest)
+        except OSError as e:
+            shutil.rmtree(tmp_dest, ignore_errors=True)
+            return {"ok": False, "stage": "swap",
+                    "message": f"could not replace existing install: {e}"}
+        try:
+            os.replace(tmp_dest, dest)
+        except OSError:
+            # os.replace of a dir works on same volume; fall back to a move.
+            shutil.move(str(tmp_dest), str(dest))
+    else:
+        try:
+            shutil.copytree(source_path, dest)
+        except (shutil.Error, OSError) as e:
+            shutil.rmtree(dest, ignore_errors=True)
+            return {"ok": False, "stage": "copy", "message": f"copy failed: {e}"}
 
     # Persistent data dir: created if missing, NEVER deleted on upgrade
     data_dir.mkdir(parents=True, exist_ok=True)

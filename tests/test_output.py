@@ -671,6 +671,24 @@ class TestRender:
         result = render("x" * 200, fmt="json", full=True)
         assert "[truncated" not in result
 
+    def test_raw_full_still_caps_50k_but_says_so(self):
+        """--raw --full used to return a silent 50k slice.
+
+        `--full` sets the effective max to 0, so the normal `_truncate` notice
+        never fired and the user got a cut body with no warning. The raw format
+        keeps its hard 50k ceiling (an unbounded dump can wedge a terminal) but
+        must now announce the cut.
+        """
+        big = "y" * 60000
+        result = render(big, fmt="raw", full=True)
+        assert len(result) > 50000
+        assert "[truncated" in result and "50,000" in result
+
+    def test_raw_full_under_50k_has_no_notice(self):
+        result = render("z" * 1000, fmt="raw", full=True)
+        assert result == "z" * 1000
+        assert "[truncated" not in result
+
     def test_auto_format_default(self):
         result = render({"a": 1}, fmt="auto")
         assert "a" in result

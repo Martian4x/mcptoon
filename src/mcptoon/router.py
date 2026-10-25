@@ -627,6 +627,7 @@ def call_tool_auto(
     is_destructive: bool = False,
     skip_poisoning_check: bool = False,
     return_envelope: bool = False,
+    return_server: bool = False,
 ) -> Any:
     """Auto-route a tool call to the server that has this tool.
 
@@ -640,9 +641,13 @@ def call_tool_auto(
         is_destructive: Acknowledge dangerous operation
         skip_poisoning_check: Skip poisoning detection
         return_envelope: Return the complete MCP result envelope (MCP path only)
+        return_server: When True, return ``(result, chosen_server)`` so the caller
+            can apply the per-tool output policy and stamp the receipt with the
+            server it actually hit. The server is "" when nothing matched.
 
     Returns:
         Tool result, or error dict if tool not found on any server.
+        When ``return_server`` is True: ``(result, server_name)``.
 
     Example:
         >>> result = call_tool_auto("search", {"query": "AI"})
@@ -659,8 +664,9 @@ def call_tool_auto(
             if mod and hasattr(mod, "SCHEMA"):
                 for td in mod.SCHEMA:
                     if td.get("name", "").lower() == tool.lower():
-                        return call_tool(server_name, tool, args, is_destructive,
-                                         skip_poisoning_check, return_envelope)
+                        _r = call_tool(server_name, tool, args, is_destructive,
+                                       skip_poisoning_check, return_envelope)
+                        return (_r, server_name) if return_server else _r
         except Exception:
             continue
 
@@ -693,12 +699,13 @@ def call_tool_auto(
             results = manifest_mod.search_tools(tool, limit=5)
             suggestions = list({r["server"] for r in results})
 
-        return make_error(
+        _err = make_error(
             "TOOL_NOT_FOUND",
             f"Tool '{tool}' not found on any configured server.",
             "router", retry=False, tool=tool,
             suggestions=suggestions[:5] if suggestions else [],
         )
+        return (_err, "") if return_server else _err
 
     # If multiple servers have this tool, try the one with most recent usage
     chosen = servers_with_tool[0]
@@ -715,4 +722,5 @@ def call_tool_auto(
         except Exception:
             chosen = servers_with_tool[0]
 
-    return call_tool(chosen, tool, args, is_destructive, skip_poisoning_check, return_envelope)
+    _r = call_tool(chosen, tool, args, is_destructive, skip_poisoning_check, return_envelope)
+    return (_r, chosen) if return_server else _r

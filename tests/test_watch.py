@@ -292,6 +292,85 @@ class TestDefaults:
         assert MAX_CONSECUTIVE_FAILURES == 5
 
 
+class TestWatchForwardsSyncFlags:
+    """`mcptoon sync --watch --dry` used to silently WRITE configs.
+
+    `cli._cmd_sync` returns into watch.main() before sync parses --dry/--self/
+    --takeover, and watch.main dropped them, so a watch cycle always called
+    sync_to_all() with no arguments (a real write). These pin the flags through
+    both watch.main's parser and the watch() loop.
+    """
+
+    def test_main_parses_dry_self_takeover(self):
+        import mcptoon.watch as w
+        seen = {}
+
+        def fake_watch(**kwargs):
+            seen.update(kwargs)
+            return 0
+
+        orig = w.watch
+        w.watch = fake_watch
+        try:
+            w.main(["sync", "--watch", "--dry", "--self", "--takeover"])
+        finally:
+            w.watch = orig
+        assert seen["dry_run"] is True
+        assert seen["include_self"] is True
+        assert seen["takeover"] is True
+
+    def test_loop_forwards_dry_run_to_real_sync(self, tmp_path, monkeypatch):
+        """The real sync_to_all is called WITH the flags (not bare)."""
+        import mcptoon.watch as w
+        monkeypatch.setattr(w, "DEBOUNCE", 0.02)
+        cfg = tmp_path / "config.json"
+        _touch(cfg)
+        captured = {}
+
+        def fake_sync_to_all(**kwargs):
+            captured.update(kwargs)
+            return _ok_results()
+
+        monkeypatch.setattr(w, "sync_to_all", fake_sync_to_all)
+
+        def mutate_after_baseline():
+            time.sleep(0.12)
+            _touch(cfg, '{"servers": {"fetch": {}}}')
+
+        t = threading.Thread(target=mutate_after_baseline)
+        t.start()
+        code = w.watch(paths=[cfg], max_cycles=80, interval=0.005,
+                       dry_run=True, include_self=True, takeover=True,
+                       _out=lambda *_: None)
+        t.join()
+        assert code == 0
+        assert captured.get("dry_run") is True
+        assert captured.get("include_self") is True
+        assert captured.get("takeover") is True
+
+    def test_injected_sync_fn_gets_bare_call(self, tmp_path, monkeypatch):
+        """A test sync_fn with the bare signature must still be callable."""
+        import mcptoon.watch as w
+        monkeypatch.setattr(w, "DEBOUNCE", 0.02)
+        cfg = tmp_path / "config.json"
+        _touch(cfg)
+        calls = []
+
+        def mutate_after_baseline():
+            time.sleep(0.12)
+            _touch(cfg, '{"servers": {"fetch": {}}}')
+
+        t = threading.Thread(target=mutate_after_baseline)
+        t.start()
+        code = w.watch(paths=[cfg], max_cycles=80, interval=0.005,
+                       sync_fn=lambda: calls.append(1) or _ok_results(),
+                       dry_run=True, _out=lambda *_: None)
+        t.join()
+        assert code == 0
+        assert len(calls) >= 1
+
+
+
 if __name__ == "__main__":
     import sys
     sys.exit(pytest.main([__file__, "-v"]))

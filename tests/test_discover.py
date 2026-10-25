@@ -313,6 +313,36 @@ class TestNetworkProbe:
         result = _probe_endpoint("http://127.0.0.1:59999/mcp", timeout=0.1)
         assert result is False
 
+    def test_probe_endpoint_closes_the_response(self):
+        """The HTTP response must be closed (used as a context manager).
+
+        The old code did `resp = opener.open(...)` and never closed it, leaking
+        the socket on every discovery sweep. Every other urllib call in the repo
+        uses `with ... as resp:`. Assert the response's __exit__ ran.
+        """
+        closed = {"v": False}
+
+        class _FakeResp:
+            def __init__(self):
+                self.headers = {}
+            def read(self):
+                return b'{"jsonrpc": "2.0", "result": {}}'
+            def __enter__(self):
+                return self
+            def __exit__(self, *a):
+                closed["v"] = True
+                return False
+
+        class _FakeOpener:
+            def open(self, req, timeout=None):
+                return _FakeResp()
+
+        with patch.object(discover_mod.urllib.request, "build_opener",
+                          return_value=_FakeOpener()):
+            ok = _probe_endpoint("http://example.invalid/mcp", timeout=0.1)
+        assert ok is True
+        assert closed["v"] is True, "the probe response was not closed"
+
     def test_probe_http_endpoint_dead(self):
         """probe_http_endpoint on dead URL returns None."""
         result = probe_http_endpoint("http://127.0.0.1:59999/mcp", timeout=0.1)

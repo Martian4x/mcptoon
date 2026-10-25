@@ -65,6 +65,29 @@ def test_welcome_still_names_a_next_step_after_adding_the_badge_row():
     assert "mcptoon skills list" in text
 
 
+# ── welcome honours the delivery mode (no saving claim before it saves) ──────
+def test_welcome_direct_does_not_claim_a_saving():
+    """A direct machine (installed, not wired) saves nothing — the card must say
+    so, not quote the gateway 99%. This is the "credit points the wrong way" bug."""
+    text = welcome.render(_FACTS, skills=472, lng="en", mode="direct")
+    assert "no saving yet" in text
+    assert "gateway saves" not in text
+    assert "mcptoon sync --self" in text   # names the one fix
+
+
+def test_welcome_alongside_does_not_claim_a_saving():
+    text = welcome.render(_FACTS, skills=472, lng="en", mode="serve-alongside")
+    assert "not taken over" in text and "no saving yet" in text
+    assert "gateway saves" not in text
+    assert "mcptoon sync --takeover" in text
+
+
+def test_welcome_serve_still_shows_the_gateway_saving():
+    """No regression: a genuinely saving serve machine keeps the saving row."""
+    text = welcome.render(_FACTS, skills=472, lng="en", mode="serve")
+    assert "gateway saves" in text
+
+
 # ── quickstart celebration ──────────────────────────────────────────────────
 def _celebration(tool_count, servers, unreachable=0):
     buf = io.StringIO()

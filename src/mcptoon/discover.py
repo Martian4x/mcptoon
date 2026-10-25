@@ -685,9 +685,8 @@ def _probe_endpoint(url: str, timeout: float = 0.5) -> bool:
         # Disable proxy
         handler = urllib.request.ProxyHandler({})
         opener = urllib.request.build_opener(handler)
-        resp = opener.open(req, timeout=timeout)
-
-        body = resp.read().decode("utf-8", errors="replace")
+        with opener.open(req, timeout=timeout) as resp:
+            body = resp.read().decode("utf-8", errors="replace")
 
         # Check if response looks like MCP (JSON-RPC or SSE)
         if "jsonrpc" in body or "result" in body or "data: " in body:
@@ -824,8 +823,8 @@ def probe_http_endpoint(url: str, timeout: float = 2.0) -> dict | None:
 
         handler = urllib.request.ProxyHandler({})
         opener = urllib.request.build_opener(handler)
-        resp = opener.open(req, timeout=timeout)
-        body = resp.read().decode("utf-8", errors="replace")
+        with opener.open(req, timeout=timeout) as resp:
+            body = resp.read().decode("utf-8", errors="replace")
 
         # Parse response
         data = None

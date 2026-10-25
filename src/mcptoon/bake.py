@@ -98,9 +98,19 @@ def load_bakes() -> dict:
 def _save_bakes(bakes: dict) -> None:
     path = _bakes_file()
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(bakes, ensure_ascii=False, indent=2), encoding="utf-8")
-    os.replace(str(tmp), str(path))
+    # Unique temp name — a fixed ".tmp" let concurrent `bake create` writers race
+    # on the same temp file and clobber each other's result on os.replace.
+    import uuid
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp")
+    try:
+        tmp.write_text(json.dumps(bakes, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.replace(str(tmp), str(path))
+    finally:
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except OSError:
+            pass
     # 0600 on POSIX; a no-op ACL tighten elsewhere is not attempted (Windows
     # relies on the per-user profile directory's own ACL).
     try:

@@ -926,6 +926,33 @@ class TestWriteBackVerification:
         assert _write_json_safe(target, {"mcpServers": {"fetch": {}}}) is True
         assert capsys.readouterr().err == ""
 
+    def test_unreadable_existing_config_is_refused_not_clobbered(self, tmp_path, capsys):
+        """An existing file we cannot READ must never be overwritten.
+
+        Before the fix, `read_text` raising OSError set old_text=None, which
+        skipped both the "unparseable → refuse" guard and the .bak write, then
+        overwrote the file it never saw — irreversible. Now it refuses.
+        """
+        target = tmp_path / "config.json"
+        original = '{"mcpServers": {"keep": {"command": "x"}}}'
+        target.write_text(original, encoding="utf-8")
+
+        real_read = Path.read_text
+
+        def unreadable_read(self_path, *a, **k):
+            if self_path == target:
+                raise OSError("simulated: access denied")
+            return real_read(self_path, *a, **k)
+
+        with patch.object(Path, "read_text", unreadable_read):
+            ok = _write_json_safe(target, self._gateway_payload())
+
+        assert ok is False
+        # The file is byte-for-byte untouched — no clobber, no backup either.
+        assert target.read_text(encoding="utf-8") == original
+        err = capsys.readouterr().err
+        assert "could not be read" in err
+
 
 class TestRestore:
     """`mcptoon restore` is the real undo of `sync --takeover`.

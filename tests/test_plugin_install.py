@@ -139,6 +139,33 @@ class TestInstall(_Isolated):
             self.assertTrue((data_dir / "user-state.json").is_file())
             self.assertEqual(r2["version"], "1.0.0")
 
+    def test_force_upgrade_copy_failure_keeps_old_install(self):
+        """A failed --force upgrade must NOT destroy the working install.
+
+        The old code `rmtree(dest)` before `copytree`; a copy failure then left
+        the user with no plugin at all while the registry still listed it. The
+        fix copies to a temp dir first, so a failure leaves the old version intact.
+        """
+        with tempfile.TemporaryDirectory() as src:
+            make_plugin(src, version="1.0.0")
+            self.assertTrue(install_plugin(src, sync_agents=False)["ok"])
+            dest = Path(os.environ["MCPTOON_PLUGINS_DIR"]) / "demo-greeter"
+            marker = dest / "plugin.json"
+            self.assertTrue(marker.is_file())
+            before = marker.read_text(encoding="utf-8")
+
+            # Fail the copy phase of the upgrade.
+            from unittest.mock import patch
+            import mcptoon.plugin as plugin_mod
+            with patch.object(plugin_mod.shutil, "copytree",
+                              side_effect=OSError("disk full")):
+                r = install_plugin(src, force=True, sync_agents=False)
+            self.assertFalse(r["ok"])
+            self.assertEqual(r["stage"], "copy")
+            # The previously-installed version is still there, untouched.
+            self.assertTrue(marker.is_file())
+            self.assertEqual(marker.read_text(encoding="utf-8"), before)
+
     def test_install_invalid_rejected(self):
         with tempfile.TemporaryDirectory() as src:
             make_plugin(src)

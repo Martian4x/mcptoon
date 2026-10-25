@@ -1007,7 +1007,19 @@ def render(obj, fmt="auto", compact_mode=False, head_n=0, max_chars=0, full=Fals
             result = obj[:50000]
         else:
             result = json.dumps(obj, ensure_ascii=False)[:50000]
-        return _truncate(result, effective_max) if effective_max else result
+        # `raw` keeps a hard 50k ceiling even under --full (a genuinely unbounded
+        # dump can wedge a terminal). But `--full` sets effective_max=0, so the
+        # `_truncate` call below is a no-op and a cut body was returned with NO
+        # notice — the user asked for the full raw body and silently got a slice.
+        # Emit the truncation marker ourselves when the slice actually cut data.
+        if effective_max:
+            return _truncate(result, effective_max)
+        _orig_len = len(obj) if isinstance(obj, str) else len(
+            json.dumps(obj, ensure_ascii=False))
+        if _orig_len > 50000:
+            return result + (f"\n... [truncated at 50,000 of {_orig_len} chars — "
+                             f"raw format is hard-capped; narrow the result instead]")
+        return result
 
     # json or auto
     if isinstance(obj, str):

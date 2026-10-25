@@ -32,8 +32,21 @@ from mcptoon.demo import (
     _show_benchmark,
     _cleanup_demo,
     _demo_help,
+    _pick_best_format,
     run_demo,
 )
+
+
+def test_pick_best_format_names_the_true_minimum():
+    """A token-count tie must not mislabel the winner."""
+    # slim and json tie at the minimum; the label must be one that actually
+    # produced that count, never a wrong format from a value→name collision.
+    tokens, name = _pick_best_format(toon_tokens=10, slim_tokens=5, json_tokens=5)
+    assert tokens == 5
+    assert name in ("SLIM", "JSON")
+    # clear winner is labeled correctly
+    assert _pick_best_format(9, 3, 20) == (3, "SLIM")
+    assert _pick_best_format(1, 8, 20) == (1, "TOON")
 
 
 class TestDemoBanner(unittest.TestCase):
