@@ -1,4 +1,4 @@
-# Copyright 2025-2026 cxh (mcptoon wrapper)
+# Copyright 2025-2026 activeing123 (mcptoon wrapper)
 # Vendored TOON encoder/decoder: Copyright (c) 2025 Xavi Vinaixa (xaviviro)
 # Source: https://github.com/xaviviro/python-toon (MIT License)
 # Vendored under MIT License — see NOTICE for full attribution.

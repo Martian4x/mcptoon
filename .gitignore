@@ -113,3 +113,9 @@ readme_preview.html
 
 # 2026-10-02: 手工改 YAML 时留下的备份，别再被 git add -A 卷进去
 SKILL.md.bak-*
+
+# 2026-10-26: 本地门禁/发布状态缓存 —— 里面是本机绝对路径（C:\Users\...）
+# 属于本机 ops 区，不进公开树。check_privacy.py --tree 会扫「未跟踪但没被
+# ignore 的文件」，不 ignore 的话每次提交前都被它拦（正是要拦的那类）。
+docs/.gate.json
+docs/.state/
