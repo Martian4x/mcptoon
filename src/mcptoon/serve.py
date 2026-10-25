@@ -1550,7 +1550,7 @@ def _proc_create_time(pid: int):
     try:
         import subprocess as _sp
         out = _sp.run(["ps", "-o", "etimes=", "-p", str(pid)],
-                      capture_output=True, text=True, timeout=5).stdout.strip()
+                      capture_output=True, text=True, encoding="utf-8", timeout=5).stdout.strip()
         if out.isdigit():
             return time.time() - int(out)
     except Exception:
@@ -1697,8 +1697,100 @@ def _background_start(args: list[str], listen_addr: str | None) -> int:
     print(f"  log: {log_file}")
     print("  status: mcptoon serve --status   ·   stop: mcptoon serve --stop")
     print()
-    print("  to auto-start at login, add a Startup shortcut / scheduled task that runs:")
+    print("  to auto-start at login, run once:")
+    print("    mcptoon serve --install-autostart --listen host:port")
+    print("  (or add this to a Startup shortcut / scheduled task yourself:)")
     print(f"    {sys.executable} -m mcptoon serve{' ' + ' '.join(child_args) if child_args else ''}")
+    return 0
+
+
+_AUTOSTART_TASK = os.environ.get("MCPTOON_AUTOSTART_TASK", "mcptoon-serve")
+
+
+def _autostart_command(args: list[str], listen_addr: str) -> list[str]:
+    """The exact argv an autostart entry should run: a foreground serve."""
+    child_args = [a for a in args
+                  if a not in ("--background", "--daemon", "--start",
+                               "--install-autostart", "--uninstall-autostart")
+                  and not a.startswith("--install")]
+    return [sys.executable, "-m", "mcptoon", "serve", *child_args]
+
+
+def _install_autostart(args: list[str], listen_addr: str | None) -> int:
+    """Register a login-time autostart for the serve command. Explicit, opt-in."""
+    if not listen_addr:
+        print("  --install-autostart needs an HTTP address: add --listen host:port.",
+              file=sys.stderr)
+        return 2
+    cmd = _autostart_command(args, listen_addr)
+    if os.name == "nt":
+        # schtasks chokes on a /TR that embeds a spaced python path with inner
+        # quotes, so write a tiny launcher next to the pid/log and point the task
+        # at that single (space-free) path instead.
+        state_dir = _bg_paths()[0].parent
+        state_dir.mkdir(parents=True, exist_ok=True)
+        launcher = state_dir / "serve-autostart.cmd"
+        quoted = " ".join(f'"{a}"' if " " in a else a for a in cmd)
+        launcher.write_text(f"@echo off\r\n{quoted}\r\n", encoding="utf-8")
+        tr = (f'schtasks /Create /TN {_AUTOSTART_TASK} /SC ONLOGON /RL LIMITED '
+              f'/TR "{launcher}" /F')
+        res = subprocess.run(tr, shell=True, capture_output=True, text=True, encoding="utf-8")
+        if res.returncode != 0:
+            print(f"  could not create the scheduled task: {res.stderr.strip() or res.stdout.strip()}")
+            return 1
+        print(f"  autostart installed: Scheduled Task '{_AUTOSTART_TASK}' runs at logon.")
+        print(f"    launcher: {launcher}")
+        print(f"    command:  {quoted}")
+        print("  remove it later with: mcptoon serve --uninstall-autostart")
+        return 0
+    # POSIX: write a systemd --user unit.
+    unit_dir = Path.home() / ".config" / "systemd" / "user"
+    unit_dir.mkdir(parents=True, exist_ok=True)
+    unit = unit_dir / f"{_AUTOSTART_TASK}.service"
+    exec_start = " ".join(cmd)
+    unit.write_text(
+        "[Unit]\n"
+        "Description=mcptoon serve (background MCP gateway)\n\n"
+        "[Service]\n"
+        f"ExecStart={exec_start}\n"
+        "Restart=on-failure\n\n"
+        "[Install]\n"
+        "WantedBy=default.target\n",
+        encoding="utf-8",
+    )
+    print(f"  autostart unit written: {unit}")
+    print(f"    enable it: systemctl --user enable --now {_AUTOSTART_TASK}.service")
+    print("  remove it later with: mcptoon serve --uninstall-autostart")
+    return 0
+
+
+def _uninstall_autostart() -> int:
+    """Remove whatever _install_autostart created. Idempotent."""
+    if os.name == "nt":
+        res = subprocess.run(["schtasks", "/Delete", "/TN", _AUTOSTART_TASK, "/F"],
+                             capture_output=True, text=True, encoding="utf-8")
+        if res.returncode != 0:
+            print(f"  no autostart task to remove (or removal failed): "
+                  f"{res.stderr.strip() or res.stdout.strip()}")
+            return 0
+        launcher = _bg_paths()[0].parent / "serve-autostart.cmd"
+        try:
+            launcher.unlink()
+        except OSError:
+            pass
+        print(f"  autostart removed: Scheduled Task '{_AUTOSTART_TASK}' deleted.")
+        return 0
+    unit = Path.home() / ".config" / "systemd" / "user" / f"{_AUTOSTART_TASK}.service"
+    if unit.exists():
+        try:
+            unit.unlink()
+        except OSError as e:
+            print(f"  could not remove {unit}: {e}")
+            return 1
+        print(f"  autostart unit removed: {unit}")
+        print(f"    (disable first if still enabled: systemctl --user disable {_AUTOSTART_TASK}.service)")
+    else:
+        print("  no autostart unit to remove.")
     return 0
 
 
@@ -1839,10 +1931,15 @@ def run_serve(args: list[str]):
     """
     # Control flags are handled before _parse_serve_args so its documented
     # (format, listen, auth) contract stays exactly as tests pin it.
-    if any(a in ("--status",) for a in args):
+    if any(a == "--status" for a in args):
         sys.exit(_background_status())
-    if any(a in ("--stop",) for a in args):
+    if any(a == "--stop" for a in args):
         sys.exit(_background_stop())
+    if any(a == "--install-autostart" for a in args):
+        _, _listen, _ = _parse_serve_args([a for a in args if a != "--install-autostart"])
+        sys.exit(_install_autostart(args, _listen))
+    if any(a == "--uninstall-autostart" for a in args):
+        sys.exit(_uninstall_autostart())
 
     output_format, listen_addr, auth_token = _parse_serve_args(args)
 
@@ -2234,9 +2331,13 @@ Usage:
 
 Background mode:
   --background detaches the HTTP server so it survives the shell. pid + log live
-  under the mcptoon state dir (~/.mcptoon). Auto-start at login is left to the OS:
-  add a Startup shortcut / scheduled task (Windows) or a launchd/systemd unit (POSIX)
-  that runs the same command. --background requires an HTTP address (--http/--listen).
+  under the mcptoon state dir (~/.mcptoon). --background requires an HTTP address
+  (--http/--listen).
+  --status   report the background instance and its last log lines
+  --stop     stop the background instance
+  --install-autostart / --uninstall-autostart
+             create/remove a logon entry (Windows Scheduled Task; systemd --user
+             unit on POSIX) that starts `serve` for you. Opt-in and reversible.
 
 Security (v0.7.3):
   - Bare ':port' binds 127.0.0.1 (loopback) — never 0.0.0.0

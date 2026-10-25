@@ -22,9 +22,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`mcptoon serve --background` — a server that outlives the terminal.** The
   foreground server dies when the shell closes, which is why a one-off trial rarely
   becomes a daily install. `--background` detaches the HTTP server (pid + log under the
-  mcptoon state dir); `serve --status` reports the live instance and its last log lines,
-  `serve --stop` ends it. Auto-start at login is left to the OS — the exact command is
-  printed for a Startup shortcut / scheduled task (Windows) or a launchd/systemd unit.
+  mcptoon state dir) and refuses to start if the port is already taken; `serve --status`
+  reports the live instance and its last log lines, `serve --stop` ends it. For
+  auto-start, `serve --install-autostart` registers a logon entry (a per-user Windows
+  Scheduled Task, or a `systemd --user` unit on POSIX) and `--uninstall-autostart`
+  removes it — both explicit, opt-in and reversible.
 
 ### Security
 

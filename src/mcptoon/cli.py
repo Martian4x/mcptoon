@@ -101,6 +101,12 @@ KNOWN_FLAGS = frozenset(
         # aliases for `--background`. `--upgrade` is the upgrade command's alias
         # of `--check`+`--yes` intent handled in upgrade.run.
         "--background", "--status", "--stop", "--daemon", "--start", "--upgrade",
+        "--install-autostart", "--uninstall-autostart",
+        # `--user`/`--now` appear verbatim in the `serve --install-autostart`
+        # help text (the systemctl hint). They are systemctl flags, not ours, but
+        # the package-wide literal scan sees them; register so the typo-guard is
+        # not tripped by our own documentation.
+        "--user", "--now",
     }
 )
 

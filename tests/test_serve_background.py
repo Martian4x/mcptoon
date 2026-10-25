@@ -342,6 +342,62 @@ class TestBackgroundStart:
 
 # ─── run_serve routing ───
 
+class TestAutostart:
+    def test_autostart_needs_http(self):
+        code, out = _capture(serve._install_autostart, ["--install-autostart"], None)
+        assert code == 2
+
+    def test_autostart_command_strips_control_flags(self):
+        cmd = serve._autostart_command(
+            ["--background", "--install-autostart", "--listen", "127.0.0.1:9"], ":9")
+        assert cmd[:4] == [sys.executable, "-m", "mcptoon", "serve"]
+        assert "--background" not in cmd
+        assert "--install-autostart" not in cmd
+        assert "--listen" in cmd
+
+    def test_install_autostart_windows_creates_task(self, monkeypatch, tmp_path):
+        calls = {}
+
+        class R:
+            returncode = 0
+            stdout = "SUCCESS"
+            stderr = ""
+
+        def fake_run(cmd, **kw):
+            calls["cmd"] = cmd
+            return R()
+
+        monkeypatch.setattr(serve.os, "name", "nt")
+        monkeypatch.setattr(serve.subprocess, "run", fake_run)
+        monkeypatch.setattr(serve, "_bg_paths",
+                            lambda: (tmp_path / "serve.pid", tmp_path / "serve.log"))
+        code, out = _capture(serve._install_autostart,
+                             ["--install-autostart", "--listen", "127.0.0.1:9"], "127.0.0.1:9")
+        assert code == 0
+        assert "autostart installed" in out
+        assert "schtasks" in calls["cmd"].lower() and "ONLOGON" in calls["cmd"]
+        # It must point the task at the space-free launcher, not an inline spaced cmd.
+        launcher = tmp_path / "serve-autostart.cmd"
+        assert launcher.exists()
+        assert str(launcher) in calls["cmd"]
+        assert "mcptoon" in launcher.read_text(encoding="utf-8")
+
+    def test_install_autostart_reports_failure(self, monkeypatch, tmp_path):
+        class R:
+            returncode = 1
+            stdout = ""
+            stderr = "Access denied"
+
+        monkeypatch.setattr(serve.os, "name", "nt")
+        monkeypatch.setattr(serve.subprocess, "run", lambda cmd, **kw: R())
+        monkeypatch.setattr(serve, "_bg_paths",
+                            lambda: (tmp_path / "serve.pid", tmp_path / "serve.log"))
+        code, out = _capture(serve._install_autostart,
+                             ["--install-autostart", "--listen", "127.0.0.1:9"], "127.0.0.1:9")
+        assert code == 1
+        assert "could not create" in out
+
+
 class TestRunServeRouting:
     def test_status_flag_routes_and_exits(self, clean_pidfile):
         code, out = _capture(serve.run_serve, ["--status"])
@@ -352,6 +408,11 @@ class TestRunServeRouting:
         code, out = _capture(serve.run_serve, ["--stop"])
         assert code == 0
         assert "nothing to stop" in out
+
+    def test_uninstall_autostart_routes(self, monkeypatch):
+        monkeypatch.setattr(serve, "_uninstall_autostart", lambda: 0)
+        code, _ = _capture(serve.run_serve, ["--uninstall-autostart"])
+        assert code == 0
 
     def test_background_without_http_is_refused(self, clean_pidfile):
         code, out = _capture(serve.run_serve, ["--background"])
