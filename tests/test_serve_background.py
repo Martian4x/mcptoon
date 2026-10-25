@@ -211,7 +211,15 @@ class TestStopMechanism:
             killed["cmd"] = cmd
             return FakeCompleted()
 
+        def fake_kill(pid, sig):
+            killed["kill"] = (pid, sig)
+
         monkeypatch.setattr(serve.subprocess, "run", fake_run)
+        # POSIX stop uses os.kill; mock it so no real signal is sent. (Windows uses
+        # subprocess.run taskkill, already mocked above.) _pid_alive is fully
+        # faked below, so it never reaches os.kill either.
+        if os.name != "nt":
+            monkeypatch.setattr(serve.os, "kill", fake_kill)
         # Alive for the initial _read_pid, gone after the kill so the wait loop ends.
         calls = {"n": 0}
 
@@ -228,6 +236,8 @@ class TestStopMechanism:
         if os.name == "nt":
             assert "taskkill" in killed["cmd"][0].lower()
             assert "4321" in killed["cmd"]
+        else:
+            assert killed["kill"] == (4321, 15)
 
 
 # ─── start ───
@@ -253,8 +263,11 @@ class TestBackgroundStart:
                 return None  # still running after the startup wait → success
 
         def fake_popen(cmd, **kw):
-            recorded["cmd"] = cmd
-            recorded["kw"] = kw
+            # On POSIX, `_write_pidfile` runs `_proc_create_time`, which itself calls
+            # subprocess.run(["ps", ...]) → Popen. Only capture the *serve* spawn.
+            if cmd[:2] == [sys.executable, "-m"] or "mcptoon" in cmd:
+                recorded["cmd"] = cmd
+                recorded["kw"] = kw
             return FakeProc()
 
         monkeypatch.setattr(serve.subprocess, "Popen", fake_popen)
