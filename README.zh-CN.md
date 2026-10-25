@@ -18,7 +18,7 @@
   <a href="https://pypi.org/project/mcptoon/"><img src="https://img.shields.io/pypi/v/mcptoon?style=flat-square&color=238636&logo=pypi&logoColor=white" alt="PyPI 版本"></a>
   <a href="https://github.com/activeing123/mcptoon/stargazers"><img src="https://img.shields.io/github/stars/activeing123/mcptoon?style=flat-square&logo=github&color=58a6ff" alt="GitHub Stars"></a>
   <a href="https://github.com/activeing123/mcptoon/actions"><img src="https://img.shields.io/github/actions/workflow/status/activeing123/mcptoon/ci.yml?branch=main&style=flat-square&logo=githubactions&logoColor=white" alt="CI 构建"></a>
-  <a href="#贡献指南"><img src="https://img.shields.io/badge/tests-2996%20passed-success?style=flat-square&logo=pytest&logoColor=white" alt="测试"></a>
+  <a href="#贡献指南"><img src="https://img.shields.io/badge/tests-2999%20passed-success?style=flat-square&logo=pytest&logoColor=white" alt="测试"></a>
   <a href="https://github.com/activeing123/mcptoon"><img src="https://img.shields.io/badge/dependencies-0%20(stdlib%20only)-blue?style=flat-square" alt="零第三方依赖"></a>
   <a href="https://github.com/activeing123/mcptoon/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-informational?style=flat-square" alt="许可证"></a>
 </p>
@@ -41,6 +41,10 @@
 <!-- 现代化 Benchmark SVG -->
 <p align="center">
   <img src="https://raw.githubusercontent.com/activeing123/mcptoon/main/assets/benchmark.svg" alt="mcptoon Benchmark: 71,929 to 581 tokens (-99.2%)" width="100%" style="max-width: 960px; border-radius: 12px; margin: 16px 0;">
+</p>
+
+<p align="center">
+  <sub>怀疑 255 工具是合成样本？<a href="https://github.com/activeing123/mcptoon/blob/main/docs/real-world-benchmark.md">这里有 7 个真实公开 MCP 服务器（209 工具）在真机上的实测 →</a>——640,606 → 905 token（−99.86%）。或者在你自己的目录上跑 <code>mcptoon bench</code>。</sub>
 </p>
 
 <!-- 产品演示视频。必须写成独占一行的裸地址（bare URL）：
@@ -74,6 +78,10 @@ https://github.com/user-attachments/assets/a40bff9a-7f47-4bd2-84ec-04508e5b2a81
 
 <p align="center">
   <b><code>pip install mcptoon &amp;&amp; mcptoon quickstart</code></b> — 534KB，零依赖，零配置。
+</p>
+
+<p align="center">
+  <sub>装完会自动提示有新版，一条命令 <code>mcptoon upgrade</code> 即更新。</sub>
 </p>
 
 </div>
@@ -739,12 +747,12 @@ git clone https://github.com/activeing123/mcptoon.git
 cd mcptoon
 pip install -e . --no-build-isolation
 pip install pytest pytest-cov
-python -m pytest tests/ -v   # 2996 passed, 2 skipped
+python -m pytest tests/ -v   # 2999 passed, 2 skipped
 ```
 
 三条硬规则：零依赖（CI 强制）、新功能必须带测试、Windows 是一等目标。新手可以先看 [CONTRIBUTING.md](https://github.com/activeing123/mcptoon/blob/main/CONTRIBUTING.md) 和 [DEVELOPERS.md](https://github.com/activeing123/mcptoon/blob/main/DEVELOPERS.md)。
 
-代码规模：**56 个模块、40,994 行 Python**，零第三方依赖。
+代码规模：**56 个模块、41,002 行 Python**，零第三方依赖。
 
 ---
 

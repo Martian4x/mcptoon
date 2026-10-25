@@ -312,7 +312,15 @@ def _rows_and_tail(facts: dict, skills: int | None, lng: str, stream,
              else "the badge (Claude Code: --install)"),
         ]
     else:
-        rows += [("下一步" if zh else "Next", "mcptoon quickstart",
+        # No servers yet: the old row said "run quickstart" — a dead end, because
+        # quickstart discovers servers and there are none to find. Point at the
+        # zero-config demo instead (it spins up its own 22-tool server and shows
+        # the before/after), then discovery as the next step. This is the cheapest
+        # conversion fix for a fresh install (2026-10-25).
+        rows += [("先看效果" if zh else "See it",
+                  "mcptoon demo",
+                  "10 秒看省 token 效果，零配置" if zh else "zero-config, ~10s, see the saving"),
+                 ("下一步" if zh else "Next", "mcptoon quickstart",
                   "自动发现本机 MCP 服务器" if zh else "find the servers already on this machine")]
     rows += [
         ("撤销" if zh else "Undo", "mcptoon off",

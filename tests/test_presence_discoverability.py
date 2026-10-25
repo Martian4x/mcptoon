@@ -65,6 +65,32 @@ def test_welcome_still_names_a_next_step_after_adding_the_badge_row():
     assert "mcptoon skills list" in text
 
 
+# ── empty-state conversion: point at the zero-config demo, not a dead end ────
+def test_welcome_empty_state_points_at_the_demo():
+    """A machine with no servers used to be told 'run quickstart' — but quickstart
+    discovers servers and there are none to find, a dead end. It must offer the
+    zero-config demo (which spins up its own server and shows the saving) first."""
+    for lng in ("en", "zh"):
+        text = welcome.render({"servers": 0, "tools": 0}, skills=None, lng=lng)
+        assert "mcptoon demo" in text, f"empty state ({lng}) must offer the demo"
+
+
+def test_welcome_empty_state_demo_precedes_quickstart():
+    """The demo row is the cheapest first action; it must sort before discovery."""
+    rows, _ = welcome._rows_and_tail(
+        {"servers": 0, "tools": 0}, 0, "en", io.StringIO(), "direct")
+    cmds = [cmd for _label, cmd, _desc in rows]
+    assert "mcptoon demo" in cmds and "mcptoon quickstart" in cmds
+    assert cmds.index("mcptoon demo") < cmds.index("mcptoon quickstart")
+
+
+def test_welcome_with_servers_does_not_show_the_demo_row():
+    """The demo row is only for the no-servers dead end; a wired machine has
+    nothing to demo and the row would be noise."""
+    text = _render("en")
+    assert "mcptoon demo" not in text
+
+
 # ── welcome honours the delivery mode (no saving claim before it saves) ──────
 def test_welcome_direct_does_not_claim_a_saving():
     """A direct machine (installed, not wired) saves nothing — the card must say

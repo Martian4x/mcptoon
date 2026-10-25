@@ -18,7 +18,7 @@
   <a href="https://pypi.org/project/mcptoon/"><img src="https://img.shields.io/pypi/v/mcptoon?style=flat-square&color=238636&logo=pypi&logoColor=white" alt="PyPI version"></a>
   <a href="https://github.com/activeing123/mcptoon/stargazers"><img src="https://img.shields.io/github/stars/activeing123/mcptoon?style=flat-square&logo=github&color=58a6ff" alt="GitHub Stars"></a>
   <a href="https://github.com/activeing123/mcptoon/actions"><img src="https://img.shields.io/github/actions/workflow/status/activeing123/mcptoon/ci.yml?branch=main&style=flat-square&logo=githubactions&logoColor=white" alt="CI Build"></a>
-  <a href="#contributing"><img src="https://img.shields.io/badge/tests-2996%20passed-success?style=flat-square&logo=pytest&logoColor=white" alt="Tests"></a>
+  <a href="#contributing"><img src="https://img.shields.io/badge/tests-2999%20passed-success?style=flat-square&logo=pytest&logoColor=white" alt="Tests"></a>
   <a href="https://github.com/activeing123/mcptoon"><img src="https://img.shields.io/badge/dependencies-0%20(stdlib%20only)-blue?style=flat-square" alt="Zero Dependencies"></a>
   <a href="https://github.com/activeing123/mcptoon/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-informational?style=flat-square" alt="License"></a>
 </p>
@@ -41,6 +41,10 @@
 <!-- Modern Benchmark SVG -->
 <p align="center">
   <img src="https://raw.githubusercontent.com/activeing123/mcptoon/main/assets/benchmark.svg" alt="mcptoon Benchmark: 71,929 to 581 tokens (-99.2%)" width="100%" style="max-width: 960px; border-radius: 12px; margin: 16px 0;">
+</p>
+
+<p align="center">
+  <sub>Skeptical of a synthetic 255-tool sample? <a href="https://github.com/activeing123/mcptoon/blob/main/docs/real-world-benchmark.md">Here are 7 real public MCP servers (209 tools) measured on a real machine →</a> — 640,606 → 905 tokens (−99.86%). Or run <code>mcptoon bench</code> on your own catalog.</sub>
 </p>
 
 <!-- Product promo video. Keep this as a BARE user-attachment URL on its own line:
@@ -75,6 +79,10 @@ It first <b>picks up the servers you already have</b> (nothing to reinstall), th
 
 <p align="center">
   <b><code>pip install mcptoon &amp;&amp; mcptoon quickstart</code></b> — 534KB, zero dependencies, zero config.
+</p>
+
+<p align="center">
+  <sub>Stays current on its own: it tells you when a newer version is out, and <code>mcptoon upgrade</code> updates in one command.</sub>
 </p>
 
 </div>
@@ -848,7 +856,7 @@ git clone https://github.com/activeing123/mcptoon.git
 cd mcptoon
 pip install -e . --no-build-isolation
 pip install pytest pytest-cov
-python -m pytest tests/ -v   # 2996 passed, 2 skipped
+python -m pytest tests/ -v   # 2999 passed, 2 skipped
 ```
 
 Three hard rules: zero dependencies (CI-enforced), new behavior ships with tests, Windows
@@ -856,7 +864,7 @@ is a first-class target. New here? Start with
 [CONTRIBUTING.md](https://github.com/activeing123/mcptoon/blob/main/CONTRIBUTING.md) and
 [DEVELOPERS.md](https://github.com/activeing123/mcptoon/blob/main/DEVELOPERS.md).
 
-The codebase: **40,994 lines of Python across 56 modules**, zero third-party dependencies.
+The codebase: **41,002 lines of Python across 56 modules**, zero third-party dependencies.
 
 ---
 
