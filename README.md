@@ -6,11 +6,11 @@
   <img src="https://raw.githubusercontent.com/activeing123/mcptoon/main/docs/assets/lockup-h-split-light.svg" alt="mcptoon" height="88">
 </picture>
 
-<h3 align="center">Zero-Config Token Optimization & Unified Governance for MCP Tools and Agent Skills</h3>
+<h3 align="center">MCP Token Optimization, Tool Discovery &amp; Context Compression — Zero-Config CLI for MCP Tools and Agent Skills</h3>
 
 <p align="center">
   <b>Install 1,000 skills and 1,000 MCP tools locally — and never worry about context flooding.</b><br>
-  Cuts tool context by ~90% (99.2% on 255 tools) with zero config across <b>103+ desktop and CLI agents</b>.
+  A zero-dependency <b>MCP CLI</b> and <b>MCP client</b> for <b>MCP token optimization</b>: <b>tool discovery</b> through a compact name index plus <b>context compression</b>, cutting tool context by ~90% (99.2% on 255 tools) and keeping schemas out of your context window — zero config across <b>103+ desktop and CLI agents</b>.
 </p>
 
 <!-- Primary Status Badges -->

@@ -6,11 +6,11 @@
   <img src="https://raw.githubusercontent.com/activeing123/mcptoon/main/docs/assets/lockup-h-split-light.svg" alt="mcptoon" height="88">
 </picture>
 
-<h3 align="center">MCP 工具与 Agent 技能的零配置 Token 压缩与统一调度网关</h3>
+<h3 align="center">MCP Token 优化 · 工具发现 · 上下文压缩 — MCP 工具与 Agent 技能的零配置 CLI</h3>
 
 <p align="center">
   <b>在本地安装 1,000 个技能和 1,000 个 MCP 工具 — 彻底告别上下文爆仓。</b><br>
-  独创轻量格式将工具上下文缩减 ~90%（255 工具样本降幅达 99.2%），<b>覆盖 103+ 款主流桌面与终端 Agent</b> 全自动零配置。
+  零依赖 <b>MCP CLI</b> 与 <b>MCP 客户端</b>，专做 <b>MCP Token 优化</b>：用紧凑名字索引实现<b>工具发现</b>，再用<b>上下文压缩</b>，把工具上下文缩减 ~90%（255 工具样本降幅达 99.2%），工具 Schema 不进上下文窗口，<b>覆盖 103+ 款主流桌面与终端 Agent</b> 全自动零配置。
 </p>
 
 <!-- 核心权威徽章 -->
