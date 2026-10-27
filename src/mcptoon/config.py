@@ -188,10 +188,24 @@ def state_paths() -> dict:
     return {
         "bookkeeping": [_settings_file(), _welcome_file(), _footer_state_file(),
                         _selfheal_file(), _toggle_file(), _policy_file(),
-                        _cli_aha_file(), _installed_registry_file()],
+                        _cli_aha_file(), _installed_registry_file(),
+                        _handlers_state_dir()],
         "servers": [_config_file(), _config_file_toml()],
         "cache": [_cache_dir()],
     }
+
+
+def _handlers_state_dir() -> Path:
+    """`STATE_DIR/handlers` — generated handler files (see ``installer._handlers_dir``).
+
+    Kept here so ``uninstall`` removes it: the generated handlers are mcptoon's own
+    state, and they used to live inside the package (issue #35), where a read-only
+    install could not write them at all. Resolved at CALL time from
+    ``MCPTOON_HANDLERS_DIR`` (same isolation pattern as the other state paths), so a
+    test process can redirect it after import.
+    """
+    return Path(os.environ.get(
+        "MCPTOON_HANDLERS_DIR", str(STATE_DIR / "handlers")))
 
 
 def _installed_registry_file() -> Path:

@@ -764,12 +764,25 @@ def _verify_and_generate(server_name, command, args_list, env, source):
 def _handlers_dir():
     """The directory generated handler files live in, created on demand.
 
-    ``handlers/`` is gitignored (a private layer — local handlers are not part of a
-    public release), so it does not exist in a fresh clone or a PyPI install. Writing
-    to it without creating it first made ``mcptoon install`` crash with
-    FileNotFoundError on every machine that had never run it before.
+    It lives under the user's state dir (``config.STATE_DIR/handlers``), **not**
+    inside the installed package. Writing into the package directory assumed it
+    was writable, which is false for every read-only install: a Nix store path
+    (issue #35 — ``PermissionError`` on ``site-packages/mcptoon/handlers``), a
+    system-wide ``pip install``, a distro package, or a container image. Generated
+    handlers are per-user state anyway, so they belong with the rest of mcptoon's
+    state and are cleaned up by ``uninstall`` (see ``config.state_paths``).
+
+    The old code also had to ``makedirs`` here because ``handlers/`` is gitignored
+    and absent from a fresh clone / PyPI install; creating the state dir is still
+    required, and it is always writable.
+
+    ``MCPTOON_HANDLERS_DIR`` (or ``MCPTOON_HOME``) overrides the location, the same
+    way the other state paths are overridable, so tests and CI never write into a
+    real home.
     """
-    d = os.path.join(os.path.dirname(__file__), "handlers")
+    from . import config as _config
+
+    d = str(_config._handlers_state_dir())
     os.makedirs(d, exist_ok=True)
     return d
 
@@ -885,7 +898,7 @@ def remove_installed(server_name):
 
     # Delete handler file
     safe_name = re.sub(r'[^a-z0-9_]', '_', server_name.lower())
-    handler_file = os.path.join(os.path.dirname(__file__), "handlers", f"{safe_name}.py")
+    handler_file = os.path.join(_handlers_dir(), f"{safe_name}.py")
     handler_removed = False
     if os.path.exists(handler_file):
         os.remove(handler_file)

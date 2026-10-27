@@ -270,6 +270,52 @@ class TestHandlersDir(unittest.TestCase):
             self.assertTrue((target / "demo.py").is_file())
 
 
+class TestHandlersDirOutsidePackage(unittest.TestCase):
+    """Issue #35: `mcptoon install` must not write into the installed package.
+
+    The package directory is read-only on any non-user install — a Nix store path
+    (the reporter's case: ``PermissionError`` on ``site-packages/mcptoon/handlers``),
+    a system ``pip install``, a distro package, a container image. The generated
+    handler must live under the user's state dir instead, which is always writable.
+    """
+
+    def test_handlers_dir_is_state_dir_not_package_dir(self):
+        import tempfile
+        from pathlib import Path
+        from mcptoon import installer
+
+        package_dir = Path(installer.__file__).resolve().parent
+        with tempfile.TemporaryDirectory() as tmp:
+            target = (Path(tmp) / "handlers").resolve()
+            with patch.dict("os.environ", {"MCPTOON_HANDLERS_DIR": str(target)}):
+                handlers_dir = Path(installer._handlers_dir()).resolve()
+            # The regression: the handler dir must NOT sit inside the package tree.
+            self.assertNotEqual(handlers_dir.parent, package_dir)
+            self.assertNotIn(package_dir, handlers_dir.parents)
+            # It must be exactly the configured state location.
+            self.assertEqual(handlers_dir, target)
+
+    def test_generate_handler_file_writes_to_state_dir(self):
+        """End-to-end: generating a handler touches the state dir, never the package dir."""
+        import tempfile
+        from pathlib import Path
+        from mcptoon import installer
+
+        package_dir = Path(installer.__file__).resolve().parent
+
+        with tempfile.TemporaryDirectory() as tmp:
+            handlers_dir = Path(tmp) / "handlers"
+            with patch.dict("os.environ", {"MCPTOON_HANDLERS_DIR": str(handlers_dir)}):
+                installer._generate_handler_file(
+                    "demo", [], "npx", ["-y", "x"], [], "test")
+            # Written under the redirected state dir, not the package...
+            self.assertTrue((handlers_dir / "demo.py").is_file())
+            self.assertFalse((package_dir / "handlers" / "demo.py").exists())
+            # ...and nothing at all was created inside the package tree.
+            self.assertFalse((package_dir / "handlers").exists())
+
+
+
 class TestHandlerCodeInjection(unittest.TestCase):
     """The generated handler is imported later, so a value that reaches it from a
     pasted `--url`, an explicit `--name`, a registry row or an arg must never be

@@ -5,6 +5,23 @@ All notable changes to mcptoon will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **`mcptoon install` no longer writes into the installed package (issue #35).**
+  Generated handler files were written to `<package>/handlers/` — a path that is
+  writable only when mcptoon is installed into the user's own tree. On a Nix store
+  path (the reporter's case: `PermissionError` on
+  `site-packages/mcptoon/handlers`), a system-wide `pip install`, a distro package
+  or a container image the directory is read-only, so every `mcptoon install`
+  crashed before recording the server. Handlers now live under the user's state
+  dir (`<state>/handlers`, overridable with `MCPTOON_HANDLERS_DIR`), which is
+  always writable and is cleaned up by `mcptoon uninstall` like the rest of
+  mcptoon's state. The reporter's exact failure mode is pinned by a regression
+  test that makes the package's `handlers` path raise `PermissionError` and
+  asserts install still succeeds.
+
 ## [0.8.30] - 2026-10-25
 
 ### Added

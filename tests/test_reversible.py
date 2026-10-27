@@ -90,6 +90,7 @@ class _IsolatedHome(unittest.TestCase):
             "MCPTOON_TOGGLE_FILE": str(self.home / "toggles.json"),
             "MCPTOON_COMPRESSION_FILE": str(self.home / "compression.json"),
             "MCPTOON_INSTALLED_FILE": str(self.home / "pro_installed.json"),
+            "MCPTOON_HANDLERS_DIR": str(self.home / "handlers"),
             "MCPTOON_CACHE_DIR": str(self.cache),
         })
         self._env.start()

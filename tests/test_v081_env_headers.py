@@ -261,5 +261,65 @@ class TestInstallWritesTemplatesNotSecrets(unittest.TestCase):
         self.assertIn("MCPTOON_T24", result["_error"]["message"])
 
 
+class TestInstallOnReadOnlyPackage(unittest.TestCase):
+    """Issue #35: `mcptoon install` must succeed when the package dir is read-only.
+
+    A Nix install (the reporter's case), a system-wide pip install, a distro
+    package and a container image all put ``mcptoon/`` somewhere the user cannot
+    write. The old generator wrote into ``<package>/handlers`` and raised
+    ``PermissionError`` there. This reproduces that condition — the package's
+    ``handlers`` path is un-writable — and proves install still lands its handler
+    in the writable state dir instead.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self._installed = Path(self._tmp.name) / "installed.json"
+        self._state_handlers = Path(self._tmp.name) / "state-handlers"
+
+    def _install(self):
+        class _FakeClient:
+            def __init__(self, **kw):
+                pass
+
+            def initialize(self):
+                return {"serverInfo": {"name": "x"}}
+
+            def list_tools(self):
+                return [{"name": "ping", "description": "p",
+                         "inputSchema": {"type": "object", "properties": {}}}]
+
+            def close(self):
+                pass
+
+        with patch.object(installer, "_INSTALLED_FILE", self._installed), \
+                patch.dict(os.environ,
+                           {"MCPTOON_HANDLERS_DIR": str(self._state_handlers)}), \
+                patch.object(installer, "MCPClient", _FakeClient):
+            return installer.install_http("https://example.com/mcp", "svc",
+                                          headers={})
+
+    def test_install_writes_handler_to_state_dir_when_package_is_read_only(self):
+        package_dir = Path(installer.__file__).resolve().parent
+        # Simulate the read-only package: any makedirs/write under <package>/handlers
+        # raises PermissionError exactly as it does on a Nix store path.
+        real_makedirs = os.makedirs
+
+        def _guard(path, *a, **k):
+            if Path(path).resolve() == (package_dir / "handlers"):
+                raise PermissionError(13, "Permission denied", str(path))
+            return real_makedirs(path, *a, **k)
+
+        with patch("os.makedirs", side_effect=_guard):
+            result = self._install()
+
+        self.assertEqual(result["status"], "installed")
+        # The handler landed in the writable state dir, not the package.
+        self.assertTrue((self._state_handlers / "svc.py").is_file())
+        self.assertFalse((package_dir / "handlers" / "svc.py").exists())
+
+
+
 if __name__ == "__main__":
     unittest.main()

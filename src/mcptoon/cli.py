@@ -4967,7 +4967,12 @@ def _cmd_uninstall(rest, fmt):
     agents = remove_gateway_from_all(dry_run=True)
     agent_hits = [r for r in agents if r.get("removed")]
     dirs_present = [d for d in paths["cache"] if Path(d).exists()]
-    files_present = [f for f in bookkeeping if Path(f).exists()]
+    # Split bookkeeping into real directories vs files by asking the filesystem,
+    # NOT by suffix: dotfiles like `.welcome` have an empty suffix and would be
+    # misclassified as directories. Only `STATE_DIR/handlers` is a directory today;
+    # it must be removed as a tree, everything else as a single file.
+    bookkeeping_dirs = [Path(p) for p in bookkeeping if Path(p).is_dir()]
+    files_present = [f for f in bookkeeping if not Path(f).is_dir() and Path(f).exists()]
     config_kept = [f for f in server_configs if Path(f).exists()]
 
     line = "─" * 54
@@ -4989,10 +4994,13 @@ def _cmd_uninstall(rest, fmt):
             print(f"    · delete directory  {d}")
     for f in files_present:
         print(f"    · delete file       {f}")
+    for d in bookkeeping_dirs:
+        print(f"    · delete directory  {d}")
     if config_kept:
         kept_names = ", ".join(Path(f).name for f in config_kept)
         print(f"    · KEEP {kept_names}  (your server definitions — delete with --no-keep-config)")
-    if not dirs_present and not files_present and not agent_hits and not config_kept:
+    if (not dirs_present and not files_present and not bookkeeping_dirs
+            and not agent_hits and not config_kept):
         print("    · nothing to remove — mcptoon left no trace here")
     print("")
 
@@ -5061,6 +5069,11 @@ def _cmd_uninstall(rest, fmt):
             ok = _safe_rmtree(d)
         if not ok:
             refused.append(d)
+    # Generated handler dir(s) — removed as a whole tree, like the cache dirs but
+    # never "kept for history" (handlers are regenerable, not a tally).
+    for d in bookkeeping_dirs:
+        if d.exists() and not _safe_rmtree(str(d)):
+            refused.append(str(d))
     # Count only files that are actually gone. The loop swallowed OSError, so a
     # file that could not be deleted was still counted in "Deleted ... N file(s)".
     undeleted = []
