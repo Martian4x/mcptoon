@@ -10,7 +10,7 @@ readme = "README.md"
 license = {text = "Apache-2.0"}
 authors = [{name = "Alex Chen"}]
 requires-python = ">=3.10"
-keywords = ["mcp", "mcp-cli", "mcp-tools", "mcp-client", "cli", "token-efficient", "token-optimization", "context-compression", "model-context-protocol", "agent", "llm", "zero-dependencies"]
+keywords = ["mcp", "mcp-cli", "mcp-tools", "mcp-client", "cli", "token-efficient", "token-optimization", "mcp-token-optimization", "tool-discovery", "context-compression", "context-window", "model-context-protocol", "mcp-server-manager", "agent", "llm", "zero-dependencies"]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Environment :: Console",
