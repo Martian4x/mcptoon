@@ -18,6 +18,11 @@
 <!-- 2026-10-15 补：canonical + og:url。此前只有 sitemap 声明本页，页面本身没告诉搜索引擎
      "哪个 URL 才是正版"，同样的落地页被多个路径访问时会稀释收录权重。 -->
 <link rel="canonical" href="https://mcptoon.github.io/">
+<!-- 2026-10-27: 旧站(activeing123.github.io/mcptoon/)与 mcptoon.github.io 内容重复，
+     Google 一直选旧 URL 当规范页、把新站页面判成"重复网页"（GSC: 新站仅 1 页收录，2 页未收录）。
+     canonical 只是提示不是指令，故此处显式 noindex，让旧 URL 退出索引、把收录让给新站。
+     follow 保留，便于爬虫顺着跳转发现新站。软件版本/徽章等字符串保留，供发版守卫测试使用。 -->
+<meta name="robots" content="noindex, follow">
 <meta property="og:url" content="https://mcptoon.github.io/">
 <meta name="twitter:card" content="summary_large_image">
 <link rel="icon" href="assets/favicon.ico" sizes="any">
